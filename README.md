@@ -1,0 +1,2 @@
+# SteamSelfGifter
+Bot for SteamGifts
