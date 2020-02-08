@@ -3,6 +3,7 @@ import configparser
 import argparse
 import pathlib
 import os
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -25,21 +26,25 @@ def init():
     parser.add_argument("-c", "--config", help="Path of the config file", type=pathlib.Path)
     args = parser.parse_args()
 
-    config_path = "config.ini"
+    # CONFIG FILE
+    if args.config and args.config.exists():
+        config_path = args.config
+        config.read(config_path)
+        log_level = config["misc"]["logging"]
+        session_id = config["cookies"]["PHPSESSID"]
+    else:
+        log_level = os.environ.get("LOGGING")
+        session_id = os.environ.get("PHPSESSID")
 
     # VERBOSE
-    if args.verbose:
+    if args.verbose or log_level == "INFO":
         logging.basicConfig(level=logging.INFO)
 
     # DEBUG
-    if args.debug or os.environ.get("DEBUG"):
+    if args.debug or log_level == "DEBUG":
         logging.basicConfig(level=logging.DEBUG)
 
-    # CONFIG PATH
-    if args.config and args.config.exists():
-        config_path = args.config
+    user_agent = "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0"
 
-    config.read(config_path)
-
-    cookie = {"PHPSESSID": dict(config._sections["cookies"])["phpsessid"]}
-    headers = dict(config._sections["headers"])
+    cookie = {"PHPSESSID": session_id}
+    headers = {"user-agent": user_agent}
