@@ -40,7 +40,7 @@ def get_page(url=settings.MAIN_URL, check_safety=False):
     try:
         r = requests.get(url, cookies=settings.cookie, headers=settings.headers)
 
-        if not _check_game_safety(r):
+        if check_safety and not _check_game_safety(r):
             return False
 
         if r.status_code == 200:

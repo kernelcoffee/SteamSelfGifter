@@ -12,6 +12,12 @@ config = configparser.ConfigParser()
 MAIN_URL = "https://www.steamgifts.com"
 WISHLIST_URL = "https://www.steamgifts.com/giveaways/search?"
 
+upper_threshold = 350
+lower_threshold = 200
+game_min_price = 10
+game_min_score = 7
+game_min_reviews = 100
+game_max_age = "5y"
 
 def init():
     global cookie

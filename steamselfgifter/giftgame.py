@@ -1,20 +1,45 @@
 import logging
 import requests
 import settings
+import datetime
 import json
 from network import get_page
+from steam.steam import Steam
 
 logger = logging.getLogger(__name__)
 
 
-class Game:
-    def __init__(self, name, price, url):
-        self.name = name
-        self.price = int(price)
-        self.url = url
-        self.ref = self.url.split("/")[2]
+class GiftGame:
+    def __init__(self):
+        self.name = ""
+        self.price = 0
+        self.url = ""
+        self.steam_id = ""
+        self.ref = ""
         self.is_trap = False
         self.entered = False
+
+    def set_price(self, price):
+        self.price = price
+        last_div = None
+        for last_div in self.price:
+            pass
+        if last_div:
+            self.price = last_div.getText().replace("(", "").replace(")", "").replace("P", "")
+        self.price = int(self.price)
+
+    def set_url(self, url):
+        self.url = url
+        self.ref = self.url.split("/")[2]
+
+    def set_steam_id(self, url):
+        self.steam_id = url.split("/")[4]
+        steam = Steam()
+        self.steam_game = steam.get_game(self.steam_id)
+        self.name = self.steam_game.name
+
+    def get_age(self):
+        date = datetime.strptime(self.steam_game.release_date, "%d %B, %Y")
 
     def enter(self):
         """enter to giveaway"""
@@ -34,8 +59,6 @@ class Game:
             self.is_trap = True
             return
 
-        self.name = soup.title.string
-
         try:
             params = {
                 "xsrf_token": settings.xsrf_token,
@@ -53,3 +76,5 @@ class Game:
         except Exception as e:
             logger.error(f"Error while entering giveaway: {str(e)}")
 
+    def print(self):
+        return f"{self.price}\t{self.name}"
