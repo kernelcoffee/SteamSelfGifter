@@ -18,7 +18,7 @@ python steamselfgifter/steamselfgifter.py -c <path_to_config.ini>
 or
 
 ``` bash
-SESSIONID=<PHPSESSID> python steamselfgifter/steamselfgifter.py
+PHPSESSID=<PHPSESSID> python steamselfgifter/steamselfgifter.py
 ```
 
 ## Docker
