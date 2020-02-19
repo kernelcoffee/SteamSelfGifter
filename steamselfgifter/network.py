@@ -31,7 +31,7 @@ def _check_game_safety(request):
         for good_word in good_words:
             good_counter += len(re.findall(good_word, request.text, flags=re.IGNORECASE))
         if bad_counter > good_counter:
-            logger.warn(f"Safety validation failed: {r.url}")
+            logger.warn(f"Safety validation failed: {request.url}")
             return False
     return True
 
