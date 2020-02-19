@@ -36,21 +36,13 @@ def get_games(wishlist=False):
             for item in game_list:
                 game = GiftGame()
                 game.set_steam_id(item.find("a", {"class": "giveaway__icon"})["href"])
+                game.steam_game = steam.get_game(game.steam_id)
+                game.name = game.steam_game.name
                 game.set_price(item.find_all("span", {"class": "giveaway__heading__thin"}))
                 game.set_url(item.find("a", {"class": "giveaway__heading__name"})["href"])
                 games.append(game)
         except Exception as e:
             logger.error(f"Error while parsing the game list:{str(e)}")
-
-
-def print_result(games):
-    if not games:  # Log result
-        return
-
-    logger.info(f"{len(games)} games have been processed")
-    logger.info(f"Price\tScore\tName")
-    for game in games:
-        logger.info(game.print())
 
 
 settings.init()

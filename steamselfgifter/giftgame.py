@@ -4,10 +4,8 @@ import settings
 import datetime
 import json
 from network import get_page
-from steam.steam import Steam
 
 logger = logging.getLogger(__name__)
-
 
 class GiftGame:
     def __init__(self):
@@ -15,9 +13,11 @@ class GiftGame:
         self.price = 0
         self.url = ""
         self.steam_id = ""
+        self.steam_game = None
         self.ref = ""
         self.is_trap = False
         self.entered = False
+        self.time_left = 0
 
     def set_price(self, price):
         self.price = price
@@ -34,9 +34,6 @@ class GiftGame:
 
     def set_steam_id(self, url):
         self.steam_id = url.split("/")[4]
-        steam = Steam()
-        self.steam_game = steam.get_game(self.steam_id)
-        self.name = self.steam_game.name
 
     def get_age(self):
         date = datetime.strptime(self.steam_game.release_date, "%d %B, %Y")
@@ -75,6 +72,3 @@ class GiftGame:
                 self.entered = True
         except Exception as e:
             logger.error(f"Error while entering giveaway: {str(e)}")
-
-    def print(self):
-        return f"{self.price}\t{self.name}"

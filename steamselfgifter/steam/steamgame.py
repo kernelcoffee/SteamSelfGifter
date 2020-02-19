@@ -12,6 +12,7 @@ class SteamGame:
         self.refresh()
 
     def _update_review_data(self):
+        data = ""
         try:
             r = requests.get(f"https://store.steampowered.com/appreviews/{self.steamid}?json=1")
             data = r.json()
@@ -20,9 +21,11 @@ class SteamGame:
             self.total_negative = int(data["query_summary"]["total_negative"])
             self.total_reviews = int(data["query_summary"]["total_reviews"])
         except Exception as e:
+            print(data)
             logger.error(f"Could not get steam score: {str(e)}")
 
     def _update_data(self):
+        data = ""
         try:
             r = requests.get(f"https://store.steampowered.com/api/appdetails?appids={self.steamid}&json=1")
             data = r.json()
@@ -30,6 +33,7 @@ class SteamGame:
             self.type = data[self.steamid]["data"]["type"]
             self.release_date = data[self.steamid]["data"]["release_date"]["date"]
         except Exception as e:
+            print(data)
             logger.error(f"Could not get steam game data: {str(e)}")
 
     def refresh(self):
