@@ -21,8 +21,8 @@ class SteamGame:
             self.total_negative = int(data["query_summary"]["total_negative"])
             self.total_reviews = int(data["query_summary"]["total_reviews"])
         except Exception as e:
-            print(data)
-            logger.error(f"Could not get steam score: {str(e)}")
+            logger.error(f"Could not get steam score: {str(e)} for {r.url}")
+            logger.error(f"data: {data['query_summary']}")
 
     def _update_data(self):
         data = ""
@@ -33,8 +33,8 @@ class SteamGame:
             self.type = data[self.steamid]["data"]["type"]
             self.release_date = data[self.steamid]["data"]["release_date"]["date"]
         except Exception as e:
-            print(data)
-            logger.error(f"Could not get steam game data: {str(e)}")
+            logger.error(f"Could not get steam game data: {str(e)} for {r.url}")
+            logger.error(f"data: {data[self.steamid]['data']}")
 
     def refresh(self):
         self._update_data()
