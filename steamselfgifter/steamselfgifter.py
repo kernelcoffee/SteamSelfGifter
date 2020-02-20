@@ -40,6 +40,7 @@ def get_games(wishlist=False):
                 game.name = game.steam_game.name
                 game.set_price(item.find_all("span", {"class": "giveaway__heading__thin"}))
                 game.set_url(item.find("a", {"class": "giveaway__heading__name"})["href"])
+                game.date_end = item.find("div", {"class": "giveaway__columns"}).find_all("span")[0]["data-timestamp"]
                 games.append(game)
         except Exception as e:
             logger.error(f"Error while parsing the game list:{str(e)}")
@@ -50,6 +51,9 @@ settings.init()
 while True:
     # Process wishlist
     games = get_games(wishlist=True)
+    if games:
+        logger.info(f"Found {len(games)} games in whishlist to process")
+
     for game in games:
         if game.price < settings.points:
             game.enter()
@@ -60,6 +64,7 @@ while True:
     if settings.points > settings.upper_threshold:  # We have a lot of points left, let's get more games
         time.sleep(random.randint(2, 7))
         games = get_games()
+        logger.info(f"Found {len(games)} games to process")
         for game in games:
             if settings.points <= settings.lower_threshold:
                 logger.info("Not enough points left for non-wishlist games.")
@@ -74,5 +79,5 @@ while True:
                 time.sleep(random.randint(3, 7))
 
     interval = random.randint(900, 1800)
-    logger.info(f"Waiting {round(interval/60)}m for next check")
+    logger.info(f"Waiting {round(interval/60)}m for next check - Current points : {settings.points}")
     time.sleep(interval)

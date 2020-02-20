@@ -1,7 +1,7 @@
 import logging
 import requests
 import settings
-import datetime
+from datetime import datetime
 import json
 from network import get_page
 
@@ -37,6 +37,7 @@ class GiftGame:
 
     def get_age(self):
         date = datetime.strptime(self.steam_game.release_date, "%d %B, %Y")
+        return date
 
     def enter(self):
         """enter to giveaway"""

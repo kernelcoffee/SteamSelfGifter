@@ -25,6 +25,9 @@ def init():
     global game_min_score
     global game_min_reviews
 
+    xsrf_token = ""
+    points = 0
+
     # Init options
     parser = argparse.ArgumentParser()
     parser.add_argument("-v", "--verbose", help="Increase verbosity of output", action="store_true")

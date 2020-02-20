@@ -50,7 +50,7 @@ def get_page(url=settings.MAIN_URL, check_safety=False):
             settings.points = int(soup.find("span", {"class": "nav__points"}).text)  # storage points
             return soup
     except RequestException as e:
-        logger.warning("Cant connect to the site")
+        logger.warning(f"Cant connect to the site : {str(e)}")
         logger.warning("Waiting 2 minutes and reconnect...")
         time.sleep(120)
         get_page()

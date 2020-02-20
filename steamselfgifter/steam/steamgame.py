@@ -22,7 +22,7 @@ class SteamGame:
             self.total_reviews = int(data["query_summary"]["total_reviews"])
         except Exception as e:
             logger.error(f"Could not get steam score: {str(e)} for {r.url}")
-            logger.error(f"data: {data['query_summary']}")
+            logger.error(f"data: {data}")
 
     def _update_data(self):
         data = ""
