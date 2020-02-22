@@ -77,7 +77,7 @@ while True:
     # Process wishlist
     games = get_games(wishlist=True)
     if games:
-        logger.info(f"Found {len(games)} games in whishlist to process")
+        logger.info(f"Found {len(games)} games in whishlist to review")
 
     for game in games:
         if game.price < settings.points:
@@ -89,7 +89,7 @@ while True:
     if settings.points > settings.upper_threshold:  # We have a lot of points left, let's get more games
         time.sleep(random.randint(2, 7))
         games = get_games()
-        logger.info(f"Found {len(games)} games to process")
+        logger.info(f"Found {len(games)} games to review")
         for game in games:
             if settings.points <= settings.lower_threshold:
                 logger.info("Not enough points left for non-wishlist games.")
