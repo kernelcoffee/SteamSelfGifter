@@ -1,15 +1,11 @@
-import logging
 import datetime
 import requests
 import json
-
-logger = logging.getLogger(__name__)
 
 
 class SteamGame:
     def __init__(self, steamid):
         self.steamid = steamid
-        self.refresh()
 
     def _update_review_data(self):
         data = ""
@@ -21,8 +17,7 @@ class SteamGame:
             self.total_negative = int(data["query_summary"]["total_negative"])
             self.total_reviews = int(data["query_summary"]["total_reviews"])
         except Exception as e:
-            logger.error(f"Could not get steam score: {str(e)} for {r.url}")
-            logger.error(f"data: {data}")
+            raise Exception(f"Could not get steam score: {str(e)} for {r.url}")
 
     def _update_data(self):
         data = ""
@@ -33,11 +28,9 @@ class SteamGame:
             self.type = data[self.steamid]["data"]["type"]
             self.release_date = data[self.steamid]["data"]["release_date"]["date"]
         except Exception as e:
-            logger.error(f"Could not get steam game data: {str(e)} for {r.url}")
-            logger.error(f"data: {data[self.steamid]['data']}")
+            raise Exception(f"Could not get steam game data: {str(e)} for {r.url}")
 
     def refresh(self):
         self._update_data()
         self._update_review_data()
         self.modified_at = datetime.datetime.utcnow()
-        logger.info(f"[SteamGame][Refresh] Done refreshing {self.name}")

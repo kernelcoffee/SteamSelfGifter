@@ -16,6 +16,32 @@ random.seed(os.urandom)
 steam = Steam()  # Steam Store game library
 
 
+def process_game(item):
+    game = GiftGame()
+    game.set_url(item.find("a", {"class": "giveaway__heading__name"})["href"])
+    game.set_steam_id(item.find("a", {"class": "giveaway__icon"})["href"])
+    game.set_price(item.find_all("span", {"class": "giveaway__heading__thin"}))
+    game.date_end = item.find("div", {"class": "giveaway__columns"}).find_all("span")[0]["data-timestamp"]
+
+    try:
+        game.steam_game = steam.get_game(game.steam_id)
+        game.name = game.steam_game.name
+    except Exception as e:
+        logger.error(f"{str(e)}")
+        return None
+
+    return game
+
+
+def check_duplicate(game, games):
+    for item in games:
+        if game.ref == item.ref:
+            game.hide()
+            games.remove(item)
+            return True
+    return False
+
+
 def get_games(wishlist=False):
     games = []
     index = 1
@@ -23,27 +49,26 @@ def get_games(wishlist=False):
     end_url = "&type=wishlist" if wishlist else ""
 
     while True:
-        soup = get_page(f"{url}{index}{end_url}")
         try:
-            index += 1
-            game_list = soup.find_all(
-                lambda tag: tag.name == "div" and tag.get("class") == ["giveaway__row-inner-wrap"]
-            )
-
-            if not game_list:
-                return games
-
-            for item in game_list:
-                game = GiftGame()
-                game.set_steam_id(item.find("a", {"class": "giveaway__icon"})["href"])
-                game.steam_game = steam.get_game(game.steam_id)
-                game.name = game.steam_game.name
-                game.set_price(item.find_all("span", {"class": "giveaway__heading__thin"}))
-                game.set_url(item.find("a", {"class": "giveaway__heading__name"})["href"])
-                game.date_end = item.find("div", {"class": "giveaway__columns"}).find_all("span")[0]["data-timestamp"]
-                games.append(game)
+            page_url = f"{url}{index}{end_url}"
+            soup = get_page(page_url)
         except Exception as e:
-            logger.error(f"Error while parsing the game list:{str(e)}")
+            logger.error(f"Failed to parse page {url}: {str(e)}")
+            break
+        index += 1
+
+        game_list = soup.find_all(lambda tag: tag.name == "div" and tag.get("class") == ["giveaway__row-inner-wrap"])
+
+        if not game_list:
+            return games
+
+        for item in game_list:
+            game = process_game(item)
+            if not game:
+                continue
+            logger.info(f"Processing {game.name}")
+            if not check_duplicate(game, games):
+                games.append(game)
 
 
 settings.init()

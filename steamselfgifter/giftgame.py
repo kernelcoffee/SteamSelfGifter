@@ -7,18 +7,8 @@ from network import get_page
 
 logger = logging.getLogger(__name__)
 
-class GiftGame:
-    def __init__(self):
-        self.name = ""
-        self.price = 0
-        self.url = ""
-        self.steam_id = ""
-        self.steam_game = None
-        self.ref = ""
-        self.is_trap = False
-        self.entered = False
-        self.time_left = 0
 
+class GiftGame:
     def set_price(self, price):
         self.price = price
         last_div = None
@@ -71,5 +61,30 @@ class GiftGame:
                 settings.points -= self.price
                 logger.info(f"Giveaway entered for {self.name}, Coins left: {settings.points}")
                 self.entered = True
+        except Exception as e:
+            logger.error(f"Error while entering giveaway: {str(e)}")
+
+    def hide(self):
+        """hide the giveaway"""
+
+        if not self.ref:
+            logger.warning("Not reference for this game, cannot enter")
+            return
+
+        game_url = f"{settings.MAIN_URL}{self.url}"
+
+        soup = get_page(game_url, check_safety=True)
+        game_soup = soup.find("div", {"class": "featured__outer-wrap featured__outer-wrap--giveaway"})
+        game_code = int(game_soup["data-game-id"])
+        try:
+            params = {
+                "xsrf_token": settings.xsrf_token,
+                "game_id": game_code,
+                "do": "hide_giveaways_by_game_id",
+            }
+
+            reponse = requests.post(
+                "https://www.steamgifts.com/ajax.php", data=params, cookies=settings.cookie, headers=settings.headers,
+            )
         except Exception as e:
             logger.error(f"Error while entering giveaway: {str(e)}")
