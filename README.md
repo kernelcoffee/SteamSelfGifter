@@ -15,12 +15,6 @@ pip3 install -r requirements/test.txt
 python steamselfgifter/steamselfgifter.py -c <path_to_config.ini>
 ```
 
-or
-
-``` bash
-PHPSESSID=<PHPSESSID> python steamselfgifter/steamselfgifter.py
-```
-
 ## Docker
 
 Build & run Docker image
@@ -28,7 +22,6 @@ Build & run Docker image
 ``` bash
 docker build -t steamselfgifter .
 docker run -d -v /path/to/config/folder:/config --name steamselfgifter steamselfgifter
-
 ```
 
 **docker-compose:**
@@ -38,19 +31,11 @@ docker run -d -v /path/to/config/folder:/config --name steamselfgifter steamself
   steamselfgifter:
     container_name: steamselfgifter
     image: kernelcoffee/steamselfgifter
-    environment:
-      LOGGING: "INFO"
-      PHPSESSID: <PHPSESSID>
     volumes:
       - /path/to/config/folder:/config
 ```
-You can either use the environment variables or the config file
 
-
-## Variables:
-
-* `LOGGING` : "INFO" or "DEBUG"
-* `PHPSESSID` : SessionID extract from steamgifts
+config file must be named `config.ini`
 
 ## How to get your PHPSESSID
 
