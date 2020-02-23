@@ -1,12 +1,14 @@
-import logging
-import requests
-import settings
-from datetime import datetime
 import json
-from network import get_page
+import logging
+from datetime import datetime
+
+import requests
+
+from settings import Settings
+from network import get_page, MAIN_URL
 
 logger = logging.getLogger(__name__)
-
+settings = Settings.getInstance()
 
 class GiftGame:
     def set_price(self, price):
@@ -40,7 +42,7 @@ class GiftGame:
             logger.info(f"Not enough money ({settings.points}), can't enter giveaway ({self.price})")
             return
 
-        game_url = f"{settings.MAIN_URL}{self.url}"
+        game_url = f"{MAIN_URL}{self.url}"
         soup = get_page(game_url, check_safety=True)
 
         if not soup:
@@ -71,7 +73,7 @@ class GiftGame:
             logger.warning("Not reference for this game, cannot enter")
             return
 
-        game_url = f"{settings.MAIN_URL}{self.url}"
+        game_url = f"{MAIN_URL}{self.url}"
 
         soup = get_page(game_url, check_safety=True)
         game_soup = soup.find("div", {"class": "featured__outer-wrap featured__outer-wrap--giveaway"})
@@ -86,5 +88,20 @@ class GiftGame:
             reponse = requests.post(
                 "https://www.steamgifts.com/ajax.php", data=params, cookies=settings.cookie, headers=settings.headers,
             )
+        except Exception as e:
+            logger.error(f"Error while hiding ering giveaway: {str(e)}")
+
+    def comment(self):
+        game_url = f"{MAIN_URL}{self.url}"
+
+        try:
+            params = {
+                "xsrf_token": settings.xsrf_token,
+                "description": "Thanks !",
+                "do": "comment_new",
+                "parent_id": "",
+            }
+
+            reponse = requests.post(game_url, data=params, cookies=settings.cookie, headers=settings.headers,)
         except Exception as e:
             logger.error(f"Error while entering giveaway: {str(e)}")

@@ -1,18 +1,21 @@
 import logging
-import requests
+import re
 import sys
 import time
-import re
-from requests import RequestException
 
+import requests
 from bs4 import BeautifulSoup
-
-import settings
+from requests import RequestException
+from settings import Settings
 
 logger = logging.getLogger(__name__)
+settings = Settings.getInstance()
 
 forbidden_words = (" ban", " fake", " bot", " not enter", " don't enter")
 good_words = (" bank", " banan", " both", " band", " banner", " bang")
+
+MAIN_URL = "https://www.steamgifts.com"
+WISHLIST_URL = "https://www.steamgifts.com/giveaways/search?"
 
 
 def request_page(url):
@@ -36,24 +39,24 @@ def _check_game_safety(request):
     return True
 
 
-def get_page(url=settings.MAIN_URL, check_safety=False):
+def get_page(url, check_safety=False):
     try:
-        r = requests.get(url, cookies=settings.cookie, headers=settings.headers)
-
-        if check_safety and not _check_game_safety(r):
-            return False
-
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, "html.parser")
-            # Refresh data as soon as possible
-            settings.xsrf_token = soup.find("input", {"name": "xsrf_token"})["value"]
-            settings.points = int(soup.find("span", {"class": "nav__points"}).text)  # storage points
-            return soup
+        r = requests.get(url=url, cookies=settings.cookie, headers=settings.headers)
     except RequestException as e:
         logger.warning(f"Cant connect to the site : {str(e)}")
         logger.warning("Waiting 2 minutes and reconnect...")
         time.sleep(120)
-        get_page()
-    except TypeError:
-        logger.error("Cant recognize your cookie value.")
+        get_page(url)
+    except TypeError as t:
+        logger.error(f"Cant recognize your cookie value: {str(t)}.")
         sys.exit(0)
+
+    if check_safety and not _check_game_safety(r):
+        return False
+
+    if r.status_code == 200:
+        soup = BeautifulSoup(r.text, "html.parser")
+        # Refresh data as soon as possible
+        settings.xsrf_token = soup.find("input", {"name": "xsrf_token"})["value"]
+        settings.points = int(soup.find("span", {"class": "nav__points"}).text)  # storage points
+        return soup

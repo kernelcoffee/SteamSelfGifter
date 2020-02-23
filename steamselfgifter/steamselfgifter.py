@@ -1,20 +1,21 @@
 import logging
-import sys
 import os
-import time
 import random
+import sys
+import time
+
 from bs4 import BeautifulSoup
 
+from settings import Settings
 from giftgame import GiftGame
+from network import MAIN_URL, get_page
 from steam.steam import Steam
-from network import get_page
-import settings
 
 logger = logging.getLogger(__name__)
 random.seed(os.urandom)
 
 steam = Steam()  # Steam Store game library
-
+settings = Settings.getInstance()
 
 def process_game(item):
     game = GiftGame()
@@ -45,7 +46,7 @@ def check_duplicate(game, games):
 def get_games(wishlist=False):
     games = []
     index = 1
-    url = f"{settings.MAIN_URL}/giveaways/search?page="
+    url = f"{MAIN_URL}/giveaways/search?page="
     end_url = "&type=wishlist" if wishlist else ""
 
     while True:
@@ -54,8 +55,8 @@ def get_games(wishlist=False):
             soup = get_page(page_url)
             index += 1
         except Exception as e:
-            logger.error(f"Failed to parse page {url}: {str(e)}")
-            break
+            logger.error(f"Failed to parse page {page_url}: {str(e)}")
+            return games
 
         game_list = soup.find_all(lambda tag: tag.name == "div" and tag.get("class") == ["giveaway__row-inner-wrap"])
 
@@ -68,9 +69,6 @@ def get_games(wishlist=False):
                 continue
             if not check_duplicate(game, games):
                 games.append(game)
-
-
-settings.init()
 
 while True:
     # Process wishlist
