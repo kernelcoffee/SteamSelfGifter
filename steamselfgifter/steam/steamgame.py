@@ -1,6 +1,9 @@
+import logging
 import datetime
 import requests
 import json
+
+logger = logging.getLogger(__name__)
 
 
 class SteamGame:
@@ -34,3 +37,4 @@ class SteamGame:
         self._update_data()
         self._update_review_data()
         self.modified_at = datetime.datetime.utcnow()
+        logger.info(f"[SteamGame][Refresh] Done refreshing {self.name}")

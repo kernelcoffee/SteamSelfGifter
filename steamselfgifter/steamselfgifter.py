@@ -52,10 +52,10 @@ def get_games(wishlist=False):
         try:
             page_url = f"{url}{index}{end_url}"
             soup = get_page(page_url)
+            index += 1
         except Exception as e:
             logger.error(f"Failed to parse page {url}: {str(e)}")
             break
-        index += 1
 
         game_list = soup.find_all(lambda tag: tag.name == "div" and tag.get("class") == ["giveaway__row-inner-wrap"])
 
@@ -66,7 +66,6 @@ def get_games(wishlist=False):
             game = process_game(item)
             if not game:
                 continue
-            logger.info(f"Processing {game.name}")
             if not check_duplicate(game, games):
                 games.append(game)
 
