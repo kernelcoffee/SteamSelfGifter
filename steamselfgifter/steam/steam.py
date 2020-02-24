@@ -19,9 +19,6 @@ class Steam:
         game = self.game_library[steamId]
         if (datetime.utcnow() - game.modified_at) > timedelta(2):
             # Data is more than 2 days old
-            try:
-                game.refresh()
-            except Exception as e:
-                logger.error(f"Failed to refresh steam game : {str(e)}")
-                return None
+            logger.info("SteamGame data is old, updating...")
+            game.refresh()
         return game
