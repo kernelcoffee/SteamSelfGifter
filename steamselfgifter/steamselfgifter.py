@@ -17,6 +17,7 @@ random.seed(os.urandom)
 steam = Steam()  # Steam Store game library
 settings = Settings.getInstance()
 
+
 def process_game(item):
     game = GiftGame()
     game.set_url(item.find("a", {"class": "giveaway__heading__name"})["href"])
@@ -54,11 +55,12 @@ def get_games(wishlist=False):
             page_url = f"{url}{index}{end_url}"
             soup = get_page(page_url)
             index += 1
+            game_list = soup.find_all(
+                lambda tag: tag.name == "div" and tag.get("class") == ["giveaway__row-inner-wrap"]
+            )
         except Exception as e:
             logger.error(f"Failed to parse page {page_url}: {str(e)}")
             return games
-
-        game_list = soup.find_all(lambda tag: tag.name == "div" and tag.get("class") == ["giveaway__row-inner-wrap"])
 
         if not game_list:
             return games
@@ -69,6 +71,7 @@ def get_games(wishlist=False):
                 continue
             if not check_duplicate(game, games):
                 games.append(game)
+
 
 while True:
     # Process wishlist
