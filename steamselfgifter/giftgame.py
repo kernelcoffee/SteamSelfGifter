@@ -75,7 +75,7 @@ class GiftGame:
 
         game_url = f"{MAIN_URL}{self.url}"
 
-        soup = get_page(game_url, check_safety=True)
+        soup = get_page(game_url, check_safety=False)
         game_soup = soup.find("div", {"class": "featured__outer-wrap featured__outer-wrap--giveaway"})
         game_code = int(game_soup["data-game-id"])
         try:
