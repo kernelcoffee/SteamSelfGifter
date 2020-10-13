@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 class SteamGame:
     def __init__(self, steamid):
         self.steamid = steamid
+        self.modified_at = datetime.datetime.utcnow()
 
     def _update_data(self):
         data = ""
