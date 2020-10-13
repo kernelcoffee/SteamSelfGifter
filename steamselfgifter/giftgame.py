@@ -10,6 +10,7 @@ from network import get_page, MAIN_URL
 logger = logging.getLogger(__name__)
 settings = Settings.getInstance()
 
+
 class GiftGame:
     def set_price(self, price):
         self.price = price
@@ -85,7 +86,7 @@ class GiftGame:
                 "do": "hide_giveaways_by_game_id",
             }
 
-            reponse = requests.post(
+            requests.post(
                 "https://www.steamgifts.com/ajax.php", data=params, cookies=settings.cookie, headers=settings.headers,
             )
         except Exception as e:
@@ -102,6 +103,6 @@ class GiftGame:
                 "parent_id": "",
             }
 
-            reponse = requests.post(game_url, data=params, cookies=settings.cookie, headers=settings.headers,)
+            requests.post(game_url, data=params, cookies=settings.cookie, headers=settings.headers,)
         except Exception as e:
             logger.error(f"Error while entering giveaway: {str(e)}")

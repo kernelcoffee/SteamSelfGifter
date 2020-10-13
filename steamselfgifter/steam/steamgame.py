@@ -1,5 +1,4 @@
 import datetime
-import json
 import logging
 import requests
 
@@ -10,6 +9,7 @@ class SteamGame:
     def __init__(self, steamid):
         self.steamid = steamid
         self.modified_at = datetime.datetime.utcnow()
+        self.name = ""
 
     def _update_data(self):
         data = ""
@@ -17,7 +17,7 @@ class SteamGame:
             r = requests.get(f"https://store.steampowered.com/api/appdetails?appids={self.steamid}&json=1")
             data = r.json()
             if not data[self.steamid]["success"]:
-                raise TypeError(f"Giveaway is a bundle, let's skip")
+                raise TypeError("Giveaway is a bundle, let's skip")
             self.name = data[self.steamid]["data"]["name"]
             self.type = data[self.steamid]["data"]["type"]
             self.release_date = data[self.steamid]["data"]["release_date"]["date"]
@@ -30,7 +30,7 @@ class SteamGame:
             r = requests.get(f"https://store.steampowered.com/appreviews/{self.steamid}?json=1")
             data = r.json()
             if not data["success"]:
-                raise Exception(f"Giveaway is a bundle, let's skip")
+                raise Exception("Giveaway is a bundle, let's skip")
             self.review_score = int(data["query_summary"]["review_score"])
             self.total_positive = int(data["query_summary"]["total_positive"])
             self.total_negative = int(data["query_summary"]["total_negative"])
