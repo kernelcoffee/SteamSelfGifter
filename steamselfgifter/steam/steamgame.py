@@ -7,27 +7,28 @@ logger = logging.getLogger(__name__)
 
 class SteamGame:
     def __init__(self, steamid):
-        self.steamid = steamid
+        self.id = steamid
         self.modified_at = datetime.datetime.utcnow()
-        self.name = ""
+        self.is_bundle = False
 
     def _update_data(self):
-        data = ""
+        url = f"https://store.steampowered.com/api/appdetails?appids={self.id}&json=1"
         try:
-            r = requests.get(f"https://store.steampowered.com/api/appdetails?appids={self.steamid}&json=1")
+            r = requests.get(url)
             data = r.json()
-            if not data[self.steamid]["success"]:
+            if not data[self.id]["success"]:
+                self.is_bundle = True
                 raise TypeError("Giveaway is a bundle, let's skip")
-            self.name = data[self.steamid]["data"]["name"]
-            self.type = data[self.steamid]["data"]["type"]
-            self.release_date = data[self.steamid]["data"]["release_date"]["date"]
+            self.name = data[self.id]["data"]["name"]
+            self.type = data[self.id]["data"]["type"]
+            self.release_date = data[self.id]["data"]["release_date"]["date"]
         except Exception as e:
-            raise Exception(f"Could not get steam game data: {str(e)} for {r.url}")
+            raise Exception(f"Could not get steam game data: {str(e)} for {url}")
 
     def _update_review_data(self):
         data = ""
         try:
-            r = requests.get(f"https://store.steampowered.com/appreviews/{self.steamid}?json=1")
+            r = requests.get(f"https://store.steampowered.com/appreviews/{self.id}?json=1")
             data = r.json()
             if not data["success"]:
                 raise Exception("Giveaway is a bundle, let's skip")

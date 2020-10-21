@@ -1,10 +1,7 @@
 import logging
 import os
 import random
-import sys
 import time
-
-from bs4 import BeautifulSoup
 
 from settings import Settings
 from giftgame import GiftGame
@@ -19,18 +16,23 @@ settings = Settings.getInstance()
 
 
 def process_game(item):
-    game = GiftGame()
-    game.set_url(item.find("a", {"class": "giveaway__heading__name"})["href"])
-    game.set_steam_id(item.find("a", {"class": "giveaway__icon"})["href"])
-    game.set_price(item.find_all("span", {"class": "giveaway__heading__thin"}))
-    game.date_end = item.find("div", {"class": "giveaway__columns"}).find_all("span")[0]["data-timestamp"]
+    steam_id = item.find("a", {"class": "giveaway__icon"})["href"].split("/")[4]
 
     try:
-        game.steam_game = steam.get_game(game.steam_id)
-        game.name = game.steam_game.name
+        steam_game = steam.get_game(steam_id)
     except Exception as e:
         logger.error(f"{str(e)}")
         return None
+
+    if steam_game.is_bundle:
+        return None
+
+    game = GiftGame()
+    game.name = steam_game.name
+    game.game = steam_game
+    game.set_url(item.find("a", {"class": "giveaway__heading__name"})["href"])
+    game.set_price(item.find_all("span", {"class": "giveaway__heading__thin"}))
+    game.date_end = item.find("div", {"class": "giveaway__columns"}).find_all("span")[0]["data-timestamp"]
 
     return game
 
@@ -95,8 +97,8 @@ while True:
                 logger.info("Not enough points left for non-wishlist games.")
                 break
 
-            total_review_check = game.steam_game.total_reviews >= settings.game_min_reviews
-            score_check = game.steam_game.review_score >= settings.game_min_score
+            total_review_check = game.game.total_reviews >= settings.game_min_reviews
+            score_check = game.game.review_score >= settings.game_min_score
             price_check = game.price >= settings.game_min_price
 
             if total_review_check and score_check and price_check:
