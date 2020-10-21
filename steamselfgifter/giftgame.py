@@ -25,9 +25,6 @@ class GiftGame:
         self.url = url
         self.ref = self.url.split("/")[2]
 
-    def set_steam_id(self, url):
-        self.steam_id = url.split("/")[4]
-
     def get_age(self):
         date = datetime.strptime(self.steam_game.release_date, "%d %B, %Y")
         return date
