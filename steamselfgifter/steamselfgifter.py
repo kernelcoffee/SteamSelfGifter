@@ -24,9 +24,6 @@ def process_game(item):
         logger.error(f"{str(e)}")
         return None
 
-    if steam_game.is_bundle:
-        return None
-
     game = GiftGame()
     game.name = steam_game.name
     game.game = steam_game
@@ -77,9 +74,9 @@ def get_games(wishlist=False):
 
 while True:
     # Process wishlist
+    logger.info("Looking for games in whishlist")
     games = get_games(wishlist=True)
-    if games:
-        logger.info(f"Found {len(games)} games in whishlist to review")
+    logger.info(f"Found {len(games)} games in whishlist to review")
 
     for game in games:
         if game.price < settings.points:
@@ -88,8 +85,10 @@ while True:
         else:
             logger.info(f"Not enough points for {game.name}, let's skip.")
 
-    if settings.points > settings.upper_threshold:  # We have a lot of points left, let's get more games
+    # We have a lot of points left, let's get more games
+    if settings.points > settings.upper_threshold:
         time.sleep(random.randint(2, 7))
+        logger.info("Looking for games to spend extra coins")
         games = get_games()
         logger.info(f"Found {len(games)} games to review")
         for game in games:

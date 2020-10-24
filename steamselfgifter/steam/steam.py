@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta
+import time
 
 from steam.steamgame import SteamGame
 
@@ -14,6 +15,8 @@ class Steam:
         if not self.game_library.get(steamId):
             self.game_library[steamId] = SteamGame(steamId)
             self.game_library[steamId].refresh()
+            # Slow down request to avoid data rate
+            time.sleep(1)
             return self.game_library[steamId]
 
         game = self.game_library[steamId]

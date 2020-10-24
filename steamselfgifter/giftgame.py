@@ -54,7 +54,10 @@ class GiftGame:
                 "code": self.ref,
             }
             entry = requests.post(
-                "https://www.steamgifts.com/ajax.php", data=params, cookies=settings.cookie, headers=settings.headers,
+                "https://www.steamgifts.com/ajax.php",
+                data=params,
+                cookies=settings.cookie,
+                headers=settings.headers,
             )
             json_data = json.loads(entry.text)
             if json_data["type"] == "success":
@@ -84,7 +87,10 @@ class GiftGame:
             }
 
             requests.post(
-                "https://www.steamgifts.com/ajax.php", data=params, cookies=settings.cookie, headers=settings.headers,
+                "https://www.steamgifts.com/ajax.php",
+                data=params,
+                cookies=settings.cookie,
+                headers=settings.headers,
             )
         except Exception as e:
             logger.error(f"Error while hiding ering giveaway: {str(e)}")
@@ -100,6 +106,11 @@ class GiftGame:
                 "parent_id": "",
             }
 
-            requests.post(game_url, data=params, cookies=settings.cookie, headers=settings.headers,)
+            requests.post(
+                game_url,
+                data=params,
+                cookies=settings.cookie,
+                headers=settings.headers,
+            )
         except Exception as e:
             logger.error(f"Error while entering giveaway: {str(e)}")
