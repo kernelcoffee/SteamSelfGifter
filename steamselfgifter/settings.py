@@ -1,9 +1,7 @@
 import argparse
 import configparser
 import logging
-import os
 import pathlib
-import random
 
 logger = logging.getLogger(__name__)
 logging_format = "%(asctime)s %(levelname)s %(filename)s::%(funcName)s::%(lineno)d - %(message)s"
@@ -15,13 +13,13 @@ class Settings:
     @staticmethod
     def getInstance():
         """ Static access method. """
-        if Settings.__instance == None:
+        if Settings.__instance is None:
             Settings()
         return Settings.__instance
 
     def __init__(self):
         """ Virtually private constructor. """
-        if Settings.__instance != None:
+        if Settings.__instance is not None:
             raise Exception("This class is a singleton!")
         else:
             Settings.__instance = self
