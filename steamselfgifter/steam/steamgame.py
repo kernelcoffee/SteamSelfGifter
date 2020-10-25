@@ -20,6 +20,7 @@ class SteamGame:
 
             self.name = data[self.id]["data"]["name"]
             self.type = "bundle"
+            self.game_id = None
 
             for app in data[self.id]["data"]["apps"]:
                 game = SteamGame(app["id"])
@@ -32,6 +33,8 @@ class SteamGame:
                     self.total_negative = game.total_negative
                     self.total_reviews = game.total_reviews
                     break
+            if not self.game_id:
+                raise Exception("Not a game bundle")
         except Exception as e:
             raise Exception(f"Could not get Steam bundle data: {str(e)} for {url}")
 
@@ -46,9 +49,12 @@ class SteamGame:
                 self._update_bundle()
                 return
             data = data[self.id]["data"]
-            self.name = data["name"]
-            self.type = data["type"]
-            self.release_date = data["release_date"]["date"]
+            if all(key in data for key in ("name", "type", "release_date")):
+                self.name = data["name"]
+                self.type = data["type"]
+                self.release_date = data["release_date"]["date"]
+            else:
+                raise Exception(f"Missing game data for {url}")
         except Exception as e:
             raise Exception(f"Could not get steam game data: {str(e)} for {url}")
 
@@ -64,10 +70,13 @@ class SteamGame:
             if not data["success"]:
                 raise Exception("Giveaway is a bundle, let's skip")
             data = data["query_summary"]
-            self.review_score = int(data["review_score"])
-            self.total_positive = int(data["total_positive"])
-            self.total_negative = int(data["total_negative"])
-            self.total_reviews = int(data["total_reviews"])
+            if all(key in data for key in ("review_score", "total_positive", "total_negative", "total_reviews")):
+                self.review_score = int(data["review_score"])
+                self.total_positive = int(data["total_positive"])
+                self.total_negative = int(data["total_negative"])
+                self.total_reviews = int(data["total_reviews"])
+            else:
+                raise Exception("Missing score data")
         except Exception as e:
             raise Exception(f"Could not get steam score: {str(e)} for {url}")
 

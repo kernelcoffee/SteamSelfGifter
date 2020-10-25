@@ -2,6 +2,9 @@
 PHPSESSID=013456789 <- replace
 user-agent = Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0
 
+[dlc]
+enabled = False
+
 [autojoin]
 enabled = False
 start_at = 350

@@ -51,6 +51,8 @@ class Settings:
             fallback="Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0",
         )
 
+        self.dlc_enabled = config.getboolean("dlc", "enabled", fallback=False)
+
         self.autojoin_enabled = config.getboolean("autojoin", "enabled", fallback=False)
         self.autojoin_start_at = config.getint("autojoin", "start_at", fallback=350)
         self.autojoin_stop_at = config.getint("autojoin", "stop_at", fallback=200)
@@ -73,6 +75,8 @@ class Settings:
         config = configparser.ConfigParser()
 
         config["network"] = {"PHPSESSID": self.session_id, "user-agent": self.user_agent}
+
+        config["dlc"] = {"enabled": self.dlc_enabled}
 
         config["autojoin"] = {
             "enabled": self.autojoin_enabled,
