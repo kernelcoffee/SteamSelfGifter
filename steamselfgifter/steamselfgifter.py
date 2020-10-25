@@ -86,6 +86,11 @@ while True:
     entries = get_games("Wishlist")
     logger.info(f"Found {len(entries)}  to review")
 
+    if settings.dlc_enabled:
+        dlcs = get_games("DLC")
+        entries += dlcs
+        logger.info(f"Found {len(dlcs)} DLC to review")
+
     for entry in entries:
         if entry.price < settings.points:
             entry.enter()

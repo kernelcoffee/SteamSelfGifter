@@ -62,7 +62,7 @@ class GiftGame:
             json_data = json.loads(entry.text)
             if json_data["type"] == "success":
                 settings.points -= self.price
-                logger.info(f"Giveaway entered for {self.name}, Coins left: {settings.points}")
+                logger.info(f"Giveaway entered for {self.game.type} {self.name}, Coins left: {settings.points}")
                 self.entered = True
         except Exception as e:
             logger.error(f"Error while entering giveaway: {str(e)}")
