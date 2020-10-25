@@ -39,19 +39,24 @@ class Settings:
         if args.config and not args.config.exists():
             raise Exception("Config file not found")
 
-        config_path = args.config
-        config.read(config_path)
+        self.config_path = args.config
+        config.read(self.config_path)
 
-        self.log_level = str(config["misc"]["logging"])
+        self.log_level = config.get("misc", "logging", fallback="INFO")
 
         self.session_id = str(config["network"]["PHPSESSID"])
-        self.user_agent = str(config["network"]["user-agent"])
+        self.user_agent = config.get(
+            "network",
+            "user-agent",
+            fallback="Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:72.0) Gecko/20100101 Firefox/72.0",
+        )
 
-        self.upper_threshold = int(config["misc"]["upper_threshold"])
-        self.lower_threshold = int(config["misc"]["lower_threshold"])
-        self.game_min_price = int(config["game"]["min_price"])
-        self.game_min_score = int(config["game"]["min_score"])
-        self.game_min_reviews = int(config["game"]["min_reviews"])
+        self.autojoin_enabled = config.getboolean("autojoin", "enabled", fallback=False)
+        self.autojoin_start_at = config.getint("autojoin", "start_at", fallback=350)
+        self.autojoin_stop_at = config.getint("autojoin", "stop_at", fallback=200)
+        self.autojoin_min_price = config.getint("autojoin", "min_price", fallback=10)
+        self.autojoin_min_score = config.getint("autojoin", "min_score", fallback=7)
+        self.autojoin_min_reviews = config.getint("autojoin", "min_reviews", fallback=1000)
 
         # VERBOSE
         if args.verbose or self.log_level == "INFO":
@@ -62,6 +67,26 @@ class Settings:
             logging.basicConfig(level=logging.DEBUG, format=logging_format)
 
         logger.info("Configuration complete...")
+        self.save()
+
+    def save(self):
+        config = configparser.ConfigParser()
+
+        config["network"] = {"PHPSESSID": self.session_id, "user-agent": self.user_agent}
+
+        config["autojoin"] = {
+            "enabled": self.autojoin_enabled,
+            "start_at": self.autojoin_start_at,
+            "stop_at": self.autojoin_stop_at,
+            "min_price": self.autojoin_min_price,
+            "min_score": self.autojoin_min_score,
+            "min_reviews": self.autojoin_min_reviews,
+        }
+
+        config["misc"] = {"log_level": self.log_level}
+
+        with open(self.config_path, "w") as configfile:
+            config.write(configfile)
 
     @property
     def cookie(self):

@@ -43,15 +43,23 @@ def check_duplicate(game, games):
     return False
 
 
-def get_games(wishlist=False):
+def get_games(filter_selection="All"):
     games = []
     index = 1
     url = f"{MAIN_URL}/giveaways/search?page="
-    end_url = "&type=wishlist" if wishlist else ""
+
+    filter_url = {
+        "All": "",
+        "Wishlist": "&type=wishlist",
+        "Recommended": "&type=recommended",
+        "Copies": "&copy_min=2",
+        "DLC": "&dlc=true",
+        "New": "&type=new",
+    }
 
     while True:
         try:
-            page_url = f"{url}{index}{end_url}"
+            page_url = f"{url}{index}{filter_url[filter_selection]}"
             soup = get_page(page_url)
             index += 1
             game_list = soup.find_all(
@@ -74,31 +82,31 @@ def get_games(wishlist=False):
 
 while True:
     # Process wishlist
-    logger.info("Looking for games in whishlist")
-    games = get_games(wishlist=True)
-    logger.info(f"Found {len(games)} games in whishlist to review")
+    logger.info("Looking for games")
+    entries = get_games("Wishlist")
+    logger.info(f"Found {len(entries)}  to review")
 
-    for game in games:
-        if game.price < settings.points:
-            game.enter()
+    for entry in entries:
+        if entry.price < settings.points:
+            entry.enter()
             time.sleep(random.randint(3, 7))
         else:
-            logger.info(f"Not enough points for {game.name}, let's skip.")
+            logger.info(f"Not enough points for {entry.game.type} {entry.name}, let's skip.")
 
     # We have a lot of points left, let's get more games
-    if settings.points > settings.upper_threshold:
+    if settings.autojoin_enabled and settings.points > settings.autojoin_start_at:
         time.sleep(random.randint(2, 7))
         logger.info("Looking for games to spend extra coins")
         games = get_games()
         logger.info(f"Found {len(games)} games to review")
         for game in games:
-            if settings.points <= settings.lower_threshold:
-                logger.info("Not enough points left for non-wishlist games.")
+            if settings.points <= settings.autojoin_stop_at:
+                logger.info("Not enough points left for automatically joining extra games.")
                 break
 
-            total_review_check = game.game.total_reviews >= settings.game_min_reviews
-            score_check = game.game.review_score >= settings.game_min_score
-            price_check = game.price >= settings.game_min_price
+            total_review_check = game.game.total_reviews >= settings.autojoin_min_reviews
+            score_check = game.game.review_score >= settings.autojoin_min_score
+            price_check = game.price >= settings.autojoin_min_price
 
             if total_review_check and score_check and price_check:
                 game.enter()
