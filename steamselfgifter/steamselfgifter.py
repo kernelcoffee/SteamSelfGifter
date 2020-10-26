@@ -24,6 +24,9 @@ def process_game(item):
         logger.error(f"{str(e)}")
         return None
 
+    if not steam_game.is_valid():
+        return None
+
     game = GiftGame()
     game.name = steam_game.name
     game.game = steam_game
