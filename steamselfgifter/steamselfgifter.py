@@ -17,19 +17,17 @@ settings = Settings.getInstance()
 
 def process_game(item):
     steam_id = item.find("a", {"class": "giveaway__icon"})["href"].split("/")[4]
+    game = GiftGame()
 
     try:
         steam_game = steam.get_game(steam_id)
+        game.game = steam_game
+        game.name = steam_game.name
+
     except Exception as e:
         logger.error(f"{str(e)}")
-        return None
+        game.game = None
 
-    if not steam_game.is_valid():
-        return None
-
-    game = GiftGame()
-    game.name = steam_game.name
-    game.game = steam_game
     game.set_url(item.find("a", {"class": "giveaway__heading__name"})["href"])
     game.set_price(item.find_all("span", {"class": "giveaway__heading__thin"}))
     game.date_end = item.find("div", {"class": "giveaway__columns"}).find_all("span")[0]["data-timestamp"]
@@ -75,10 +73,18 @@ def get_games(filter_selection="All"):
         if not game_list:
             return games
 
+        if index > 3:
+            logger.debug("Too many pages fetched, return game list early")
+            return games
+
         for item in game_list:
             game = process_game(item)
-            if not game:
+
+            if not game.game:
+                logger.info("Game {game.id} doesn't exist on steam, either trash or too old, let's hide it")
+                game.hide()
                 continue
+
             if not check_duplicate(game, games):
                 games.append(game)
 
@@ -97,13 +103,13 @@ while True:
     for entry in entries:
         if entry.price < settings.points:
             entry.enter()
-            time.sleep(random.randint(3, 7))
+            time.sleep(random.randint(8, 12))
         else:
             logger.info(f"Not enough points for {entry.game.type} {entry.name}, let's skip.")
 
     # We have a lot of points left, let's get more games
     if settings.autojoin_enabled and settings.points > settings.autojoin_start_at:
-        time.sleep(random.randint(2, 7))
+        time.sleep(random.randint(8, 12))
         logger.info("Looking for games to spend extra coins")
         games = get_games()
         logger.info(f"Found {len(games)} games to review")
@@ -118,8 +124,8 @@ while True:
 
             if total_review_check and score_check and price_check:
                 game.enter()
-                time.sleep(random.randint(3, 7))
+                time.sleep(random.randint(8, 12))
 
-    interval = random.randint(900, 1800)
+    interval = random.randint(1000, 2000)
     logger.info(f"Waiting {round(interval/60)}m for next check - Current points : {settings.points}")
     time.sleep(interval)

@@ -46,7 +46,7 @@ def get_page(url, check_safety=False):
         logger.warning(f"Cant connect to the site : {str(e)}")
         logger.warning("Waiting 2 minutes and reconnect...")
         time.sleep(120)
-        get_page(url)
+        return get_page(url)
     except TypeError as t:
         logger.error(f"Cant recognize your cookie value: {str(t)}.")
         sys.exit(0)
@@ -54,9 +54,16 @@ def get_page(url, check_safety=False):
     if check_safety and not _check_game_safety(r):
         return False
 
+    if r.status_code == 429:
+        logger.error("Request limit rate hit, waiting 10 minutes before proceeding")
+        time.sleep(600)
+        return get_page(url)
+
     if r.status_code == 200:
         soup = BeautifulSoup(r.text, "html.parser")
         # Refresh data as soon as possible
         settings.xsrf_token = soup.find("input", {"name": "xsrf_token"})["value"]
         settings.points = int(soup.find("span", {"class": "nav__points"}).text)  # storage points
         return soup
+
+    logger.error(f"Unsupported request status code {r.status_code}")
