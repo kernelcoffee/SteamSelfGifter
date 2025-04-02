@@ -9,7 +9,7 @@ from network import MAIN_URL, get_page
 from steam.steam import Steam
 
 logger = logging.getLogger(__name__)
-random.seed(os.urandom)
+random.seed(os.urandom(8))  # Use 8 bytes of random data for seeding
 
 steam = Steam()  # Steam Store game library
 settings = Settings.getInstance()
