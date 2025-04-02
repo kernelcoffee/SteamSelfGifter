@@ -1,7 +1,7 @@
 # Introduction
 
 ### Welcome!
-First off, thank you for considering contributing to the hac-game-lib. We all really appreciate.
+First off, thank you for considering contributing to SteamSelfGifter. We all really appreciate.
 
 ### Resources
 
