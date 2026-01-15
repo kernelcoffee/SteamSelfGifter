@@ -1,116 +1,161 @@
 # SteamSelfGifter
 
-[![Python Version](https://img.shields.io/badge/python-3.13.2-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://github.com/kernelcoffee/SteamSelfGifter/actions/workflows/test.yml/badge.svg)](https://github.com/kernelcoffee/SteamSelfGifter/actions/workflows/test.yml)
+[![Docker](https://github.com/kernelcoffee/SteamSelfGifter/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/kernelcoffee/SteamSelfGifter/actions/workflows/docker-publish.yml)
+[![Python Version](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-SteamSelfGifter is an automated bot for entering Steam game giveaways on SteamGifts.com. It helps you automatically enter giveaways for games you want based on various criteria, including your wishlist, DLC preferences, and customizable auto-join settings.
+SteamSelfGifter is an automated bot for entering Steam game giveaways on SteamGifts.com. It features a modern web interface for managing your giveaway entries, tracking wins, and configuring automation settings.
 
 ## Features
 
-- 🎮 **Wishlist Integration**: Automatically enters giveaways for games on your SteamGifts wishlist
-- 🎯 **DLC Support**: Optional support for DLC giveaways
-- 🤖 **Smart Auto-join**: Automatically enters other giveaways based on customizable criteria:
+- **Web Dashboard**: Modern React-based UI for monitoring and control
+- **Wishlist Integration**: Automatically enters giveaways for games on your Steam wishlist
+- **DLC Support**: Optional support for DLC giveaways
+- **Smart Auto-join**: Automatically enters giveaways based on customizable criteria:
   - Minimum price threshold
   - Minimum review score
   - Minimum number of reviews
-- ⚡ **Rate Limiting**: Built-in delays to avoid detection
-- 🔄 **Duplicate Prevention**: Prevents entering the same giveaway multiple times
-- 🐳 **Docker Support**: Easy deployment using Docker or Docker Compose
+- **Safety Detection**: Detects and avoids trap/scam giveaways with background safety checks
+- **Win Tracking**: Track your wins and win rate statistics
+- **Real-time Updates**: WebSocket-based live notifications
+- **Analytics Dashboard**: View entry statistics and trends
+- **Activity Logs**: View detailed logs of all bot activity
 
-## Prerequisites
+## Quick Start
 
-- Python 3.13.2 or higher
-- SteamGifts account
-- PHPSESSID from SteamGifts (see [How to get your PHPSESSID](#how-to-get-your-phpsessid))
+### Docker (Recommended)
 
-## Installation
+```bash
+# Using the pre-built image from GitHub Container Registry
+docker run -d \
+  --name steamselfgifter \
+  -p 8080:80 \
+  -v steamselfgifter-data:/config \
+  ghcr.io/kernelcoffee/steamselfgifter:latest
 
-### Local Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/SteamSelfGifter.git
-   cd SteamSelfGifter
-   ```
-
-2. Create and activate a virtual environment:
-   ```bash
-   python -m venv env
-   source env/bin/activate  # On Windows: env\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements/test.txt
-   ```
-
-4. Copy the sample configuration:
-   ```bash
-   cp config.ini.sample config.ini
-   ```
-
-5. Edit `config.ini` with your settings (see [Configuration](#configuration))
-
-### Docker Installation
-
-1. Build the Docker image:
-   ```bash
-   docker build -t steamselfgifter .
-   ```
-
-2. Run the container:
-   ```bash
-   docker run -d -v /path/to/config/folder:/config --name steamselfgifter steamselfgifter
-   ```
-
-### Docker Compose
-
-Add the following to your `docker-compose.yml`:
-```yaml
-steamselfgifter:
-  container_name: steamselfgifter
-  image: kernelcoffee/steamselfgifter
-  volumes:
-    - /path/to/config/folder:/config
+# Access the web interface at http://localhost:8080
 ```
 
-## Usage
+Or with Docker Compose:
 
-Run the bot:
 ```bash
-python steamselfgifter/steamselfgifter.py -c config.ini
+# Clone the repository
+git clone https://github.com/kernelcoffee/SteamSelfGifter.git
+cd SteamSelfGifter
+
+# Start with Docker Compose
+docker-compose up -d
+
+# Access the web interface at http://localhost:8080
+```
+
+### Manual Installation
+
+#### Backend
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e .
+
+# Start the backend
+cd src
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+
+#### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev  # Development server at http://localhost:5173
 ```
 
 ## Configuration
 
-Copy `config.ini.sample` to `config.ini` and configure the following sections:
+1. Open the web interface
+2. Go to **Settings**
+3. Enter your SteamGifts PHPSESSID (see below)
+4. Configure your preferences:
+   - Enable/disable automation
+   - Enable/disable DLC giveaways
+   - Set auto-join criteria (min price, score, reviews)
+   - Enable safety check for trap detection
 
-### Network Settings
-- `PHPSESSID`: Your SteamGifts session ID
-- `user-agent`: Your browser's user agent string
-
-### DLC Settings
-- `enabled`: Enable/disable DLC giveaway entries
-
-### Auto-join Settings
-- `enabled`: Enable/disable automatic joining of non-wishlist giveaways
-- `start_at`: Points threshold to start auto-joining
-- `stop_at`: Points threshold to stop auto-joining
-- `min_price`: Minimum game price to consider
-- `min_score`: Minimum review score to consider
-- `min_reviews`: Minimum number of reviews to consider
-
-### Misc Settings
-- `log_level`: Logging level (INFO, DEBUG, etc.)
-
-## How to get your PHPSESSID
+### How to get your PHPSESSID
 
 1. Sign in to [SteamGifts](https://www.steamgifts.com)
 2. Open your browser's developer tools (F12)
-3. Go to the Application/Storage tab
-4. Look for Cookies under Storage
-5. Find the `PHPSESSID` cookie value
-6. Copy this value to your `config.ini`
+3. Go to the **Application** tab (Chrome) or **Storage** tab (Firefox)
+4. Find **Cookies** → `www.steamgifts.com`
+5. Copy the `PHPSESSID` value
+6. Paste it in the Settings page
+
+## Architecture
+
+```
+SteamSelfGifter/
+├── backend/              # FastAPI REST API + SQLite
+│   ├── src/
+│   │   ├── api/          # REST API endpoints
+│   │   ├── core/         # Configuration, logging, exceptions
+│   │   ├── db/           # Database session management
+│   │   ├── models/       # SQLAlchemy ORM models
+│   │   ├── repositories/ # Data access layer
+│   │   ├── services/     # Business logic
+│   │   ├── utils/        # SteamGifts/Steam API clients
+│   │   └── workers/      # Background job scheduler
+│   └── tests/            # Test suite (pytest)
+├── frontend/             # React + TypeScript + Vite + TailwindCSS
+│   └── src/
+│       ├── components/   # Reusable UI components
+│       ├── hooks/        # React Query hooks
+│       ├── pages/        # Page components
+│       └── services/     # API client
+├── docs/                 # Documentation
+├── Dockerfile            # Multi-stage single-container build
+└── docker-compose.yml    # Docker deployment configuration
+```
+
+## API Documentation
+
+Once the backend is running, visit:
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+When running via Docker, the API is available at:
+- http://localhost:8080/api/v1/
+
+## Development
+
+### Running Tests
+
+```bash
+# Backend tests
+cd backend
+pip install -e ".[test]"
+pytest
+
+# Frontend build/lint
+cd frontend
+npm run lint
+npm run build
+```
+
+### Database Migrations
+
+The project uses Alembic for database migrations. Migrations run automatically on startup.
+
+```bash
+# Create a new migration after model changes
+cd backend/src
+alembic revision --autogenerate -m "description"
+
+# Apply migrations manually
+alembic upgrade head
+```
 
 ## Contributing
 
@@ -123,7 +168,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Disclaimer
 
 This bot is for educational purposes only. Please ensure you comply with SteamGifts' terms of service and use this tool responsibly.
-
-## Support
-
-If you encounter any issues or have questions, please open an issue in the GitHub repository.

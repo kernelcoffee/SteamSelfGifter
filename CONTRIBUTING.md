@@ -1,88 +1,83 @@
-# Introduction
+# Contributing to SteamSelfGifter
 
-### Welcome!
-First off, thank you for considering contributing to SteamSelfGifter. We all really appreciate.
+Thank you for considering contributing to SteamSelfGifter!
 
-### Resources
+## Getting Started
 
-Before we start, here are some valuable resources:
-- [Github](https://github.com/kernelcoffee/Orchestrion)
+1. Fork the repository
+2. Clone your fork
+3. Set up development environment (see README.md)
+4. Create a feature branch
+5. Make your changes
+6. Submit a pull request
 
-These guidelines are heavily insprired by https://github.com/nayafia/contributing-template/blob/master/CONTRIBUTING-template.md thanks a lot to them.
+## Development Setup
 
-### Why the guidelines.
+### Backend
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest  # Verify setup
+```
 
-Following these guidelines helps to communicate that you respect the time of the developers managing and developing this open source project. In return, they will reciprocate that respect in addressing your issue, assessing changes, and helping you finalize your pull requests.
+### Frontend
+```bash
+cd frontend
+npm install
+npm test  # Verify setup
+```
 
-### How and what to contribute
+## Guidelines
 
-We are always happy to receive contrbutions. There is a lot of area to contribute too:
-- **Documentation**: the documentation needs to be up to date, so we are always happy to receive contributions on that. This includes tutorials.
-- **Bug fixes**: PR that fix a bug. If it is not already referenced in the issue tracker, please add an issue before sending your PR.
-- **Improvements/new features**: There is a lot of things on the roadmap, if you want to be a dedicated contributor to the point you add and maintain features you should contact us first so we add you to the dev team.
+### Code Style
 
-# Ground Rules
-### Code of conduct and guidelines
+- **Python**: Follow PEP 8, use type hints
+- **TypeScript**: Use strict mode, define interfaces
 
-First of all, we expect everyone (contributors and maintainers alike) to respect the [Code of conduct](https://github.com/arnauddupuis/hac-game-lib/blob/master/CODE_OF_CONDUCT.md).
-It is not a recomandation, it is mandatory.
+### Pull Requests
 
-For all contributions, please respect the following guidelines:
+- One feature/fix per PR
+- Include tests for new functionality
+- Update documentation if needed
+- Keep commits focused and well-described
 
-* Each pull request should implement ONE feature or bugfix. If you want to add or fix more than one thing, submit more than one pull request.
-* Do not commit changes to files that are irrelevant to your feature or bugfix (eg: `.gitignore`).
-* Do not add unnecessary dependencies.
-* Be aware that the pull request review process is not immediate, and is generally proportional to the size of the pull request.
-* Please, check the [pull request checklist](https://github.com/kernelcoffee/orchestrion/blob/master/PULL_REQUEST_REVIEW_CHECKLIST.md) before submitting your PR.
+### Commit Messages
 
-# Your First Contribution
+Use clear, descriptive commit messages:
+```
+Add safety check toggle to settings page
+Fix timezone handling in giveaway end times
+Update API documentation for new endpoints
+```
 
-If you are unsure where to begin look for the following tags:
-- **new coders friendly**: Issues with this tag are easy to address and are well suited for new developpers that want to contribute.
-- **good first issue**: Issues with that tag are good candidates to start contributing the hac-game-lib
-- **Help wanted issues**: issues which should be a bit more involved than beginner issues.
+## Testing
 
-Some resources for newcomers:
-- https://www.firsttimersonly.com/
-- http://makeapullrequest.com/
-- http://www.contribution-guide.org/#contributing-to-open-source-projects
+### Backend
+```bash
+cd backend
+pytest                # All tests
+pytest --cov=src      # With coverage
+```
 
-At this point let me quote from [Active Admin](https://github.com/activeadmin/activeadmin/blob/master/CONTRIBUTING.md):
+### Frontend
+```bash
+cd frontend
+npm test              # All tests
+npm run test:coverage # With coverage
+```
 
->At this point, you're ready to make your changes! Feel free to ask for help; everyone is a beginner at first :smile_cat:
->
->If a maintainer asks you to "rebase" your PR, they're saying that a lot of code has changed, and that you need to update your branch so it's easier to merge.
+## Reporting Issues
 
-Here is a good tutorial on rebasing: https://benmarshall.me/git-rebase/.
+- Check existing issues first
+- Include reproduction steps
+- Provide environment details (OS, Python/Node version)
 
-# Getting started
-### How to submit a contribution.
+## Security
 
-The general process to submit a contribution is as follow:
-1. Create your own fork of the code
-2. Do the changes in your fork
-3. Make sure you went through the [pull request checklist](https://github.com/kernelcoffee/orchestrion/blob/master/PULL_REQUEST_REVIEW_CHECKLIST.md)
-4. Submit a pull request that respects the PR template.
+If you find a security vulnerability, please email the maintainer directly instead of opening a public issue.
 
-# How to add issues
-### Security issues
+## Questions?
 
-If you find a security vulnerability, do NOT open an issue. Email alexandre@kernelcoffee.org instead.  
-
-
-### Bug reports
-
-Please follow the bug report template.
-
-When filing an issue, make sure to answer these five questions:
-1. What version of Python are you using?
-2. What operating system and processor architecture are you using?
-3. What did you do?
-4. What did you expect to happen?
-5. What happened instead?
-
-### How to suggest a feature or enhancement
-
-Ideally a feature request or improvement suggestion should include a description of the problem not addressed by the hac-game-lib, a suggestion of behavior and the solution you would like to see implemented.
-
-In any case, there is a template that should be followed.
+Open an issue for questions or discussion.
