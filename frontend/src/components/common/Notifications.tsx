@@ -32,11 +32,11 @@ function NotificationItem({ notification, onDismiss }: NotificationItemProps) {
       )}
       role="alert"
     >
-      <Icon size={20} className="flex-shrink-0 mt-0.5" />
+      <Icon size={20} className="shrink-0 mt-0.5" />
       <p className="flex-1 text-sm">{notification.message}</p>
       <button
         onClick={onDismiss}
-        className="flex-shrink-0 p-1 hover:opacity-70 transition-opacity"
+        className="shrink-0 p-1 hover:opacity-70 transition-opacity"
         aria-label="Dismiss notification"
       >
         <X size={16} />

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
@@ -34,7 +34,7 @@ function AppContent() {
   const { data: scheduler } = useSchedulerStatus();
 
   return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <BrowserRouter>
       <Layout
         schedulerRunning={scheduler?.running ?? false}
         schedulerPaused={scheduler?.paused ?? false}
