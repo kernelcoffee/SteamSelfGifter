@@ -58,7 +58,10 @@ export function useWebSocketEvent<T = unknown>(
   handler: (data: T, event: WebSocketEvent<T>) => void
 ) {
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+
+  useEffect(() => {
+    handlerRef.current = handler;
+  });
 
   useEffect(() => {
     const unsubscribe = websocketService.on(eventType, (event) => {
@@ -76,7 +79,10 @@ export function useWebSocketEvent<T = unknown>(
  */
 export function useWebSocketAnyEvent(handler: (event: WebSocketEvent) => void) {
   const handlerRef = useRef(handler);
-  handlerRef.current = handler;
+
+  useEffect(() => {
+    handlerRef.current = handler;
+  });
 
   useEffect(() => {
     const unsubscribe = websocketService.onAny((event) => {
