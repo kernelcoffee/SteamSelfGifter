@@ -425,7 +425,7 @@ function EnteredGiveawayRow({ giveaway, onRemoveEntry, isRemoving }: EnteredGive
         <img
           src={giveaway.game_thumbnail}
           alt={giveaway.game_name}
-          className="w-16 h-10 object-cover rounded"
+          className="w-16 h-10 object-cover rounded-sm"
           onError={(e) => {
             e.currentTarget.style.display = 'none';
           }}
@@ -598,7 +598,7 @@ function SessionStatusBanner({ session }: SessionStatusBannerProps) {
     return (
       <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4">
         <div className="flex items-start gap-3">
-          <AlertTriangle className="text-amber-500 flex-shrink-0 mt-0.5" size={20} />
+          <AlertTriangle className="text-amber-500 shrink-0 mt-0.5" size={20} />
           <div className="flex-1">
             <h3 className="font-semibold text-amber-800 dark:text-amber-200">
               Session Not Configured
@@ -625,7 +625,7 @@ function SessionStatusBanner({ session }: SessionStatusBannerProps) {
     return (
       <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4">
         <div className="flex items-start gap-3">
-          <AlertTriangle className="text-red-500 flex-shrink-0 mt-0.5" size={20} />
+          <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={20} />
           <div className="flex-1">
             <h3 className="font-semibold text-red-800 dark:text-red-200">
               Session Invalid or Expired
@@ -651,7 +651,7 @@ function SessionStatusBanner({ session }: SessionStatusBannerProps) {
   return (
     <div className="rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3">
       <div className="flex items-center gap-2">
-        <CheckCircle className="text-green-500 flex-shrink-0" size={18} />
+        <CheckCircle className="text-green-500 shrink-0" size={18} />
         <span className="text-sm text-green-700 dark:text-green-300">
           Connected to SteamGifts
           {session.username && (

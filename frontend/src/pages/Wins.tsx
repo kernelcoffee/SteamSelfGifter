@@ -113,7 +113,7 @@ export function Wins() {
       </div>
 
       {/* Summary Card */}
-      <Card className="bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20 border-yellow-200 dark:border-yellow-800">
+      <Card className="bg-linear-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20 border-yellow-200 dark:border-yellow-800">
         <div className="flex items-center gap-4">
           <div className="p-3 bg-yellow-100 dark:bg-yellow-900/50 rounded-full">
             <Trophy className="text-yellow-600 dark:text-yellow-400" size={24} />
@@ -187,7 +187,7 @@ function WinCard({ giveaway }: WinCardProps) {
   const wonDate = giveaway.won_at ? new Date(giveaway.won_at) : null;
 
   return (
-    <Card className="border-yellow-200 dark:border-yellow-800/50 bg-gradient-to-b from-yellow-50/50 to-transparent dark:from-yellow-900/10">
+    <Card className="border-yellow-200 dark:border-yellow-800/50 bg-linear-to-b from-yellow-50/50 to-transparent dark:from-yellow-900/10">
       <div className="space-y-3">
         {/* Game Thumbnail */}
         {giveaway.game_thumbnail && (

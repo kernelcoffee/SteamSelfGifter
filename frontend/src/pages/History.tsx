@@ -317,7 +317,7 @@ function EntryCard({ entry }: EntryCardProps) {
 
           {/* Error message if failed */}
           {entry.status === 'failed' && entry.error_message && (
-            <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded text-sm text-red-600 dark:text-red-400">
+            <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 rounded-sm text-sm text-red-600 dark:text-red-400">
               {entry.error_message}
             </div>
           )}

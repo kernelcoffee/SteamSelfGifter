@@ -91,10 +91,10 @@ describe('Skeleton', () => {
     expect(container.querySelector('.w-32')).toBeInTheDocument();
   });
 
-  it('should have rounded corners', () => {
+  it('should have rounded-sm corners', () => {
     const { container } = render(<Skeleton />);
 
-    expect(container.querySelector('.rounded')).toBeInTheDocument();
+    expect(container.querySelector('.rounded-sm')).toBeInTheDocument();
   });
 });
 

@@ -115,7 +115,7 @@ export function Settings() {
         <Card>
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
             <div className="flex items-start gap-3">
-              <HelpCircle className="text-blue-500 flex-shrink-0 mt-0.5" size={20} />
+              <HelpCircle className="text-blue-500 shrink-0 mt-0.5" size={20} />
               <div>
                 <h3 className="font-semibold text-blue-800 dark:text-blue-200 mb-2">
                   Getting Started

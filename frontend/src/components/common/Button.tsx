@@ -65,7 +65,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         className={clsx(
           // Base styles
           'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors',
-          'focus:outline-none focus:ring-2 focus:ring-primary-light dark:focus:ring-primary-dark focus:ring-offset-2',
+          'focus:outline-hidden focus:ring-2 focus:ring-primary-light dark:focus:ring-primary-dark focus:ring-offset-2',
           'disabled:opacity-50 disabled:cursor-not-allowed',
           // Variant and size
           variantStyles[variant],

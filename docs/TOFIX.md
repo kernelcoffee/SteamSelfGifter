@@ -30,13 +30,6 @@ This document tracks disabled warnings, skipped tests, and other technical debt 
 
 ## Future Improvements
 
-### Higher Risk Upgrades (Deferred)
-
-| Package | Current | Latest | Notes |
-|---------|---------|--------|-------|
-| Tailwind CSS | 3.x | 4.x | Major config format changes |
-| react-router-dom | 6.x | 7.x | API changes, migration guide available |
-
 ### Code Quality
 
 - [ ] Re-enable `react-hooks/set-state-in-effect` after refactoring affected components
