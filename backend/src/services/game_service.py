@@ -6,6 +6,7 @@ between the GameRepository and external Steam API client.
 
 
 import structlog
+from dateutil import parser as date_parser
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import utcnow
@@ -132,35 +133,33 @@ class GameService:
             date_str = release_info.get("date")
             if date_str:
                 try:
-                    # Try parsing common date formats
-                    # Steam uses formats like "Jan 1, 2020" or "1 Jan, 2020"
-                    from dateutil import parser
-                    parsed_date = parser.parse(date_str).date()
-                    # Store as ISO format string for consistent storage
-                    release_date = parsed_date.isoformat()
-                except Exception:
-                    # If parsing fails, leave as None
+                    # Steam uses formats like "Jan 1, 2020" or "1 Jan, 2020";
+                    # store as ISO format string for consistent storage.
+                    release_date = date_parser.parse(date_str).date().isoformat()
+                except (ValueError, OverflowError):
+                    # Unparseable date ("Coming soon", "Q3 2026", ...) → None
                     pass
 
         # Check if this is a bundle
         is_bundle = game_type == "bundle"
 
-        # Fetch review data from Steam Reviews API
-        review_score = None
-        total_positive = None
-        total_negative = None
+        # Fetch review data from Steam Reviews API (0 = no reviews / unknown,
+        # matching the non-nullable Game columns).
+        review_score = 0
+        total_positive = 0
+        total_negative = 0
 
         if not is_bundle and game_type == "game":
             try:
                 review_data = await self.steam_client.get_app_reviews(app_id)
                 if review_data:
-                    review_score = review_data.get("review_score")
-                    total_positive = review_data.get("total_positive")
-                    total_negative = review_data.get("total_negative")
+                    review_score = review_data.get("review_score") or 0
+                    total_positive = review_data.get("total_positive") or 0
+                    total_negative = review_data.get("total_negative") or 0
             except Exception as e:
                 # If review fetch fails, continue without review data
                 logger.warning("game_review_fetch_failed", app_id=app_id, error=str(e))
-        bundle_content = None
+        bundle_content: list | None = None
         if is_bundle:
             # Extract bundle apps
             bundle_apps = steam_data.get("package_groups", [])
@@ -176,11 +175,7 @@ class GameService:
             if fullgame:
                 game_id = int(fullgame.get("appid", 0)) or None
 
-        total_reviews = (
-            total_positive + total_negative
-            if (total_positive is not None and total_negative is not None)
-            else None
-        )
+        total_reviews = total_positive + total_negative
 
         # Check if game already exists
         existing_game = await self.repo.get_by_id(app_id)
@@ -257,7 +252,7 @@ class GameService:
         return refreshed_count
 
     async def search_games(
-        self, query: str, limit: int | None = 20
+        self, query: str, limit: int = 20
     ) -> list[Game]:
         """
         Search cached games by name.

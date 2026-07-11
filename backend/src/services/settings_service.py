@@ -284,8 +284,8 @@ class SettingsService:
             ...     print(f"Errors: {result['errors']}")
         """
         settings = await self.repo.get_settings()
-        errors = []
-        warnings = []
+        errors: list[str] = []
+        warnings: list[str] = []
 
         # Check authentication
         if not settings.phpsessid:

@@ -203,7 +203,8 @@ class ActivityLogRepository:
         from sqlalchemy import delete
         result = await self.session.execute(delete(ActivityLog))
         await self.session.commit()
-        return result.rowcount
+        # execute() is typed as Result, but DELETE always yields a CursorResult.
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def count(self) -> int:
         """

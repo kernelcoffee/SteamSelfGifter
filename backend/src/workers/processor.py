@@ -16,6 +16,7 @@ from typing import Any
 import structlog
 
 from core.events import event_manager
+from models.settings import Settings
 from services.eligibility import EligibilityCriteria
 from services.giveaway_service import GiveawayService
 from services.notification_service import NotificationService
@@ -46,6 +47,9 @@ async def process_giveaways() -> dict[str, Any]:
             logger.info("giveaway_processing_skipped", reason="autojoin_disabled")
             return _skipped_stats("autojoin_disabled")
 
+        # authenticated=True guarantees the full service stack was built.
+        assert ctx.giveaway_service and ctx.notification_service and ctx.scheduler_service
+
         stats = await _process_entries(
             giveaway_service=ctx.giveaway_service,
             notification_service=ctx.notification_service,
@@ -75,7 +79,7 @@ def _skipped_stats(reason: str) -> dict[str, Any]:
 async def _process_entries(
     giveaway_service: GiveawayService,
     notification_service: NotificationService,
-    settings,
+    settings: Settings,
 ) -> dict[str, Any]:
     """
     Internal entry processing logic.
@@ -107,7 +111,7 @@ async def _process_entries(
     )
     eligible = await giveaway_service.evaluate_and_get_eligible(criteria, limit=max_entries)
 
-    stats = {
+    stats: dict[str, Any] = {
         "eligible": len(eligible),
         "entered": 0,
         "failed": 0,
@@ -244,6 +248,8 @@ async def enter_single_giveaway(giveaway_code: str) -> dict[str, Any]:
     async with automation_context() as ctx:
         if not ctx.authenticated:
             return {"success": False, "points_spent": 0, "error": "Not authenticated"}
+
+        assert ctx.giveaway_service is not None
 
         try:
             entry = await ctx.giveaway_service.enter_giveaway(

@@ -4,6 +4,7 @@ This module provides dependency functions for FastAPI endpoints,
 enabling clean dependency injection of database sessions and service layers.
 """
 
+from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import Depends
@@ -21,7 +22,7 @@ from utils.steamgifts_client import SteamGiftsClient
 
 # Database session dependency
 # This is re-exported from db.session for convenience
-async def get_database() -> AsyncSession:
+async def get_database() -> AsyncGenerator[AsyncSession]:
     """
     Get database session dependency.
 

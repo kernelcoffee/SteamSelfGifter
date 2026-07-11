@@ -500,7 +500,7 @@ class GiveawayService:
 
         # Developer observability (not the user-facing ActivityLog): a one-line
         # breakdown of why the candidate pool did/didn't qualify this cycle.
-        counts = Counter(g.eligibility_reason for g in candidates)
+        counts = Counter(g.eligibility_reason or "unknown" for g in candidates)
         logger.info("eligibility_evaluated", total=len(candidates), **dict(counts))
 
         # candidates are already ordered by price desc, so eligible is too.

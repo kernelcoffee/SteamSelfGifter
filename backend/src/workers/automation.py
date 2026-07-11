@@ -44,7 +44,7 @@ async def automation_cycle() -> dict[str, Any]:
 
     logger.info("automation_cycle_started")
 
-    results = {
+    results: dict[str, Any] = {
         "scan": {"new": 0, "updated": 0, "skipped": False},
         "wishlist": {"new": 0, "updated": 0, "skipped": False},
         "wins": {"new_wins": 0, "skipped": False},
@@ -65,6 +65,8 @@ async def automation_cycle() -> dict[str, Any]:
         giveaway_service = ctx.giveaway_service
         notification_service = ctx.notification_service
         scheduler_service = ctx.scheduler_service
+        # authenticated=True guarantees the full service stack was built.
+        assert giveaway_service and notification_service and scheduler_service
 
         try:
             # === STEP 1: Scan regular giveaways ===
@@ -229,6 +231,7 @@ async def sync_wins_only() -> dict[str, Any]:
         if not ctx.authenticated:
             return {"new_wins": 0, "skipped": True, "reason": "not_authenticated"}
 
+        assert ctx.giveaway_service is not None
         new_wins = await ctx.giveaway_service.sync_wins(pages=1)
 
         logger.info("sync_wins_completed", new_wins=new_wins)

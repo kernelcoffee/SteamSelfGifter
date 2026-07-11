@@ -310,7 +310,7 @@ class SteamGiftsClient:
         # Method 1: Look for nav__avatar-inner-wrap (user avatar link)
         avatar_link = soup.find("a", class_="nav__avatar-inner-wrap")
         if avatar_link:
-            href = avatar_link.get("href", "")
+            href = str(avatar_link.get("href", "") or "")
             username_match = re.search(r"/user/([^/]+)", href)
             if username_match:
                 username = username_match.group(1)
@@ -323,7 +323,7 @@ class SteamGiftsClient:
             if nav_container:
                 user_link = nav_container.find("a", href=re.compile(r"^/user/"))
                 if user_link:
-                    href = user_link.get("href", "")
+                    href = str(user_link.get("href", "") or "")
                     username_match = re.search(r"/user/([^/]+)", href)
                     if username_match:
                         username = username_match.group(1)
@@ -337,7 +337,7 @@ class SteamGiftsClient:
                 while parent and parent.name != "nav":
                     user_link = parent.find("a", href=re.compile(r"^/user/"))
                     if user_link:
-                        href = user_link.get("href", "")
+                        href = str(user_link.get("href", "") or "")
                         username_match = re.search(r"/user/([^/]+)", href)
                         if username_match:
                             username = username_match.group(1)
@@ -406,7 +406,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaways/search"
-        params = {"page": page}
+        params: dict[str, str | int] = {"page": page}
 
         if search_query:
             params["q"] = search_query
@@ -694,7 +694,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaways/won"
-        params = {"page": page}
+        params: dict[str, str | int] = {"page": page}
 
         response = await self._client.get(url, params=params)
 
@@ -818,7 +818,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaways/entered"
-        params = {"page": page}
+        params: dict[str, str | int] = {"page": page}
 
         response = await self._client.get(url, params=params)
 
@@ -1122,7 +1122,7 @@ class SteamGiftsClient:
         if featured:
             game_id = featured.get("data-game-id")
             if game_id:
-                return int(game_id)
+                return int(str(game_id))
 
         return None
 

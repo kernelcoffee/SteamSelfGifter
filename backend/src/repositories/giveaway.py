@@ -50,7 +50,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         super().__init__(Giveaway, session)
 
     async def get_all(
-        self, limit: int | None = None, offset: int = 0
+        self, limit: int | None = None, offset: int | None = None
     ) -> list[Giveaway]:
         """
         Get all giveaways with proper ordering.
@@ -67,7 +67,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         """
         query = select(self.model).order_by(self.model.discovered_at.desc())
 
-        if offset > 0:
+        if offset:
             query = query.offset(offset)
 
         if limit:

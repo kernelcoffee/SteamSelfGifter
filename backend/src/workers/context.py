@@ -23,6 +23,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import AsyncSessionLocal
+from models.settings import Settings
 from services.game_service import GameService
 from services.giveaway_service import GiveawayService
 from services.notification_service import NotificationService
@@ -43,7 +44,7 @@ class AutomationContext:
     """
 
     session: AsyncSession
-    settings: object
+    settings: Settings
     settings_service: SettingsService
     game_service: GameService | None = None
     giveaway_service: GiveawayService | None = None

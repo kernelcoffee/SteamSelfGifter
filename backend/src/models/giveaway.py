@@ -172,6 +172,15 @@ class Giveaway(Base, TimestampMixin):
         comment="When eligibility_reason was last computed (UTC)",
     )
 
+    # ==================== Transient enrichment (not persisted) ====================
+    # Plain Python attributes set by GiveawayService.enrich_giveaways_with_game_data
+    # so API responses can carry game data without an extra join/query per row.
+    __allow_unmapped__ = True
+    game_thumbnail: str | None = None
+    game_review_score: int | None = None
+    game_total_reviews: int | None = None
+    game_review_summary: str | None = None
+
     # ==================== Timestamps ====================
     discovered_at: Mapped[datetime] = mapped_column(
         DateTime,

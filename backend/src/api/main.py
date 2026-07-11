@@ -9,6 +9,7 @@ Creates and configures the FastAPI application with:
 """
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import FastAPI
@@ -136,18 +137,24 @@ app.add_middleware(
 )
 
 # Register exception handlers
-app.add_exception_handler(AppError, app_exception_handler)
-app.add_exception_handler(ConfigurationError, configuration_error_handler)
-app.add_exception_handler(ResourceNotFoundError, resource_not_found_handler)
-app.add_exception_handler(ValidationError, validation_error_handler)
-app.add_exception_handler(SteamGiftsSessionExpiredError, steamgifts_session_expired_handler)
-app.add_exception_handler(SteamGiftsNotConfiguredError, steamgifts_not_configured_handler)
-app.add_exception_handler(SteamGiftsError, steamgifts_error_handler)
-app.add_exception_handler(SteamAPIError, steam_api_error_handler)
-app.add_exception_handler(InsufficientPointsError, insufficient_points_handler)
-app.add_exception_handler(RateLimitError, rate_limit_error_handler)
-app.add_exception_handler(SchedulerError, scheduler_error_handler)
-app.add_exception_handler(Exception, unhandled_exception_handler)
+# Handlers take their concrete exception subclass; Starlette's signature is
+# declared over plain Exception, hence the dict[..., Any] indirection.
+_exception_handlers: dict[type[Exception], Any] = {
+    AppError: app_exception_handler,
+    ConfigurationError: configuration_error_handler,
+    ResourceNotFoundError: resource_not_found_handler,
+    ValidationError: validation_error_handler,
+    SteamGiftsSessionExpiredError: steamgifts_session_expired_handler,
+    SteamGiftsNotConfiguredError: steamgifts_not_configured_handler,
+    SteamGiftsError: steamgifts_error_handler,
+    SteamAPIError: steam_api_error_handler,
+    InsufficientPointsError: insufficient_points_handler,
+    RateLimitError: rate_limit_error_handler,
+    SchedulerError: scheduler_error_handler,
+    Exception: unhandled_exception_handler,
+}
+for _exc_class, _handler in _exception_handlers.items():
+    app.add_exception_handler(_exc_class, _handler)
 
 # Include API routers
 app.include_router(

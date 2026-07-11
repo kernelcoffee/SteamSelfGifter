@@ -46,6 +46,9 @@ async def scan_giveaways() -> dict[str, Any]:
             logger.warning("giveaway_scan_skipped", reason="not_authenticated")
             return _skipped_scan()
 
+        # authenticated=True guarantees the full service stack was built.
+        assert ctx.giveaway_service and ctx.notification_service
+
         max_pages = ctx.settings.max_scan_pages or 3
 
         try:
@@ -105,6 +108,7 @@ async def quick_scan() -> dict[str, Any]:
         if not ctx.authenticated:
             return _skipped_scan()
 
+        assert ctx.giveaway_service is not None
         start_time = datetime.now(UTC)
         new_count, updated_count = await ctx.giveaway_service.sync_giveaways(pages=1)
         scan_time = (datetime.now(UTC) - start_time).total_seconds()

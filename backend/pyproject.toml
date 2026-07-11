@@ -39,6 +39,7 @@ dependencies = [
     "html5lib>=1.1",
     "apscheduler>=3.11.0,<4",
     "structlog>=26.1.0",
+    "python-dateutil>=2.9.0",
     "python-multipart>=0.0.32",
     "websockets>=16.0",
 ]
@@ -54,6 +55,7 @@ dev = [
     "ruff>=0.15.0",
     "mypy>=2.0.0",
     "pre-commit>=4.0.0",
+    "types-python-dateutil>=2.9.0",
 ]
 
 [tool.ruff]
@@ -73,6 +75,13 @@ ignore = []
 
 [tool.mypy]
 python_version = "3.14"
+mypy_path = "src"
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+# APScheduler 3.x ships no type stubs.
+module = "apscheduler.*"
+ignore_missing_imports = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
