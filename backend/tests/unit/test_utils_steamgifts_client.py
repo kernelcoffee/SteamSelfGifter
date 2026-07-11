@@ -779,3 +779,115 @@ class TestDLCScanning:
         assert params["copy_min"] == "10"
         assert params["type"] == "wishlist"
         assert params["page"] == 2
+
+
+# ----------------------------------------------------------------------------
+# Retry / rate-limit request path (_get / _post)
+# ----------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_retries_on_5xx_then_succeeds(steamgifts_client, monkeypatch):
+    """_get retries server errors with backoff and returns the eventual 200."""
+    sleeps = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr("utils.steamgifts_client.asyncio.sleep", fake_sleep)
+
+    error = MagicMock(status_code=500, headers={})
+    ok = MagicMock(status_code=200)
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(side_effect=[error, error, ok])
+    steamgifts_client._client = mock_client
+
+    response = await steamgifts_client._get("https://www.steamgifts.com/x")
+
+    assert response is ok
+    assert mock_client.get.await_count == 3
+    assert sleeps == [1.0, 2.0]  # exponential backoff
+
+
+@pytest.mark.asyncio
+async def test_get_gives_up_after_max_retries(steamgifts_client, monkeypatch):
+    """After max_retries the last error response is returned to the caller."""
+    monkeypatch.setattr("utils.steamgifts_client.asyncio.sleep", AsyncMock())
+
+    error = MagicMock(status_code=503, headers={})
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=error)
+    steamgifts_client._client = mock_client
+
+    response = await steamgifts_client._get("https://www.steamgifts.com/x")
+
+    assert response is error
+    assert mock_client.get.await_count == steamgifts_client.max_retries + 1
+
+
+@pytest.mark.asyncio
+async def test_get_raises_steamgifts_error_on_persistent_transport_failure(
+    steamgifts_client, monkeypatch
+):
+    """Transport-level failures surface as SteamGiftsError after retries."""
+    monkeypatch.setattr("utils.steamgifts_client.asyncio.sleep", AsyncMock())
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(side_effect=httpx.ConnectError("boom"))
+    steamgifts_client._client = mock_client
+
+    with pytest.raises(SteamGiftsError):
+        await steamgifts_client._get("https://www.steamgifts.com/x")
+
+    assert mock_client.get.await_count == steamgifts_client.max_retries + 1
+
+
+@pytest.mark.asyncio
+async def test_get_honors_retry_after_on_429(steamgifts_client, monkeypatch):
+    """A numeric Retry-After header overrides the exponential backoff."""
+    sleeps = []
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr("utils.steamgifts_client.asyncio.sleep", fake_sleep)
+
+    limited = MagicMock(status_code=429, headers={"Retry-After": "7"})
+    ok = MagicMock(status_code=200)
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(side_effect=[limited, ok])
+    steamgifts_client._client = mock_client
+
+    response = await steamgifts_client._get("https://www.steamgifts.com/x")
+
+    assert response is ok
+    assert sleeps == [7.0]
+
+
+@pytest.mark.asyncio
+async def test_post_does_not_retry_on_5xx(steamgifts_client):
+    """POSTs mutate state, so server errors must not be replayed."""
+    error = MagicMock(status_code=500, headers={})
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=error)
+    steamgifts_client._client = mock_client
+
+    response = await steamgifts_client._post("https://www.steamgifts.com/x")
+
+    assert response is error
+    assert mock_client.post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_post_retries_on_connect_error(steamgifts_client, monkeypatch):
+    """A request that never reached the server is safe to retry."""
+    monkeypatch.setattr("utils.steamgifts_client.asyncio.sleep", AsyncMock())
+
+    ok = MagicMock(status_code=200)
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(side_effect=[httpx.ConnectError("boom"), ok])
+    steamgifts_client._client = mock_client
+
+    response = await steamgifts_client._post("https://www.steamgifts.com/x")
+
+    assert response is ok
+    assert mock_client.post.await_count == 2
