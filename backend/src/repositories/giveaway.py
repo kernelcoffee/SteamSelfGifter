@@ -263,6 +263,31 @@ class GiveawayRepository(BaseRepository[Giveaway]):
 
         return giveaways
 
+    async def get_active_unentered(self) -> List[Giveaway]:
+        """
+        Get every active (non-expired), not-yet-entered giveaway.
+
+        Unlike :meth:`get_eligible`, this applies no criteria and no game JOIN —
+        it returns the full candidate pool so each one can be evaluated and have
+        its eligibility reason recorded (including hidden giveaways). Ordered by
+        price descending to match the entry preference.
+
+        Returns:
+            All active, not-entered giveaways.
+        """
+        now = datetime.utcnow()
+        query = (
+            select(self.model)
+            .where(
+                self.model.end_time.isnot(None),
+                self.model.end_time > now,
+                self.model.is_entered == False,  # noqa: E712
+            )
+            .order_by(self.model.price.desc())
+        )
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+
     async def get_by_game(self, game_id: int) -> List[Giveaway]:
         """
         Get all giveaways for a specific game.

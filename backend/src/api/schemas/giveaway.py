@@ -152,7 +152,20 @@ class GiveawayResponse(GiveawayBase):
         examples=["Overwhelmingly Positive"],
     )
 
-    @field_serializer('end_time', 'discovered_at', 'entered_at', 'won_at')
+    # Autojoin eligibility diagnostics (set during each automation/process cycle)
+    eligibility_reason: Optional[str] = Field(
+        default=None,
+        description="Why this giveaway did/didn't qualify for autojoin at the last "
+                    "evaluation (e.g. 'eligible', 'score_below_min', 'no_game_data')",
+        examples=["score_below_min"],
+    )
+    eligibility_checked_at: Optional[datetime] = Field(
+        default=None,
+        description="When eligibility_reason was last computed (UTC)",
+        examples=["2025-10-14T10:05:00"],
+    )
+
+    @field_serializer('end_time', 'discovered_at', 'entered_at', 'won_at', 'eligibility_checked_at')
     def serialize_datetime(self, dt: Optional[datetime], _info) -> Optional[str]:
         """Serialize datetime with UTC timezone suffix."""
         if dt is None:

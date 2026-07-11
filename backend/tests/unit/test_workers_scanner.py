@@ -3,6 +3,8 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.conftest import patch_automation_context
+
 
 @pytest.mark.asyncio
 async def test_scan_giveaways_success():
@@ -11,58 +13,27 @@ async def test_scan_giveaways_success():
 
     mock_settings = MagicMock()
     mock_settings.phpsessid = "test_session"
-    mock_settings.user_agent = "Test Agent"
     mock_settings.max_scan_pages = 3
 
-    with patch("workers.scanner.AsyncSessionLocal") as mock_session_local, \
-         patch("workers.scanner.SettingsService") as mock_settings_service_cls, \
-         patch("workers.scanner.SteamGiftsClient") as mock_sg_client_cls, \
-         patch("workers.scanner.SteamClient") as mock_steam_client_cls, \
-         patch("workers.scanner.GameService"), \
-         patch("workers.scanner.GiveawayService") as mock_giveaway_service_cls, \
-         patch("workers.scanner.NotificationService") as mock_notification_service_cls, \
-         patch("workers.scanner.event_manager") as mock_event_manager:
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.sync_giveaways.return_value = (5, 2)
 
-        # Setup async client mocks
-        mock_sg_client = AsyncMock()
-        mock_sg_client_cls.return_value = mock_sg_client
+    patcher, ctx = patch_automation_context(
+        "workers.scanner", mock_settings, giveaway_service=mock_giveaway_service
+    )
 
-        mock_steam_client = AsyncMock()
-        mock_steam_client_cls.return_value = mock_steam_client
-
-        # Setup mocks
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session_local.return_value = mock_session
-
-        mock_settings_service = AsyncMock()
-        mock_settings_service.get_settings.return_value = mock_settings
-        mock_settings_service_cls.return_value = mock_settings_service
-
-        mock_giveaway_service = AsyncMock()
-        mock_giveaway_service.sync_giveaways.return_value = (5, 2)
-        mock_giveaway_service_cls.return_value = mock_giveaway_service
-
-        mock_notification_service = AsyncMock()
-        mock_notification_service_cls.return_value = mock_notification_service
-
+    with patcher, patch("workers.scanner.event_manager") as mock_event_manager:
         mock_event_manager.broadcast_event = AsyncMock()
 
-        # Run scanner
         results = await scan_giveaways()
 
-        # Verify results
         assert results["new"] == 5
         assert results["updated"] == 2
         assert results["pages_scanned"] == 3
         assert results["skipped"] is False
         assert "scan_time" in results
 
-        # Verify sync was called
         mock_giveaway_service.sync_giveaways.assert_called_once_with(pages=3)
-
-        # Verify event was emitted
         mock_event_manager.broadcast_event.assert_called_once()
 
 
@@ -74,18 +45,9 @@ async def test_scan_giveaways_not_authenticated():
     mock_settings = MagicMock()
     mock_settings.phpsessid = None
 
-    with patch("workers.scanner.AsyncSessionLocal") as mock_session_local, \
-         patch("workers.scanner.SettingsService") as mock_settings_service_cls:
+    patcher, ctx = patch_automation_context("workers.scanner", mock_settings)
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session_local.return_value = mock_session
-
-        mock_settings_service = AsyncMock()
-        mock_settings_service.get_settings.return_value = mock_settings
-        mock_settings_service_cls.return_value = mock_settings_service
-
+    with patcher:
         results = await scan_giveaways()
 
         assert results["skipped"] is True
@@ -100,41 +62,16 @@ async def test_scan_giveaways_error():
 
     mock_settings = MagicMock()
     mock_settings.phpsessid = "test_session"
-    mock_settings.user_agent = "Test Agent"
     mock_settings.max_scan_pages = 3
 
-    with patch("workers.scanner.AsyncSessionLocal") as mock_session_local, \
-         patch("workers.scanner.SettingsService") as mock_settings_service_cls, \
-         patch("workers.scanner.SteamGiftsClient") as mock_sg_client_cls, \
-         patch("workers.scanner.SteamClient") as mock_steam_client_cls, \
-         patch("workers.scanner.GameService"), \
-         patch("workers.scanner.GiveawayService") as mock_giveaway_service_cls, \
-         patch("workers.scanner.NotificationService") as mock_notification_service_cls, \
-         patch("workers.scanner.event_manager") as mock_event_manager:
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.sync_giveaways.side_effect = Exception("API Error")
 
-        # Setup async client mocks
-        mock_sg_client = AsyncMock()
-        mock_sg_client_cls.return_value = mock_sg_client
+    patcher, ctx = patch_automation_context(
+        "workers.scanner", mock_settings, giveaway_service=mock_giveaway_service
+    )
 
-        mock_steam_client = AsyncMock()
-        mock_steam_client_cls.return_value = mock_steam_client
-
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session_local.return_value = mock_session
-
-        mock_settings_service = AsyncMock()
-        mock_settings_service.get_settings.return_value = mock_settings
-        mock_settings_service_cls.return_value = mock_settings_service
-
-        mock_giveaway_service = AsyncMock()
-        mock_giveaway_service.sync_giveaways.side_effect = Exception("API Error")
-        mock_giveaway_service_cls.return_value = mock_giveaway_service
-
-        mock_notification_service = AsyncMock()
-        mock_notification_service_cls.return_value = mock_notification_service
-
+    with patcher, patch("workers.scanner.event_manager") as mock_event_manager:
         mock_event_manager.broadcast_event = AsyncMock()
 
         with pytest.raises(Exception, match="API Error"):
@@ -151,35 +88,15 @@ async def test_quick_scan_success():
 
     mock_settings = MagicMock()
     mock_settings.phpsessid = "test_session"
-    mock_settings.user_agent = "Test Agent"
 
-    with patch("workers.scanner.AsyncSessionLocal") as mock_session_local, \
-         patch("workers.scanner.SettingsService") as mock_settings_service_cls, \
-         patch("workers.scanner.SteamGiftsClient") as mock_sg_client_cls, \
-         patch("workers.scanner.SteamClient") as mock_steam_client_cls, \
-         patch("workers.scanner.GameService"), \
-         patch("workers.scanner.GiveawayService") as mock_giveaway_service_cls:
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.sync_giveaways.return_value = (2, 1)
 
-        # Setup async client mocks
-        mock_sg_client = AsyncMock()
-        mock_sg_client_cls.return_value = mock_sg_client
+    patcher, ctx = patch_automation_context(
+        "workers.scanner", mock_settings, giveaway_service=mock_giveaway_service
+    )
 
-        mock_steam_client = AsyncMock()
-        mock_steam_client_cls.return_value = mock_steam_client
-
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session_local.return_value = mock_session
-
-        mock_settings_service = AsyncMock()
-        mock_settings_service.get_settings.return_value = mock_settings
-        mock_settings_service_cls.return_value = mock_settings_service
-
-        mock_giveaway_service = AsyncMock()
-        mock_giveaway_service.sync_giveaways.return_value = (2, 1)
-        mock_giveaway_service_cls.return_value = mock_giveaway_service
-
+    with patcher:
         results = await quick_scan()
 
         assert results["new"] == 2
@@ -187,7 +104,6 @@ async def test_quick_scan_success():
         assert results["pages_scanned"] == 1
         assert results["skipped"] is False
 
-        # Verify only 1 page was scanned
         mock_giveaway_service.sync_giveaways.assert_called_once_with(pages=1)
 
 
@@ -199,18 +115,9 @@ async def test_quick_scan_not_authenticated():
     mock_settings = MagicMock()
     mock_settings.phpsessid = None
 
-    with patch("workers.scanner.AsyncSessionLocal") as mock_session_local, \
-         patch("workers.scanner.SettingsService") as mock_settings_service_cls:
+    patcher, ctx = patch_automation_context("workers.scanner", mock_settings)
 
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session_local.return_value = mock_session
-
-        mock_settings_service = AsyncMock()
-        mock_settings_service.get_settings.return_value = mock_settings
-        mock_settings_service_cls.return_value = mock_settings_service
-
+    with patcher:
         results = await quick_scan()
 
         assert results["skipped"] is True
@@ -224,41 +131,16 @@ async def test_scan_uses_settings_max_pages():
 
     mock_settings = MagicMock()
     mock_settings.phpsessid = "test_session"
-    mock_settings.user_agent = "Test Agent"
     mock_settings.max_scan_pages = 10  # Custom value
 
-    with patch("workers.scanner.AsyncSessionLocal") as mock_session_local, \
-         patch("workers.scanner.SettingsService") as mock_settings_service_cls, \
-         patch("workers.scanner.SteamGiftsClient") as mock_sg_client_cls, \
-         patch("workers.scanner.SteamClient") as mock_steam_client_cls, \
-         patch("workers.scanner.GameService"), \
-         patch("workers.scanner.GiveawayService") as mock_giveaway_service_cls, \
-         patch("workers.scanner.NotificationService") as mock_notification_service_cls, \
-         patch("workers.scanner.event_manager") as mock_event_manager:
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.sync_giveaways.return_value = (0, 0)
 
-        # Setup async client mocks
-        mock_sg_client = AsyncMock()
-        mock_sg_client_cls.return_value = mock_sg_client
+    patcher, ctx = patch_automation_context(
+        "workers.scanner", mock_settings, giveaway_service=mock_giveaway_service
+    )
 
-        mock_steam_client = AsyncMock()
-        mock_steam_client_cls.return_value = mock_steam_client
-
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session_local.return_value = mock_session
-
-        mock_settings_service = AsyncMock()
-        mock_settings_service.get_settings.return_value = mock_settings
-        mock_settings_service_cls.return_value = mock_settings_service
-
-        mock_giveaway_service = AsyncMock()
-        mock_giveaway_service.sync_giveaways.return_value = (0, 0)
-        mock_giveaway_service_cls.return_value = mock_giveaway_service
-
-        mock_notification_service = AsyncMock()
-        mock_notification_service_cls.return_value = mock_notification_service
-
+    with patcher, patch("workers.scanner.event_manager") as mock_event_manager:
         mock_event_manager.broadcast_event = AsyncMock()
 
         results = await scan_giveaways()
@@ -274,41 +156,16 @@ async def test_scan_defaults_to_3_pages():
 
     mock_settings = MagicMock()
     mock_settings.phpsessid = "test_session"
-    mock_settings.user_agent = "Test Agent"
     mock_settings.max_scan_pages = None  # Not configured
 
-    with patch("workers.scanner.AsyncSessionLocal") as mock_session_local, \
-         patch("workers.scanner.SettingsService") as mock_settings_service_cls, \
-         patch("workers.scanner.SteamGiftsClient") as mock_sg_client_cls, \
-         patch("workers.scanner.SteamClient") as mock_steam_client_cls, \
-         patch("workers.scanner.GameService"), \
-         patch("workers.scanner.GiveawayService") as mock_giveaway_service_cls, \
-         patch("workers.scanner.NotificationService") as mock_notification_service_cls, \
-         patch("workers.scanner.event_manager") as mock_event_manager:
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.sync_giveaways.return_value = (0, 0)
 
-        # Setup async client mocks
-        mock_sg_client = AsyncMock()
-        mock_sg_client_cls.return_value = mock_sg_client
+    patcher, ctx = patch_automation_context(
+        "workers.scanner", mock_settings, giveaway_service=mock_giveaway_service
+    )
 
-        mock_steam_client = AsyncMock()
-        mock_steam_client_cls.return_value = mock_steam_client
-
-        mock_session = AsyncMock()
-        mock_session.__aenter__.return_value = mock_session
-        mock_session.__aexit__.return_value = None
-        mock_session_local.return_value = mock_session
-
-        mock_settings_service = AsyncMock()
-        mock_settings_service.get_settings.return_value = mock_settings
-        mock_settings_service_cls.return_value = mock_settings_service
-
-        mock_giveaway_service = AsyncMock()
-        mock_giveaway_service.sync_giveaways.return_value = (0, 0)
-        mock_giveaway_service_cls.return_value = mock_giveaway_service
-
-        mock_notification_service = AsyncMock()
-        mock_notification_service_cls.return_value = mock_notification_service
-
+    with patcher, patch("workers.scanner.event_manager") as mock_event_manager:
         mock_event_manager.broadcast_event = AsyncMock()
 
         results = await scan_giveaways()

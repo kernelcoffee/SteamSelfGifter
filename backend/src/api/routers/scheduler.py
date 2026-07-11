@@ -13,7 +13,6 @@ from workers.scheduler import scheduler_manager
 from workers.automation import automation_cycle, sync_wins_only
 from workers.scanner import scan_giveaways, quick_scan
 from workers.processor import process_giveaways, enter_single_giveaway
-from workers.safety_checker import safety_check_cycle
 
 router = APIRouter()
 
@@ -83,6 +82,12 @@ async def start_scheduler(settings_service: SettingsServiceDep) -> Dict[str, Any
     except Exception:
         pass
 
+    # Legacy safety-check job cleanup (safety is now inline at entry time)
+    try:
+        scheduler_manager.remove_job("safety_check")
+    except Exception:
+        pass
+
     # Add the single automation cycle job
     scheduler_manager.add_interval_job(
         func=automation_cycle,
@@ -90,27 +95,12 @@ async def start_scheduler(settings_service: SettingsServiceDep) -> Dict[str, Any
         minutes=cycle_interval_minutes,
     )
 
-    # Add safety check job if enabled (runs every 45 seconds)
-    safety_check_enabled = False
-    if settings.safety_check_enabled:
-        try:
-            scheduler_manager.remove_job("safety_check")
-        except Exception:
-            pass
-
-        scheduler_manager.add_interval_job(
-            func=safety_check_cycle,
-            job_id="safety_check",
-            seconds=45,
-        )
-        safety_check_enabled = True
-
     return create_success_response(
         data={
             "message": "Scheduler started with automation cycle",
             "running": scheduler_manager.is_running,
             "cycle_interval_minutes": cycle_interval_minutes,
-            "safety_check_enabled": safety_check_enabled,
+            "safety_check_enabled": settings.safety_check_enabled,
         }
     )
 

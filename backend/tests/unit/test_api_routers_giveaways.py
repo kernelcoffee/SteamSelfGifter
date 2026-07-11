@@ -60,6 +60,8 @@ def create_mock_giveaway(
     mock.game_review_score = None
     mock.game_total_reviews = None
     mock.game_review_summary = None
+    mock.eligibility_reason = None
+    mock.eligibility_checked_at = None
     return mock
 
 

@@ -1,7 +1,9 @@
 """Shared pytest fixtures for all tests."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Generator
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -43,6 +45,53 @@ def reset_scheduler_global():
 
     # Restore the original
     scheduler_module.scheduler_manager = original_manager
+
+
+def patch_automation_context(target_module: str, settings, **service_mocks):
+    """Patch ``<target_module>.automation_context`` to yield a mock context.
+
+    Worker jobs (automation/processor/scanner) get their session, settings and
+    services from ``automation_context``. Tests use this helper to inject a
+    fake context instead of standing up real clients.
+
+    Args:
+        target_module: e.g. ``"workers.scanner"`` — the module whose
+            ``automation_context`` reference is patched.
+        settings: the settings object to expose as ``ctx.settings``. If its
+            ``phpsessid`` is falsy, ``ctx.authenticated`` is False and services
+            stay ``None`` (mirrors the not-authenticated path).
+        **service_mocks: override any context attribute, e.g.
+            ``giveaway_service=mock``, ``notification_service=mock``.
+
+    Returns:
+        A tuple ``(patcher, ctx)`` — use ``patcher`` as a context manager and
+        inspect ``ctx`` for the mock services.
+    """
+    authenticated = bool(getattr(settings, "phpsessid", None))
+
+    ctx = MagicMock()
+    ctx.session = service_mocks.get("session", AsyncMock())
+    ctx.settings = settings
+    ctx.settings_service = service_mocks.get("settings_service", AsyncMock())
+    ctx.authenticated = authenticated
+
+    if authenticated:
+        ctx.game_service = service_mocks.get("game_service", AsyncMock())
+        ctx.giveaway_service = service_mocks.get("giveaway_service", AsyncMock())
+        ctx.notification_service = service_mocks.get("notification_service", AsyncMock())
+        ctx.scheduler_service = service_mocks.get("scheduler_service", AsyncMock())
+    else:
+        ctx.game_service = None
+        ctx.giveaway_service = None
+        ctx.notification_service = None
+        ctx.scheduler_service = None
+
+    @asynccontextmanager
+    async def fake_context():
+        yield ctx
+
+    patcher = patch(f"{target_module}.automation_context", fake_context)
+    return patcher, ctx
 
 
 @pytest.fixture(scope="session")

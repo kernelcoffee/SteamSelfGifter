@@ -66,6 +66,27 @@ class GameRepository(BaseRepository[Game]):
         """
         return await self.get_by_id(app_id)
 
+    async def get_by_ids(self, app_ids) -> dict[int, Game]:
+        """
+        Batch-fetch games by Steam App ID, keyed by id.
+
+        Args:
+            app_ids: iterable of Steam App IDs.
+
+        Returns:
+            Mapping of app_id -> Game for the ids that exist (missing ids are
+            simply absent from the dict).
+
+        Example:
+            >>> games = await repo.get_by_ids([730, 620])
+            >>> games.get(620)
+        """
+        ids = [i for i in set(app_ids) if i is not None]
+        if not ids:
+            return {}
+        result = await self.session.execute(select(Game).where(Game.id.in_(ids)))
+        return {game.id: game for game in result.scalars().all()}
+
     async def search_by_name(
         self, query: str, limit: int = 10
     ) -> List[Game]:

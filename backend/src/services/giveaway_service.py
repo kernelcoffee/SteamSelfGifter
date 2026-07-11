@@ -4,8 +4,11 @@ This module provides the service layer for giveaway operations, coordinating
 between repositories and external SteamGifts client.
 """
 
+from collections import Counter
 from typing import Optional, List, Tuple
 from datetime import datetime
+
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.giveaway import GiveawayRepository
@@ -13,8 +16,11 @@ from repositories.entry import EntryRepository
 from utils.steamgifts_client import SteamGiftsClient
 from core.exceptions import SteamGiftsError
 from services.game_service import GameService
+from services.eligibility import EligibilityCriteria, evaluate_eligibility, ELIGIBLE
 from models.giveaway import Giveaway
 from models.entry import Entry
+
+logger = structlog.get_logger()
 
 
 class GiveawayService:
@@ -455,6 +461,52 @@ class GiveawayService:
         )
 
         return giveaways
+
+    async def evaluate_and_get_eligible(
+        self, criteria: EligibilityCriteria, limit: Optional[int] = None
+    ) -> List[Giveaway]:
+        """
+        Evaluate every active candidate, record why each one did or didn't qualify,
+        and return the eligible giveaways (highest price first, optionally limited).
+
+        This is the decision step for the automation/process cycle. Every active,
+        not-entered giveaway gets ``eligibility_reason`` and ``eligibility_checked_at``
+        persisted, so the UI can show why a giveaway wasn't entered. The returned
+        set is identical to :meth:`get_eligible_giveaways` for the same criteria —
+        only the recorded reasons are new (see :mod:`services.eligibility`).
+
+        Args:
+            criteria: the active autojoin thresholds.
+            limit: maximum number of eligible giveaways to return (None = all).
+
+        Returns:
+            Eligible giveaways, ordered by price descending.
+        """
+        now = datetime.utcnow()
+        candidates = await self.giveaway_repo.get_active_unentered()
+
+        games = await self.game_service.repo.get_by_ids(
+            [g.game_id for g in candidates if g.game_id]
+        )
+
+        eligible: List[Giveaway] = []
+        for giveaway in candidates:
+            game = games.get(giveaway.game_id) if giveaway.game_id else None
+            reason = evaluate_eligibility(giveaway, game, criteria, now)
+            giveaway.eligibility_reason = reason
+            giveaway.eligibility_checked_at = now
+            if reason == ELIGIBLE:
+                eligible.append(giveaway)
+
+        await self.session.commit()
+
+        # Developer observability (not the user-facing ActivityLog): a one-line
+        # breakdown of why the candidate pool did/didn't qualify this cycle.
+        counts = Counter(g.eligibility_reason for g in candidates)
+        logger.info("eligibility_evaluated", total=len(candidates), **dict(counts))
+
+        # candidates are already ordered by price desc, so eligible is too.
+        return eligible[:limit] if limit else eligible
 
     async def get_active_giveaways(
         self, limit: Optional[int] = None, offset: int = 0, min_score: Optional[int] = None,

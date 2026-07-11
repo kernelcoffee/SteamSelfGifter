@@ -109,11 +109,16 @@ def test_system_router_included(client):
     assert response.status_code == status.HTTP_200_OK
 
 
-def test_websocket_router_included():
-    """Test that websocket router is included."""
-    # WebSocket routes are registered
-    routes = [route.path for route in app.routes]
-    assert "/ws/events" in routes
+def test_websocket_router_included(client):
+    """Test that the websocket route /ws/events is registered and routable.
+
+    Checked behaviorally (an actual connection) rather than by introspecting
+    ``app.routes``, whose internal shape changed in FastAPI 0.137
+    (``include_router`` now stores ``_IncludedRouter`` wrappers without ``.path``).
+    """
+    with client.websocket_connect("/ws/events"):
+        # A successful handshake means the route exists and accepts connections.
+        pass
 
 
 def test_exception_handler_resource_not_found(client):

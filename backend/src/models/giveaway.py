@@ -157,6 +157,19 @@ class Giveaway(Base, TimestampMixin):
         comment="Scam detection confidence (0-100)",
     )
 
+    # ==================== Eligibility Diagnostics ====================
+    eligibility_reason: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        comment="Outcome of the last autojoin evaluation (e.g. 'eligible', "
+                "'score_below_min', 'no_game_data'); NULL = never evaluated",
+    )
+    eligibility_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        comment="When eligibility_reason was last computed (UTC)",
+    )
+
     # ==================== Timestamps ====================
     discovered_at: Mapped[datetime] = mapped_column(
         DateTime,

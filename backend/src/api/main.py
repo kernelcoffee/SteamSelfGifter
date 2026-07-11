@@ -62,7 +62,6 @@ async def lifespan(app: FastAPI):
     from services.settings_service import SettingsService
     from workers.scheduler import scheduler_manager
     from workers.automation import automation_cycle
-    from workers.safety_checker import safety_check_cycle
 
     # Startup
     setup_logging()
@@ -97,15 +96,6 @@ async def lifespan(app: FastAPI):
                     job_id="automation_cycle",
                     minutes=scan_interval,
                 )
-
-                # Add safety check job (runs every 45 seconds, slow rate to avoid rate limits)
-                if app_settings.safety_check_enabled:
-                    scheduler_manager.add_interval_job(
-                        func=safety_check_cycle,
-                        job_id="safety_check",
-                        seconds=45,
-                    )
-                    logger.info("safety_check_job_started", interval_seconds=45)
 
                 logger.info(
                     "scheduler_auto_started",

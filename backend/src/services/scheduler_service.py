@@ -29,9 +29,9 @@ class SchedulerService:
     - GiveawayService (giveaway entry logic)
 
     Handles:
-    - Running automation cycles
+    - Scheduler control (start/stop/pause/resume)
     - Tracking scheduler state and statistics
-    - Managing entry limits
+    - Win-check scheduling for entered giveaways
 
     Design Notes:
         - Service layer handles business logic
@@ -43,7 +43,7 @@ class SchedulerService:
         >>> async with AsyncSessionLocal() as session:
         ...     giveaway_service = GiveawayService(...)
         ...     service = SchedulerService(session, giveaway_service)
-        ...     await service.run_automation_cycle()
+        ...     await service.schedule_next_win_check()
     """
 
     def __init__(
@@ -84,106 +84,6 @@ class SchedulerService:
             await self.session.flush()
 
         return state
-
-    async def run_automation_cycle(self) -> Dict[str, Any]:
-        """
-        Run one automation cycle.
-
-        This is the main automation logic that:
-        1. Syncs giveaways from SteamGifts
-        2. Filters eligible giveaways
-        3. Enters giveaways within limits
-        4. Updates state and statistics
-
-        Returns:
-            Dictionary with cycle statistics:
-                - synced: Number of giveaways synced
-                - eligible: Number of eligible giveaways
-                - entered: Number of giveaways entered
-                - failed: Number of failed entries
-                - points_spent: Total points spent
-
-        Example:
-            >>> results = await service.run_automation_cycle()
-            >>> print(f"Entered {results['entered']} giveaways")
-        """
-        settings = await self.settings_repo.get_settings()
-        state = await self._get_or_create_state()
-
-        # Track statistics
-        stats = {
-            "synced": 0,
-            "eligible": 0,
-            "entered": 0,
-            "failed": 0,
-            "points_spent": 0,
-        }
-
-        try:
-            # Sync wishlist giveaways first (higher priority)
-            wishlist_new, wishlist_updated = await self.giveaway_service.sync_giveaways(
-                pages=2,  # Wishlist usually has fewer pages
-                giveaway_type="wishlist",
-                safety_check_enabled=settings.safety_check_enabled,
-            )
-
-            # Sync regular giveaways
-            new, updated = await self.giveaway_service.sync_giveaways(
-                pages=settings.max_scan_pages or 3,
-                safety_check_enabled=settings.safety_check_enabled,
-            )
-            stats["synced"] = new + updated + wishlist_new + wishlist_updated
-
-            # Get eligible giveaways
-            eligible = await self.giveaway_service.get_eligible_giveaways(
-                min_price=settings.autojoin_min_price or 0,
-                max_price=None,  # No max price limit
-                min_score=settings.autojoin_min_score,
-                min_reviews=settings.autojoin_min_reviews,
-                limit=settings.max_entries_per_cycle or 10,
-            )
-            stats["eligible"] = len(eligible)
-
-            # Enter eligible giveaways
-            entered_count = 0
-            failed_count = 0
-
-            max_entries = settings.max_entries_per_cycle or 10
-
-            for giveaway in eligible[:max_entries]:
-                # Try to enter
-                entry = await self.giveaway_service.enter_giveaway(
-                    giveaway.code,
-                    entry_type="auto"
-                )
-
-                if entry:
-                    entered_count += 1
-                    stats["points_spent"] += entry.points_spent
-                else:
-                    failed_count += 1
-
-            stats["entered"] = entered_count
-            stats["failed"] = failed_count
-
-            # Update state statistics
-            state.last_scan_at = datetime.utcnow()
-            state.total_scans += 1
-            state.total_entries += entered_count
-
-            await self.session.commit()
-
-            # Schedule win check for newly entered giveaways
-            if entered_count > 0:
-                await self.schedule_next_win_check()
-
-        except Exception as e:
-            # Record error
-            state.total_errors += 1
-            await self.session.commit()
-            raise e
-
-        return stats
 
     async def get_scheduler_stats(self) -> Dict[str, Any]:
         """

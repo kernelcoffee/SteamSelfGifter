@@ -3,8 +3,15 @@
 Single unified job that performs all automated tasks in sequence:
 1. Scan regular giveaways
 2. Scan wishlist giveaways
-3. Sync wins
-4. Process eligible giveaways (enter them)
+3. Scan DLC giveaways (if enabled)
+4. Sync wins
+5. Sync entered giveaways
+6. Process eligible giveaways (enter them)
+
+This is the engine driven both by the scheduler (interval job) and by the
+manual ``/run`` trigger. It shares its bootstrap with the other workers via
+``automation_context`` and its entry loop with ``/process`` via
+``_process_entries``.
 """
 
 from datetime import datetime, UTC
@@ -12,14 +19,8 @@ from typing import Dict, Any
 
 import structlog
 
-from db.session import AsyncSessionLocal
-from services.giveaway_service import GiveawayService
-from services.game_service import GameService
-from services.settings_service import SettingsService
-from services.notification_service import NotificationService
-from services.scheduler_service import SchedulerService
-from utils.steamgifts_client import SteamGiftsClient
-from utils.steam_client import SteamClient
+from workers.context import automation_context
+from workers.processor import _process_entries
 from core.events import event_manager
 
 logger = structlog.get_logger()
@@ -29,19 +30,11 @@ async def automation_cycle() -> Dict[str, Any]:
     """
     Run a complete automation cycle.
 
-    This is the main automation job that runs all tasks in sequence:
-    1. Scan regular giveaways from SteamGifts
-    2. Scan wishlist giveaways
-    3. Sync wins from the won page
-    4. Process and enter eligible giveaways
+    Runs all tasks in sequence: scan regular + wishlist (+ DLC) giveaways,
+    sync wins, sync entered giveaways, then enter eligible giveaways.
 
     Returns:
-        Dictionary with cycle results:
-            - scan: Scan results (new, updated counts)
-            - wishlist: Wishlist scan results
-            - wins: New wins found
-            - entries: Entry results (entered, failed counts)
-            - cycle_time: Total time for the cycle
+        Dictionary with per-step results and total ``cycle_time``.
 
     Example:
         >>> results = await automation_cycle()
@@ -60,37 +53,18 @@ async def automation_cycle() -> Dict[str, Any]:
         "skipped": False,
     }
 
-    async with AsyncSessionLocal() as session:
-        # Check settings
-        settings_service = SettingsService(session)
-        settings = await settings_service.get_settings()
-
+    async with automation_context() as ctx:
         # Skip if not authenticated
-        if not settings.phpsessid:
+        if not ctx.authenticated:
             logger.warning("automation_cycle_skipped", reason="not_authenticated")
             results["skipped"] = True
             results["reason"] = "not_authenticated"
             return results
 
-        # Create clients (shared across all operations)
-        sg_client = SteamGiftsClient(
-            phpsessid=settings.phpsessid,
-            user_agent=settings.user_agent,
-        )
-        await sg_client.start()
-
-        steam_client = SteamClient()
-        await steam_client.start()
-
-        # Create services
-        game_service = GameService(session=session, steam_client=steam_client)
-        giveaway_service = GiveawayService(
-            session=session,
-            steamgifts_client=sg_client,
-            game_service=game_service,
-        )
-        notification_service = NotificationService(session=session)
-        scheduler_service = SchedulerService(session=session, giveaway_service=giveaway_service)
+        settings = ctx.settings
+        giveaway_service = ctx.giveaway_service
+        notification_service = ctx.notification_service
+        scheduler_service = ctx.scheduler_service
 
         try:
             # === STEP 1: Scan regular giveaways ===
@@ -198,7 +172,6 @@ async def automation_cycle() -> Dict[str, Any]:
                 results["entries"]["reason"] = "autojoin_disabled"
             else:
                 try:
-                    from workers.processor import _process_entries
                     entry_results = await _process_entries(
                         giveaway_service=giveaway_service,
                         notification_service=notification_service,
@@ -242,53 +215,25 @@ async def automation_cycle() -> Dict[str, Any]:
             await event_manager.broadcast_event("automation_cycle_failed", {"error": str(e)})
             raise
 
-        finally:
-            await sg_client.close()
-            await steam_client.close()
-
 
 async def sync_wins_only() -> Dict[str, Any]:
     """
     Sync wins only (manual trigger).
 
     Returns:
-        Dictionary with win sync results
+        Dictionary with win sync results.
     """
     logger.info("sync_wins_started")
 
-    async with AsyncSessionLocal() as session:
-        settings_service = SettingsService(session)
-        settings = await settings_service.get_settings()
-
-        if not settings.phpsessid:
+    async with automation_context() as ctx:
+        if not ctx.authenticated:
             return {"new_wins": 0, "skipped": True, "reason": "not_authenticated"}
 
-        sg_client = SteamGiftsClient(
-            phpsessid=settings.phpsessid,
-            user_agent=settings.user_agent,
-        )
-        await sg_client.start()
+        new_wins = await ctx.giveaway_service.sync_wins(pages=1)
 
-        steam_client = SteamClient()
-        await steam_client.start()
+        logger.info("sync_wins_completed", new_wins=new_wins)
 
-        game_service = GameService(session=session, steam_client=steam_client)
-        giveaway_service = GiveawayService(
-            session=session,
-            steamgifts_client=sg_client,
-            game_service=game_service,
-        )
-
-        try:
-            new_wins = await giveaway_service.sync_wins(pages=1)
-
-            logger.info("sync_wins_completed", new_wins=new_wins)
-
-            return {
-                "new_wins": new_wins,
-                "skipped": False,
-            }
-
-        finally:
-            await sg_client.close()
-            await steam_client.close()
+        return {
+            "new_wins": new_wins,
+            "skipped": False,
+        }
