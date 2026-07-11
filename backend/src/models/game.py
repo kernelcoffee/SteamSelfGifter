@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.time import utcnow
 from models.base import Base, TimestampMixin
 
 
@@ -195,5 +196,5 @@ class Game(Base, TimestampMixin):
         """
         if not self.last_refreshed_at:
             return True
-        days_old = (datetime.utcnow() - self.last_refreshed_at).days
+        days_old = (utcnow() - self.last_refreshed_at).days
         return days_old > 7

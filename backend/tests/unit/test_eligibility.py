@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core.time import utcnow
 from models.base import Base
 from models.game import Game
 from models.giveaway import Giveaway
@@ -151,9 +152,9 @@ async def test_db():
 
 async def _seed(session):
     """A mixed pool covering every reason code; returns no value."""
-    # The code under test uses the real clock (datetime.utcnow()), so seed
+    # The code under test uses the real clock (utcnow()), so seed
     # relative to it — a fixed date would silently expire the whole pool.
-    now = datetime.utcnow()
+    now = utcnow()
     future = now + timedelta(days=2)
     past = now - timedelta(days=2)
 

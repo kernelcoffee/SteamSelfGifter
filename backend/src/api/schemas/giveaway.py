@@ -102,7 +102,7 @@ class GiveawayResponse(GiveawayBase):
         ...     url="https://www.steamgifts.com/giveaway/AbCd1/",
         ...     game_name="Portal 2",
         ...     price=50,
-        ...     discovered_at=datetime.utcnow()
+        ...     discovered_at=utcnow()
         ... )
     """
 

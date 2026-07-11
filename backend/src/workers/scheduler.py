@@ -254,7 +254,7 @@ class SchedulerManager:
 
         Example:
             >>> from datetime import datetime, timedelta
-            >>> run_at = datetime.utcnow() + timedelta(hours=2)
+            >>> run_at = utcnow() + timedelta(hours=2)
             >>> scheduler_manager.add_date_job(
             ...     func=check_wins,
             ...     job_id="win_check_123",

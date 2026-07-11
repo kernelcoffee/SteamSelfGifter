@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time import utcnow
 from models.scheduler_state import SchedulerState
 from repositories.giveaway import GiveawayRepository
 from repositories.settings import SettingsRepository
@@ -129,7 +130,7 @@ class SchedulerService:
 
         Example:
             >>> from datetime import datetime, timedelta
-            >>> next_time = datetime.utcnow() + timedelta(minutes=30)
+            >>> next_time = utcnow() + timedelta(minutes=30)
             >>> await service.update_next_scan_time(next_time)
         """
         state = await self._get_or_create_state()
@@ -271,8 +272,8 @@ class SchedulerService:
         run_date = next_giveaway.end_time + timedelta(minutes=5)
 
         # Don't schedule in the past
-        if run_date <= datetime.utcnow():
-            run_date = datetime.utcnow() + timedelta(minutes=1)
+        if run_date <= utcnow():
+            run_date = utcnow() + timedelta(minutes=1)
 
         # Schedule the job
         self._schedule_win_check_job(run_date)

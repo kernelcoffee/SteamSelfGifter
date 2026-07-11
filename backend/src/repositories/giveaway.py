@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time import utcnow
 from models.game import Game
 from models.giveaway import Giveaway
 from repositories.base import BaseRepository
@@ -118,7 +119,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             >>> len(active)
             10
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         # Base conditions
         conditions = [
@@ -201,7 +202,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             ...     limit=5
             ... )
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         # Base filters: active, not hidden, not entered, price range
         conditions = [
@@ -275,7 +276,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         Returns:
             All active, not-entered giveaways.
         """
-        now = datetime.utcnow()
+        now = utcnow()
         query = (
             select(self.model)
             .where(
@@ -335,7 +336,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         Example:
             >>> entered = await repo.get_entered(limit=20, active_only=True)
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         conditions = [self.model.is_entered == True]  # noqa: E712
 
@@ -372,7 +373,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         Example:
             >>> wishlist = await repo.get_wishlist(limit=20)
         """
-        now = datetime.utcnow()
+        now = utcnow()
         query = (
             select(self.model)
             .where(
@@ -493,7 +494,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             True
         """
         if entered_at is None:
-            entered_at = datetime.utcnow()
+            entered_at = utcnow()
 
         return await self.update(
             giveaway_id, is_entered=True, entered_at=entered_at
@@ -516,7 +517,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             >>> # Get giveaways ending in next 6 hours
             >>> expiring = await repo.get_expiring_soon(hours=6, limit=10)
         """
-        now = datetime.utcnow()
+        now = utcnow()
         cutoff = now + timedelta(hours=hours)
 
         query = (
@@ -550,7 +551,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             >>> count = await repo.count_active()
             >>> print(f"Active giveaways: {count}")
         """
-        now = datetime.utcnow()
+        now = utcnow()
         query = select(self.model).where(
             and_(
                 self.model.end_time.isnot(None),
@@ -664,7 +665,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             >>> if next_ga:
             ...     print(f"Next expires at: {next_ga.end_time}")
         """
-        now = datetime.utcnow()
+        now = utcnow()
         query = (
             select(self.model)
             .where(
@@ -693,7 +694,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
 
         Example:
             >>> from datetime import datetime, timedelta
-            >>> thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            >>> thirty_days_ago = utcnow() - timedelta(days=30)
             >>> count = await repo.count_entered_since(thirty_days_ago)
         """
         from sqlalchemy import func
@@ -720,7 +721,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
 
         Example:
             >>> from datetime import datetime, timedelta
-            >>> thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            >>> thirty_days_ago = utcnow() - timedelta(days=30)
             >>> count = await repo.count_won_since(thirty_days_ago)
         """
         from sqlalchemy import func
@@ -747,12 +748,12 @@ class GiveawayRepository(BaseRepository[Giveaway]):
 
         Example:
             >>> from datetime import datetime, timedelta
-            >>> week_ago = datetime.utcnow() - timedelta(days=7)
+            >>> week_ago = utcnow() - timedelta(days=7)
             >>> stats = await repo.get_stats_since(week_ago)
         """
         from sqlalchemy import case, func
 
-        now = datetime.utcnow()
+        now = utcnow()
 
         query = select(
             func.count().label("total"),
@@ -886,7 +887,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             >>> if unchecked:
             ...     await safety_check(unchecked[0])
         """
-        now = datetime.utcnow()
+        now = utcnow()
 
         query = (
             select(self.model)

@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.time import utcnow
 from models.base import Base, TimestampMixin
 
 
@@ -175,7 +176,7 @@ class Giveaway(Base, TimestampMixin):
     discovered_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
-        default=datetime.utcnow,
+        default=utcnow,
         comment="When we first discovered this",
     )
     entered_at: Mapped[datetime | None] = mapped_column(
@@ -202,7 +203,7 @@ class Giveaway(Base, TimestampMixin):
         """
         if not self.end_time:
             return True  # Unknown end time, assume active
-        return datetime.utcnow() < self.end_time
+        return utcnow() < self.end_time
 
     @property
     def is_expired(self) -> bool:
@@ -223,7 +224,7 @@ class Giveaway(Base, TimestampMixin):
             Seconds remaining (int), 0 if expired, or None if end_time unknown.
 
         Example:
-            >>> giveaway.end_time = datetime.utcnow() + timedelta(hours=2)
+            >>> giveaway.end_time = utcnow() + timedelta(hours=2)
             >>> giveaway.time_remaining
             7200  # 2 hours in seconds
         """
@@ -231,4 +232,4 @@ class Giveaway(Base, TimestampMixin):
             return None
         if self.is_expired:
             return 0
-        return int((self.end_time - datetime.utcnow()).total_seconds())
+        return int((self.end_time - utcnow()).total_seconds())

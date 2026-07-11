@@ -1,11 +1,12 @@
 """Unit tests for GameService."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core.time import utcnow
 from models.base import Base
 from services.game_service import GameService
 from utils.steam_client import SteamAPIError, SteamClient
@@ -68,7 +69,7 @@ async def test_get_or_fetch_game_from_cache(test_db, mock_steam_client):
             id=730,
             name="CS:GO",
             type="game",
-            last_refreshed_at=datetime.utcnow(),
+            last_refreshed_at=utcnow(),
         )
         await session.commit()
 
@@ -89,7 +90,7 @@ async def test_get_or_fetch_game_fetches_when_stale(test_db, mock_steam_client):
         service = GameService(session, mock_steam_client)
 
         # Create stale game in cache (include review fields which are NOT NULL)
-        old_date = datetime.utcnow() - timedelta(days=35)
+        old_date = utcnow() - timedelta(days=35)
         await service.repo.create(
             id=730,
             name="Old CS:GO",
@@ -170,7 +171,7 @@ async def test_get_or_fetch_game_force_refresh(test_db, mock_steam_client):
             id=730,
             name="Old Name",
             type="game",
-            last_refreshed_at=datetime.utcnow(),
+            last_refreshed_at=utcnow(),
             review_score=0,
             total_positive=0,
             total_negative=0,
@@ -197,7 +198,7 @@ async def test_get_or_fetch_game_api_error_returns_cache(test_db, mock_steam_cli
         service = GameService(session, mock_steam_client)
 
         # Create stale game in cache
-        old_date = datetime.utcnow() - timedelta(days=35)
+        old_date = utcnow() - timedelta(days=35)
         await service.repo.create(
             id=730,
             name="CS:GO",
@@ -248,7 +249,7 @@ async def test_save_game_from_steam_data_updates_existing(test_db, mock_steam_cl
         service = GameService(session, mock_steam_client)
 
         # Create existing game with old timestamp
-        old_timestamp = datetime.utcnow() - timedelta(days=30)
+        old_timestamp = utcnow() - timedelta(days=30)
         await service.repo.create(
             id=123,
             name="Old Name",
@@ -301,7 +302,7 @@ async def test_refresh_stale_games(test_db, mock_steam_client):
         service = GameService(session, mock_steam_client)
 
         # Create stale games (include review fields which are NOT NULL)
-        old_date = datetime.utcnow() - timedelta(days=35)
+        old_date = utcnow() - timedelta(days=35)
         for i in range(3):
             await service.repo.create(
                 id=100 + i,
@@ -334,7 +335,7 @@ async def test_refresh_stale_games_handles_errors(test_db, mock_steam_client):
         service = GameService(session, mock_steam_client)
 
         # Create stale games (include review fields which are NOT NULL)
-        old_date = datetime.utcnow() - timedelta(days=35)
+        old_date = utcnow() - timedelta(days=35)
         for i in range(3):
             await service.repo.create(
                 id=100 + i,
@@ -431,8 +432,8 @@ async def test_get_game_cache_stats(test_db, mock_steam_client):
         service = GameService(session, mock_steam_client)
 
         # Create fresh and stale games
-        fresh_date = datetime.utcnow()
-        stale_date = datetime.utcnow() - timedelta(days=35)
+        fresh_date = utcnow()
+        stale_date = utcnow() - timedelta(days=35)
 
         await service.repo.create(
             id=1, name="Fresh Game", type="game", last_refreshed_at=fresh_date
@@ -479,7 +480,7 @@ async def test_bulk_cache_games_skips_fresh(test_db, mock_steam_client):
 
         # Create fresh game
         await service.repo.create(
-            id=730, name="CS:GO", type="game", last_refreshed_at=datetime.utcnow()
+            id=730, name="CS:GO", type="game", last_refreshed_at=utcnow()
         )
         await session.commit()
 

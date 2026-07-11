@@ -4,10 +4,11 @@ This module provides the EventManager class for broadcasting events to
 connected WebSocket clients, enabling real-time updates in the web UI.
 """
 
-from datetime import datetime
 from typing import Any
 
 from fastapi import WebSocket
+
+from core.time import utcnow
 
 
 class EventManager:
@@ -122,7 +123,7 @@ class EventManager:
         event = {
             "type": event_type,
             "data": data,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
         }
 
         # Track disconnected clients for removal

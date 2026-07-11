@@ -5,11 +5,12 @@ methods for searching games, finding stale cache entries, and managing
 Steam game metadata.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time import utcnow
 from models.game import Game
 from repositories.base import BaseRepository
 
@@ -136,7 +137,7 @@ class GameRepository(BaseRepository[Game]):
             ...     # Refresh game data from Steam API
             ...     pass
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days_threshold)
+        cutoff_date = utcnow() - timedelta(days=days_threshold)
 
         stmt = select(Game).where(
             or_(
@@ -248,7 +249,7 @@ class GameRepository(BaseRepository[Game]):
             This method does NOT commit the transaction. The caller must
             call session.commit() to persist changes to the database.
         """
-        return await self.update(app_id, last_refreshed_at=datetime.utcnow())
+        return await self.update(app_id, last_refreshed_at=utcnow())
 
     async def bulk_mark_refreshed(self, app_ids: list[int]) -> None:
         """
@@ -265,7 +266,7 @@ class GameRepository(BaseRepository[Game]):
             This method does NOT commit the transaction. The caller must
             call session.commit() to persist changes to the database.
         """
-        now = datetime.utcnow()
+        now = utcnow()
         for app_id in app_ids:
             await self.update(app_id, last_refreshed_at=now)
 

@@ -102,7 +102,7 @@ class GameResponse(GameBase):
         ...     name="Portal 2",
         ...     type="game",
         ...     review_score=9,
-        ...     last_refreshed_at=datetime.utcnow()
+        ...     last_refreshed_at=utcnow()
         ... )
     """
 
@@ -214,7 +214,7 @@ class GameRefreshResponse(BaseModel):
         >>> response = GameRefreshResponse(
         ...     refreshed=True,
         ...     message="Game data refreshed successfully",
-        ...     last_refreshed_at=datetime.utcnow()
+        ...     last_refreshed_at=utcnow()
         ... )
     """
 

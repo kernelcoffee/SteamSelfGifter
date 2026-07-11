@@ -4,11 +4,11 @@ This module provides the service layer for game operations, coordinating
 between the GameRepository and external Steam API client.
 """
 
-from datetime import datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time import utcnow
 from models.game import Game
 from repositories.game import GameRepository
 from utils.steam_client import SteamAPIError, SteamClient
@@ -198,7 +198,7 @@ class GameService:
             existing_game.total_positive = total_positive
             existing_game.total_negative = total_negative
             existing_game.total_reviews = total_reviews
-            existing_game.last_refreshed_at = datetime.utcnow()
+            existing_game.last_refreshed_at = utcnow()
 
             return existing_game
         else:
@@ -216,7 +216,7 @@ class GameService:
                 total_positive=total_positive,
                 total_negative=total_negative,
                 total_reviews=total_reviews,
-                last_refreshed_at=datetime.utcnow(),
+                last_refreshed_at=utcnow(),
             )
 
             return game

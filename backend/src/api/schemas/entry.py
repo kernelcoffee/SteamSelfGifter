@@ -59,7 +59,7 @@ class EntryResponse(EntryBase):
         ...     points_spent=50,
         ...     entry_type="manual",
         ...     status="success",
-        ...     entered_at=datetime.utcnow()
+        ...     entered_at=utcnow()
         ... )
     """
 

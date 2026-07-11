@@ -5,12 +5,12 @@ between repositories and external SteamGifts client.
 """
 
 from collections import Counter
-from datetime import datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import SteamGiftsError
+from core.time import utcnow
 from models.entry import Entry
 from models.giveaway import Giveaway
 from repositories.entry import EntryRepository
@@ -171,7 +171,6 @@ class GiveawayService:
             >>> new_wins = await service.sync_wins(pages=2)
             >>> print(f"Found {new_wins} new wins!")
         """
-        from datetime import datetime
 
         new_wins = 0
 
@@ -186,7 +185,7 @@ class GiveawayService:
                     if giveaway and not giveaway.is_won:
                         # Mark as won
                         giveaway.is_won = True
-                        giveaway.won_at = win.get("won_at") or datetime.utcnow()
+                        giveaway.won_at = win.get("won_at") or utcnow()
                         new_wins += 1
 
                     elif not giveaway:
@@ -200,7 +199,7 @@ class GiveawayService:
                             game_id=win.get("game_id"),
                             is_entered=True,
                             is_won=True,
-                            won_at=win.get("won_at") or datetime.utcnow(),
+                            won_at=win.get("won_at") or utcnow(),
                         )
                         new_wins += 1
 
@@ -481,7 +480,7 @@ class GiveawayService:
         Returns:
             Eligible giveaways, ordered by price descending.
         """
-        now = datetime.utcnow()
+        now = utcnow()
         candidates = await self.giveaway_repo.get_active_unentered()
 
         games = await self.game_service.repo.get_by_ids(

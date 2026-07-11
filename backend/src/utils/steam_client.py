@@ -11,6 +11,8 @@ from typing import Any
 import httpx
 import structlog
 
+from core.time import utcnow
+
 logger = structlog.get_logger()
 
 
@@ -53,7 +55,7 @@ class RateLimiter:
     async def __aenter__(self):
         """Acquire rate limit (async context manager)."""
         async with self.lock:
-            now = datetime.utcnow()
+            now = utcnow()
 
             # Remove old calls outside window
             cutoff = now - self.window
@@ -71,7 +73,7 @@ class RateLimiter:
                     self.calls = self.calls[1:]
 
             # Record this call
-            self.calls.append(datetime.utcnow())
+            self.calls.append(utcnow())
 
         return self
 

@@ -1,6 +1,5 @@
 """Unit tests for settings API router."""
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,6 +14,7 @@ from api.routers.settings import (
     validate_configuration,
 )
 from api.schemas.settings import SettingsUpdate, SteamGiftsCredentials
+from core.time import utcnow
 from models.settings import Settings
 
 
@@ -40,8 +40,8 @@ def create_mock_settings():
     settings.entry_delay_min = 8
     settings.entry_delay_max = 12
     settings.last_synced_at = None
-    settings.created_at = datetime.utcnow()
-    settings.updated_at = datetime.utcnow()
+    settings.created_at = utcnow()
+    settings.updated_at = utcnow()
     return settings
 
 

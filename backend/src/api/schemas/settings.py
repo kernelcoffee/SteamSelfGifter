@@ -163,8 +163,8 @@ class SettingsResponse(SettingsBase):
         ...     id=1,
         ...     user_agent="Mozilla/5.0...",
         ...     autojoin_enabled=True,
-        ...     created_at=datetime.utcnow(),
-        ...     updated_at=datetime.utcnow()
+        ...     created_at=utcnow(),
+        ...     updated_at=utcnow()
         ... )
     """
 

@@ -1,6 +1,5 @@
 """Unit tests for giveaway API schemas."""
 
-from datetime import datetime
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +15,7 @@ from api.schemas.giveaway import (
     GiveawayScanResponse,
     GiveawayStats,
 )
+from core.time import utcnow
 
 
 def test_giveaway_base():
@@ -44,7 +44,7 @@ def test_giveaway_base_with_optional_fields():
         price=50,
         game_id=620,
         copies=2,
-        end_time=datetime.utcnow(),
+        end_time=utcnow(),
         is_safe=True,
         safety_score=95
     )
@@ -85,7 +85,7 @@ def test_giveaway_response():
         url="https://www.steamgifts.com/giveaway/AbCd1/",
         game_name="Portal 2",
         price=50,
-        discovered_at=datetime.utcnow()
+        discovered_at=utcnow()
     )
 
     assert giveaway.id == 123
@@ -95,10 +95,10 @@ def test_giveaway_response():
 def test_giveaway_list():
     """Test GiveawayList."""
     giveaway1 = GiveawayResponse(
-        id=1, code="GA1", url="test", game_name="Game 1", price=50, discovered_at=datetime.utcnow()
+        id=1, code="GA1", url="test", game_name="Game 1", price=50, discovered_at=utcnow()
     )
     giveaway2 = GiveawayResponse(
-        id=2, code="GA2", url="test", game_name="Game 2", price=75, discovered_at=datetime.utcnow()
+        id=2, code="GA2", url="test", game_name="Game 2", price=75, discovered_at=utcnow()
     )
 
     giveaway_list = GiveawayList(giveaways=[giveaway1, giveaway2])

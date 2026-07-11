@@ -1,12 +1,12 @@
 """Unit tests for SteamClient."""
 
 import asyncio
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
+from core.time import utcnow
 from utils.steam_client import (
     RateLimiter,
     SteamAPIError,
@@ -34,7 +34,7 @@ async def test_rate_limiter_blocks_when_limit_exceeded():
     """Test rate limiter blocks calls when limit exceeded."""
     limiter = RateLimiter(max_calls=2, window_seconds=1)
 
-    start = datetime.utcnow()
+    start = utcnow()
 
     # First 2 calls should be instant
     for _ in range(2):
@@ -45,7 +45,7 @@ async def test_rate_limiter_blocks_when_limit_exceeded():
     async with limiter:
         pass
 
-    elapsed = (datetime.utcnow() - start).total_seconds()
+    elapsed = (utcnow() - start).total_seconds()
 
     # Should have waited ~1 second
     assert elapsed >= 0.9  # Allow small timing variance
@@ -66,10 +66,10 @@ async def test_rate_limiter_sliding_window():
     await asyncio.sleep(1)
 
     # Old calls still in window, should block
-    start = datetime.utcnow()
+    start = utcnow()
     async with limiter:
         pass
-    elapsed = (datetime.utcnow() - start).total_seconds()
+    elapsed = (utcnow() - start).total_seconds()
 
     assert elapsed >= 0.9  # Should wait ~1 more second
 
@@ -211,9 +211,9 @@ async def test_request_500_retries(steam_client):
     steam_client._client = mock_client
     steam_client.max_retries = 3
 
-    start = datetime.utcnow()
+    start = utcnow()
     result = await steam_client._request("https://example.com")
-    elapsed = (datetime.utcnow() - start).total_seconds()
+    elapsed = (utcnow() - start).total_seconds()
 
     assert result == {"success": True}
     # Should have waited 1s + 2s = 3s for exponential backoff
@@ -405,7 +405,7 @@ async def test_rate_limiting_applied_to_requests(steam_client):
 
     steam_client._client = mock_client
 
-    start = datetime.utcnow()
+    start = utcnow()
 
     # First 2 calls should be instant
     await steam_client._request("https://example.com")
@@ -414,7 +414,7 @@ async def test_rate_limiting_applied_to_requests(steam_client):
     # Third call should wait
     await steam_client._request("https://example.com")
 
-    elapsed = (datetime.utcnow() - start).total_seconds()
+    elapsed = (utcnow() - start).total_seconds()
 
     # Should have rate limited the third call
     assert elapsed >= 0.9

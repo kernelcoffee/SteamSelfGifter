@@ -4,10 +4,11 @@ This module provides base Pydantic schemas for API responses,
 ensuring consistent response structure across all endpoints.
 """
 
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from core.time import utcnow
 
 
 class ResponseMeta(BaseModel):
@@ -310,7 +311,7 @@ def create_success_response(
         True
     """
     meta = ResponseMeta(
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=utcnow().isoformat() + "Z",
         request_id=request_id,
         page=page,
         per_page=per_page,
@@ -353,7 +354,7 @@ def create_error_response(
         False
     """
     meta = ResponseMeta(
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=utcnow().isoformat() + "Z",
         request_id=request_id,
     )
 

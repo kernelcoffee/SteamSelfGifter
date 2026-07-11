@@ -6,7 +6,6 @@ system information, and activity logs.
 
 import csv
 import json
-from datetime import datetime
 from io import StringIO
 from typing import Any
 
@@ -16,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from api.dependencies import NotificationServiceDep
 from api.schemas.common import create_success_response
 from core.config import settings
+from core.time import utcnow
 
 router = APIRouter()
 
@@ -43,7 +43,7 @@ async def health_check() -> dict[str, Any]:
     return create_success_response(
         data={
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
             "version": "0.1.0",
         }
     )
@@ -225,12 +225,12 @@ async def export_logs(
             writer.writerows(logs_data)
         content = output.getvalue()
         media_type = "text/csv"
-        filename = f"logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+        filename = f"logs_{utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
     else:
         # Generate JSON
         content = json.dumps(logs_data, indent=2)
         media_type = "application/json"
-        filename = f"logs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+        filename = f"logs_{utcnow().strftime('%Y%m%d_%H%M%S')}.json"
 
     return StreamingResponse(
         iter([content]),

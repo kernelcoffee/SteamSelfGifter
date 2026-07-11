@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.time import utcnow
+
 
 class TestSteamGiftsClientGetWonGiveaways:
     """Tests for SteamGiftsClient.get_won_giveaways method."""
@@ -175,7 +177,7 @@ class TestGiveawayRepositoryNextExpiring:
         from repositories.giveaway import GiveawayRepository
 
         # Create mock giveaways with different end times
-        now = datetime.utcnow()
+        now = utcnow()
 
         mock_session = AsyncMock()
         mock_result = MagicMock()

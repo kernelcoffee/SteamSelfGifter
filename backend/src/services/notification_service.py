@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.time import utcnow
 from models.activity_log import ActivityLog
 from repositories.activity_log import ActivityLogRepository
 
@@ -150,13 +151,12 @@ class NotificationService:
             ... )
             >>> # API layer would then broadcast 'event' via WebSocket
         """
-        from datetime import datetime
 
         # Prepare event structure
         event = {
             "type": event_type,
             "data": data,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
         }
 
         # Optionally log to activity log

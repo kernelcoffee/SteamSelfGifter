@@ -216,8 +216,8 @@ class EntryRepository(BaseRepository[Entry]):
 
         Example:
             >>> # Get entries from last 7 days
-            >>> start = datetime.utcnow() - timedelta(days=7)
-            >>> end = datetime.utcnow()
+            >>> start = utcnow() - timedelta(days=7)
+            >>> end = utcnow()
             >>> recent = await repo.get_in_date_range(start, end)
         """
         query = (
@@ -412,7 +412,7 @@ class EntryRepository(BaseRepository[Entry]):
 
         Example:
             >>> from datetime import datetime, timedelta
-            >>> week_ago = datetime.utcnow() - timedelta(days=7)
+            >>> week_ago = utcnow() - timedelta(days=7)
             >>> stats = await repo.get_stats_since(week_ago)
         """
         from sqlalchemy import case, func
@@ -496,7 +496,7 @@ class EntryRepository(BaseRepository[Entry]):
 
         Example:
             >>> # Get entries from last hour
-            >>> one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            >>> one_hour_ago = utcnow() - timedelta(hours=1)
             >>> recent = await repo.get_entries_since(one_hour_ago)
         """
         query = (

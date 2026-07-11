@@ -10,6 +10,7 @@ from api.routers.system import (
     health_check,
     system_info,
 )
+from core.time import utcnow
 from models.activity_log import ActivityLog
 
 
@@ -20,7 +21,7 @@ def create_mock_activity_log(log_id: int, level: str, event_type: str, message: 
     log.level = level
     log.event_type = event_type
     log.message = message
-    log.created_at = datetime.utcnow()
+    log.created_at = utcnow()
     return log
 
 
