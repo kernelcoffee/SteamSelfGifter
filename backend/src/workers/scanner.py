@@ -5,18 +5,18 @@ Exposed as the manual ``/scan`` and ``/scan/quick`` triggers; the scheduled
 cycle performs the same scan step inline via ``automation_cycle``.
 """
 
-from datetime import datetime, UTC
-from typing import Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
-from workers.context import automation_context
 from core.events import event_manager
+from workers.context import automation_context
 
 logger = structlog.get_logger()
 
 
-def _skipped_scan() -> Dict[str, Any]:
+def _skipped_scan() -> dict[str, Any]:
     """Uniform 'not authenticated' scan result."""
     return {
         "new": 0,
@@ -28,7 +28,7 @@ def _skipped_scan() -> Dict[str, Any]:
     }
 
 
-async def scan_giveaways() -> Dict[str, Any]:
+async def scan_giveaways() -> dict[str, Any]:
     """
     Scan SteamGifts for giveaways and sync to database (manual trigger).
 
@@ -90,7 +90,7 @@ async def scan_giveaways() -> Dict[str, Any]:
             raise
 
 
-async def quick_scan() -> Dict[str, Any]:
+async def quick_scan() -> dict[str, Any]:
     """
     Perform a quick scan (single page only).
 

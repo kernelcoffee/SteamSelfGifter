@@ -4,8 +4,8 @@ This module provides Pydantic schemas for game-related
 API requests and responses.
 """
 
-from typing import Optional
 from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -32,31 +32,31 @@ class GameBase(BaseModel):
         description="Type (game, dlc, bundle, etc.)",
         examples=["game"],
     )
-    release_date: Optional[str] = Field(
+    release_date: str | None = Field(
         default=None,
         description="Release date string",
         examples=["Apr 18, 2011"],
     )
-    review_score: Optional[int] = Field(
+    review_score: int | None = Field(
         default=None,
         description="Steam review score (0-10)",
         ge=0,
         le=10,
         examples=[9],
     )
-    total_positive: Optional[int] = Field(
+    total_positive: int | None = Field(
         default=None,
         description="Number of positive reviews",
         ge=0,
         examples=[150000],
     )
-    total_negative: Optional[int] = Field(
+    total_negative: int | None = Field(
         default=None,
         description="Number of negative reviews",
         ge=0,
         examples=[5000],
     )
-    total_reviews: Optional[int] = Field(
+    total_reviews: int | None = Field(
         default=None,
         description="Total number of reviews",
         ge=0,
@@ -67,22 +67,22 @@ class GameBase(BaseModel):
         description="Whether this is a bundle",
         examples=[False],
     )
-    bundle_content: Optional[list[int]] = Field(
+    bundle_content: list[int] | None = Field(
         default=None,
         description="List of App IDs in bundle (if is_bundle)",
         examples=[[620, 400]],
     )
-    game_id: Optional[int] = Field(
+    game_id: int | None = Field(
         default=None,
         description="Parent game ID (for DLC)",
         examples=[620],
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None,
         description="Game description",
         examples=["Portal 2 is a puzzle-platform game..."],
     )
-    price: Optional[int] = Field(
+    price: int | None = Field(
         default=None,
         description="Price in cents (USD)",
         ge=0,
@@ -106,7 +106,7 @@ class GameResponse(GameBase):
         ... )
     """
 
-    last_refreshed_at: Optional[datetime] = Field(
+    last_refreshed_at: datetime | None = Field(
         default=None,
         description="Last time game data was refreshed from Steam",
         examples=["2025-10-14T12:00:00"],
@@ -181,25 +181,25 @@ class GameFilter(BaseModel):
         ... )
     """
 
-    type: Optional[str] = Field(
+    type: str | None = Field(
         default=None,
         description="Filter by type (game, dlc, bundle)",
         examples=["game"],
     )
-    min_score: Optional[int] = Field(
+    min_score: int | None = Field(
         default=None,
         description="Minimum review score (0-10)",
         ge=0,
         le=10,
         examples=[7],
     )
-    min_reviews: Optional[int] = Field(
+    min_reviews: int | None = Field(
         default=None,
         description="Minimum number of reviews",
         ge=0,
         examples=[1000],
     )
-    search: Optional[str] = Field(
+    search: str | None = Field(
         default=None,
         description="Search by game name",
         examples=["Portal"],
@@ -228,7 +228,7 @@ class GameRefreshResponse(BaseModel):
         description="Refresh result message",
         examples=["Game data refreshed successfully"],
     )
-    last_refreshed_at: Optional[datetime] = Field(
+    last_refreshed_at: datetime | None = Field(
         default=None,
         description="When game data was last refreshed",
         examples=["2025-10-14T12:00:00"],

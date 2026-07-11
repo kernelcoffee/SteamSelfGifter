@@ -8,33 +8,32 @@ Three layers:
 3. Persistence — a process cycle records a reason on every candidate.
 """
 
-import pytest
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
 from models.game import Game
 from models.giveaway import Giveaway
-from services.game_service import GameService
-from services.giveaway_service import GiveawayService
 from services.eligibility import (
+    ELIGIBLE,
+    ENTERED,
+    EXPIRED,
+    GAME_TOO_OLD,
+    HIDDEN,
+    NO_GAME_DATA,
+    PRICE_ABOVE_MAX,
+    PRICE_BELOW_MIN,
+    REVIEWS_BELOW_MIN,
+    SCORE_BELOW_MIN,
     EligibilityCriteria,
     evaluate_eligibility,
-    ELIGIBLE,
-    EXPIRED,
-    HIDDEN,
-    ENTERED,
-    PRICE_BELOW_MIN,
-    PRICE_ABOVE_MAX,
-    NO_GAME_DATA,
-    SCORE_BELOW_MIN,
-    REVIEWS_BELOW_MIN,
-    GAME_TOO_OLD,
 )
-
+from services.game_service import GameService
+from services.giveaway_service import GiveawayService
 
 NOW = datetime(2026, 6, 17, 12, 0, 0)
 

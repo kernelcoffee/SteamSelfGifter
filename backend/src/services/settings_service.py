@@ -4,13 +4,14 @@ This module provides the service layer for settings operations, adding
 validation and business logic on top of the SettingsRepository.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from repositories.settings import SettingsRepository
-from models.settings import Settings
-from utils.steamgifts_client import SteamGiftsClient
 from core.exceptions import SteamGiftsAuthError, SteamGiftsError
+from models.settings import Settings
+from repositories.settings import SettingsRepository
+from utils.steamgifts_client import SteamGiftsClient
 
 
 class SettingsService:
@@ -133,7 +134,7 @@ class SettingsService:
         return await self.repo.update_settings(**kwargs)
 
     async def set_steamgifts_credentials(
-        self, phpsessid: str, user_agent: Optional[str] = None
+        self, phpsessid: str, user_agent: str | None = None
     ) -> Settings:
         """
         Set SteamGifts credentials.
@@ -195,7 +196,7 @@ class SettingsService:
         """
         return await self.repo.is_authenticated()
 
-    async def get_autojoin_config(self) -> Dict[str, Any]:
+    async def get_autojoin_config(self) -> dict[str, Any]:
         """
         Get autojoin configuration.
 
@@ -209,7 +210,7 @@ class SettingsService:
         """
         return await self.repo.get_autojoin_config()
 
-    async def get_scheduler_config(self) -> Dict[str, Any]:
+    async def get_scheduler_config(self) -> dict[str, Any]:
         """
         Get scheduler configuration.
 
@@ -267,7 +268,7 @@ class SettingsService:
             entry_delay_max=12,  # Integer default
         )
 
-    async def validate_configuration(self) -> Dict[str, Any]:
+    async def validate_configuration(self) -> dict[str, Any]:
         """
         Validate current configuration.
 
@@ -314,7 +315,7 @@ class SettingsService:
             "warnings": warnings,
         }
 
-    async def test_session(self) -> Dict[str, Any]:
+    async def test_session(self) -> dict[str, Any]:
         """
         Test if the configured PHPSESSID is valid.
 

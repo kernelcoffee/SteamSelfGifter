@@ -1,8 +1,9 @@
 """Unit tests for WebSocket event manager."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from core.events import EventManager, event_manager
 

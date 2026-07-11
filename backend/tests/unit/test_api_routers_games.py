@@ -1,19 +1,20 @@
 """Unit tests for games API router."""
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
-from datetime import datetime, UTC
 from fastapi import HTTPException
 
 from api.routers.games import (
-    list_games,
-    get_game_stats,
-    search_games,
-    get_highly_rated_games,
+    bulk_cache_games,
     get_game,
+    get_game_stats,
+    get_highly_rated_games,
+    list_games,
     refresh_game,
     refresh_stale_games,
-    bulk_cache_games,
+    search_games,
 )
 
 

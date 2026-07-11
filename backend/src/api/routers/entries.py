@@ -4,42 +4,43 @@ This module provides REST API endpoints for viewing entry history,
 filtering entries, and getting entry statistics.
 """
 
-from typing import Optional, Dict, Any
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query, status
 
+from api.dependencies import GiveawayServiceDep
 from api.schemas.common import create_success_response
 from api.schemas.entry import (
+    EntryHistoryItem,
     EntryResponse,
     EntryStats,
-    EntryHistoryItem,
 )
-from api.dependencies import GiveawayServiceDep
 
 router = APIRouter()
 
 
 @router.get(
     "/",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="List entries",
     description="Get entry history with optional filtering.",
 )
 async def list_entries(
     giveaway_service: GiveawayServiceDep,
-    status_filter: Optional[str] = Query(
+    status_filter: str | None = Query(
         default=None,
         alias="status",
         description="Filter by status (success, failed)",
         pattern="^(success|failed)$"
     ),
-    entry_type: Optional[str] = Query(
+    entry_type: str | None = Query(
         default=None,
         description="Filter by entry type (manual, auto, wishlist)",
         pattern="^(manual|auto|wishlist)$"
     ),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
     offset: int = Query(default=0, ge=0, description="Offset for pagination"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List entries with filtering options.
 
@@ -92,13 +93,13 @@ async def list_entries(
 
 @router.get(
     "/stats",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get entry statistics",
     description="Get comprehensive statistics about entries.",
 )
 async def get_entry_stats(
     giveaway_service: GiveawayServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get entry statistics.
 
@@ -124,14 +125,14 @@ async def get_entry_stats(
 
 @router.get(
     "/recent",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get recent entries",
     description="Get the most recent entries.",
 )
 async def get_recent_entries(
     giveaway_service: GiveawayServiceDep,
     limit: int = Query(default=10, ge=1, le=50, description="Maximum results"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get recent entries.
 
@@ -154,14 +155,14 @@ async def get_recent_entries(
 
 @router.get(
     "/successful",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get successful entries",
     description="Get all successful entries.",
 )
 async def get_successful_entries(
     giveaway_service: GiveawayServiceDep,
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get successful entries.
 
@@ -187,14 +188,14 @@ async def get_successful_entries(
 
 @router.get(
     "/failed",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get failed entries",
     description="Get all failed entries for debugging.",
 )
 async def get_failed_entries(
     giveaway_service: GiveawayServiceDep,
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get failed entries.
 
@@ -217,14 +218,14 @@ async def get_failed_entries(
 
 @router.get(
     "/history",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get entry history with giveaway info",
     description="Get entry history with associated giveaway and game information.",
 )
 async def get_entry_history(
     giveaway_service: GiveawayServiceDep,
     limit: int = Query(default=20, ge=1, le=100, description="Maximum results"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get entry history with giveaway information.
 
@@ -256,14 +257,14 @@ async def get_entry_history(
 
 @router.get(
     "/{entry_id}",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get entry by ID",
     description="Get a specific entry by its ID.",
 )
 async def get_entry(
     entry_id: int,
     giveaway_service: GiveawayServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get a specific entry by ID.
 
@@ -290,14 +291,14 @@ async def get_entry(
 
 @router.get(
     "/giveaway/{giveaway_id}",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get entries for giveaway",
     description="Get all entries for a specific giveaway.",
 )
 async def get_entries_for_giveaway(
     giveaway_id: int,
     giveaway_service: GiveawayServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get entries for a specific giveaway.
 
@@ -325,13 +326,13 @@ async def get_entries_for_giveaway(
 
 @router.get(
     "/points/total",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get total points spent",
     description="Get the total points spent on all entries.",
 )
 async def get_total_points_spent(
     giveaway_service: GiveawayServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get total points spent on entries.
 

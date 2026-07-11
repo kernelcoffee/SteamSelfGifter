@@ -4,26 +4,27 @@ This module provides REST API endpoints for scheduler management,
 including start/stop, status, and manual trigger operations.
 """
 
-from fastapi import APIRouter, HTTPException, status
-from typing import Dict, Any
+from typing import Any
 
-from api.schemas.common import create_success_response
+from fastapi import APIRouter, HTTPException, status
+
 from api.dependencies import SettingsServiceDep
-from workers.scheduler import scheduler_manager
+from api.schemas.common import create_success_response
 from workers.automation import automation_cycle, sync_wins_only
-from workers.scanner import scan_giveaways, quick_scan
-from workers.processor import process_giveaways, enter_single_giveaway
+from workers.processor import enter_single_giveaway, process_giveaways
+from workers.scanner import quick_scan, scan_giveaways
+from workers.scheduler import scheduler_manager
 
 router = APIRouter()
 
 
 @router.get(
     "/status",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get scheduler status",
     description="Retrieve current scheduler status including running state and jobs.",
 )
-async def get_scheduler_status() -> Dict[str, Any]:
+async def get_scheduler_status() -> dict[str, Any]:
     """
     Get scheduler status.
 
@@ -47,11 +48,11 @@ async def get_scheduler_status() -> Dict[str, Any]:
 
 @router.post(
     "/start",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Start scheduler",
     description="Start the scheduler to begin automated operations.",
 )
-async def start_scheduler(settings_service: SettingsServiceDep) -> Dict[str, Any]:
+async def start_scheduler(settings_service: SettingsServiceDep) -> dict[str, Any]:
     """
     Start the scheduler and schedule the automation cycle job.
 
@@ -107,11 +108,11 @@ async def start_scheduler(settings_service: SettingsServiceDep) -> Dict[str, Any
 
 @router.post(
     "/stop",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Stop scheduler",
     description="Stop the scheduler. Running jobs will complete.",
 )
-async def stop_scheduler() -> Dict[str, Any]:
+async def stop_scheduler() -> dict[str, Any]:
     """
     Stop the scheduler.
 
@@ -129,11 +130,11 @@ async def stop_scheduler() -> Dict[str, Any]:
 
 @router.post(
     "/pause",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Pause scheduler",
     description="Pause scheduled jobs without stopping the scheduler.",
 )
-async def pause_scheduler() -> Dict[str, Any]:
+async def pause_scheduler() -> dict[str, Any]:
     """
     Pause the scheduler.
 
@@ -157,11 +158,11 @@ async def pause_scheduler() -> Dict[str, Any]:
 
 @router.post(
     "/resume",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Resume scheduler",
     description="Resume paused scheduler jobs.",
 )
-async def resume_scheduler() -> Dict[str, Any]:
+async def resume_scheduler() -> dict[str, Any]:
     """
     Resume the scheduler.
 
@@ -194,11 +195,11 @@ async def resume_scheduler() -> Dict[str, Any]:
 
 @router.post(
     "/run",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Run automation cycle",
     description="Manually trigger a full automation cycle (scan + wishlist + wins + entries).",
 )
-async def trigger_automation_cycle() -> Dict[str, Any]:
+async def trigger_automation_cycle() -> dict[str, Any]:
     """
     Trigger a full automation cycle manually.
 
@@ -219,11 +220,11 @@ async def trigger_automation_cycle() -> Dict[str, Any]:
 
 @router.post(
     "/scan",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Trigger manual scan",
     description="Manually trigger a giveaway scan only.",
 )
-async def trigger_scan() -> Dict[str, Any]:
+async def trigger_scan() -> dict[str, Any]:
     """
     Trigger a manual giveaway scan.
 
@@ -242,11 +243,11 @@ async def trigger_scan() -> Dict[str, Any]:
 
 @router.post(
     "/scan/quick",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Trigger quick scan",
     description="Manually trigger a quick scan (single page).",
 )
-async def trigger_quick_scan() -> Dict[str, Any]:
+async def trigger_quick_scan() -> dict[str, Any]:
     """
     Trigger a quick scan (single page).
 
@@ -265,11 +266,11 @@ async def trigger_quick_scan() -> Dict[str, Any]:
 
 @router.post(
     "/process",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Trigger manual processing",
     description="Manually trigger giveaway processing to enter eligible giveaways.",
 )
-async def trigger_processing() -> Dict[str, Any]:
+async def trigger_processing() -> dict[str, Any]:
     """
     Trigger manual giveaway processing.
 
@@ -288,11 +289,11 @@ async def trigger_processing() -> Dict[str, Any]:
 
 @router.post(
     "/sync-wins",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Sync wins",
     description="Manually sync wins from SteamGifts won page.",
 )
-async def trigger_sync_wins() -> Dict[str, Any]:
+async def trigger_sync_wins() -> dict[str, Any]:
     """
     Trigger manual win sync.
 
@@ -311,11 +312,11 @@ async def trigger_sync_wins() -> Dict[str, Any]:
 
 @router.post(
     "/enter/{giveaway_code}",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Enter a giveaway",
     description="Manually enter a specific giveaway by code.",
 )
-async def enter_giveaway(giveaway_code: str) -> Dict[str, Any]:
+async def enter_giveaway(giveaway_code: str) -> dict[str, Any]:
     """
     Enter a specific giveaway.
 

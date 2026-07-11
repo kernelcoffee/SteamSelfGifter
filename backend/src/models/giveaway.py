@@ -1,7 +1,8 @@
 """SteamGifts giveaway data model."""
 
 from datetime import datetime
-from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base, TimestampMixin

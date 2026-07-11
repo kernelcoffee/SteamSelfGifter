@@ -1,13 +1,14 @@
 """Unit tests for system API router."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from api.routers.system import (
+    get_logs,
     health_check,
     system_info,
-    get_logs,
 )
 from models.activity_log import ActivityLog
 

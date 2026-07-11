@@ -6,11 +6,12 @@ WebSocket connection management.
 """
 
 import json
-from typing import Dict, Any, Optional
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from repositories.activity_log import ActivityLogRepository
 from models.activity_log import ActivityLog
+from repositories.activity_log import ActivityLogRepository
 
 
 class NotificationService:
@@ -63,7 +64,7 @@ class NotificationService:
         level: str,
         event_type: str,
         message: str,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> ActivityLog:
         """
         Log an activity event to database.
@@ -113,11 +114,11 @@ class NotificationService:
     async def broadcast_event(
         self,
         event_type: str,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         log_activity: bool = False,
         log_level: str = "info",
-        log_message: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        log_message: str | None = None,
+    ) -> dict[str, Any]:
         """
         Prepare an event for WebSocket broadcasting.
 
@@ -340,7 +341,7 @@ class NotificationService:
             details={"code": giveaway_code, "game": game_name, "reason": reason},
         )
 
-    async def log_error(self, error_type: str, message: str, details: Optional[Dict[str, Any]] = None) -> ActivityLog:
+    async def log_error(self, error_type: str, message: str, details: dict[str, Any] | None = None) -> ActivityLog:
         """
         Convenience method to log errors.
 

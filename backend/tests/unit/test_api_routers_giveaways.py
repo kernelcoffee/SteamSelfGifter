@@ -1,23 +1,24 @@
 """Unit tests for giveaways API router."""
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
-from datetime import datetime, UTC
 from fastapi import HTTPException
 
 from api.routers.giveaways import (
-    list_giveaways,
-    get_active_giveaways,
-    get_expiring_giveaways,
-    get_eligible_giveaways,
-    get_giveaway_stats,
-    get_giveaway,
-    sync_giveaways,
     enter_giveaway,
+    get_active_giveaways,
+    get_eligible_giveaways,
+    get_expiring_giveaways,
+    get_giveaway,
+    get_giveaway_stats,
     hide_giveaway,
+    list_giveaways,
     search_giveaways,
+    sync_giveaways,
 )
-from api.schemas.giveaway import GiveawayScanRequest, GiveawayEntryRequest
+from api.schemas.giveaway import GiveawayEntryRequest, GiveawayScanRequest
 
 
 def create_mock_giveaway(

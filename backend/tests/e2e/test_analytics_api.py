@@ -10,7 +10,6 @@ This file tests the endpoints that work without external API access.
 import pytest
 from httpx import AsyncClient
 
-
 # Analytics endpoints that require GiveawayServiceDep (external API) are tested
 # in integration tests with mocking. Here we only test endpoints that work
 # without external dependencies.

@@ -23,16 +23,16 @@ from api.middleware import (
     scheduler_error_handler,
     steam_api_error_handler,
     steamgifts_error_handler,
-    steamgifts_session_expired_handler,
     steamgifts_not_configured_handler,
+    steamgifts_session_expired_handler,
     unhandled_exception_handler,
     validation_error_handler,
 )
+from api.routers import analytics, entries, games, giveaways, scheduler, system, websocket
 from api.routers import settings as settings_router
-from api.routers import system, websocket, scheduler, giveaways, games, entries, analytics
 from core.config import settings
 from core.exceptions import (
-    AppException,
+    AppError,
     ConfigurationError,
     InsufficientPointsError,
     RateLimitError,
@@ -40,8 +40,8 @@ from core.exceptions import (
     SchedulerError,
     SteamAPIError,
     SteamGiftsError,
-    SteamGiftsSessionExpiredError,
     SteamGiftsNotConfiguredError,
+    SteamGiftsSessionExpiredError,
     ValidationError,
 )
 from core.logging import setup_logging
@@ -60,8 +60,8 @@ async def lifespan(app: FastAPI):
     """
     from db.session import AsyncSessionLocal, init_db
     from services.settings_service import SettingsService
-    from workers.scheduler import scheduler_manager
     from workers.automation import automation_cycle
+    from workers.scheduler import scheduler_manager
 
     # Startup
     setup_logging()
@@ -136,7 +136,7 @@ app.add_middleware(
 )
 
 # Register exception handlers
-app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(AppError, app_exception_handler)
 app.add_exception_handler(ConfigurationError, configuration_error_handler)
 app.add_exception_handler(ResourceNotFoundError, resource_not_found_handler)
 app.add_exception_handler(ValidationError, validation_error_handler)

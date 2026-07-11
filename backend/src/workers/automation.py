@@ -14,19 +14,19 @@ manual ``/run`` trigger. It shares its bootstrap with the other workers via
 ``_process_entries``.
 """
 
-from datetime import datetime, UTC
-from typing import Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
+from core.events import event_manager
 from workers.context import automation_context
 from workers.processor import _process_entries
-from core.events import event_manager
 
 logger = structlog.get_logger()
 
 
-async def automation_cycle() -> Dict[str, Any]:
+async def automation_cycle() -> dict[str, Any]:
     """
     Run a complete automation cycle.
 
@@ -216,7 +216,7 @@ async def automation_cycle() -> Dict[str, Any]:
             raise
 
 
-async def sync_wins_only() -> Dict[str, Any]:
+async def sync_wins_only() -> dict[str, Any]:
     """
     Sync wins only (manual trigger).
 

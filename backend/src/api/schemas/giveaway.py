@@ -4,8 +4,8 @@ This module provides Pydantic schemas for giveaway-related
 API requests and responses.
 """
 
-from typing import Optional
 from datetime import datetime
+
 from pydantic import BaseModel, Field, field_serializer
 
 
@@ -27,7 +27,7 @@ class GiveawayBase(BaseModel):
         description="Full SteamGifts giveaway URL",
         examples=["https://www.steamgifts.com/giveaway/AbCd1/game-name"],
     )
-    game_id: Optional[int] = Field(
+    game_id: int | None = Field(
         default=None,
         description="Steam App ID if available",
         examples=[620],
@@ -50,7 +50,7 @@ class GiveawayBase(BaseModel):
         ge=1,
         examples=[1],
     )
-    end_time: Optional[datetime] = Field(
+    end_time: datetime | None = Field(
         default=None,
         description="When the giveaway ends (UTC)",
         examples=["2025-10-15T12:00:00"],
@@ -75,12 +75,12 @@ class GiveawayBase(BaseModel):
         description="Whether user has won this giveaway",
         examples=[False],
     )
-    is_safe: Optional[bool] = Field(
+    is_safe: bool | None = Field(
         default=None,
         description="Safety assessment (true=safe, false=unsafe, null=unknown)",
         examples=[True],
     )
-    safety_score: Optional[int] = Field(
+    safety_score: int | None = Field(
         default=None,
         description="Safety score (0-100, higher is safer)",
         ge=0,
@@ -116,57 +116,57 @@ class GiveawayResponse(GiveawayBase):
         description="When giveaway was first discovered (UTC)",
         examples=["2025-10-14T10:00:00"],
     )
-    entered_at: Optional[datetime] = Field(
+    entered_at: datetime | None = Field(
         default=None,
         description="When user entered the giveaway (UTC)",
         examples=["2025-10-14T11:00:00"],
     )
-    won_at: Optional[datetime] = Field(
+    won_at: datetime | None = Field(
         default=None,
         description="When user won the giveaway (UTC)",
         examples=["2025-10-16T12:00:00"],
     )
 
     # Optional game information from joined Game table
-    game_thumbnail: Optional[str] = Field(
+    game_thumbnail: str | None = Field(
         default=None,
         description="Steam header image URL for the game",
         examples=["https://cdn.cloudflare.steamstatic.com/steam/apps/620/header.jpg"],
     )
-    game_review_score: Optional[int] = Field(
+    game_review_score: int | None = Field(
         default=None,
         description="Steam review score (0-10)",
         ge=0,
         le=10,
         examples=[9],
     )
-    game_total_reviews: Optional[int] = Field(
+    game_total_reviews: int | None = Field(
         default=None,
         description="Total number of reviews",
         ge=0,
         examples=[50000],
     )
-    game_review_summary: Optional[str] = Field(
+    game_review_summary: str | None = Field(
         default=None,
         description="Review summary (e.g., 'Overwhelmingly Positive', 'Mixed')",
         examples=["Overwhelmingly Positive"],
     )
 
     # Autojoin eligibility diagnostics (set during each automation/process cycle)
-    eligibility_reason: Optional[str] = Field(
+    eligibility_reason: str | None = Field(
         default=None,
         description="Why this giveaway did/didn't qualify for autojoin at the last "
                     "evaluation (e.g. 'eligible', 'score_below_min', 'no_game_data')",
         examples=["score_below_min"],
     )
-    eligibility_checked_at: Optional[datetime] = Field(
+    eligibility_checked_at: datetime | None = Field(
         default=None,
         description="When eligibility_reason was last computed (UTC)",
         examples=["2025-10-14T10:05:00"],
     )
 
     @field_serializer('end_time', 'discovered_at', 'entered_at', 'won_at', 'eligibility_checked_at')
-    def serialize_datetime(self, dt: Optional[datetime], _info) -> Optional[str]:
+    def serialize_datetime(self, dt: datetime | None, _info) -> str | None:
         """Serialize datetime with UTC timezone suffix."""
         if dt is None:
             return None
@@ -248,42 +248,42 @@ class GiveawayFilter(BaseModel):
         ... )
     """
 
-    min_price: Optional[int] = Field(
+    min_price: int | None = Field(
         default=None,
         description="Minimum giveaway price in points",
         ge=0,
         examples=[50],
     )
-    max_price: Optional[int] = Field(
+    max_price: int | None = Field(
         default=None,
         description="Maximum giveaway price in points",
         ge=0,
         examples=[100],
     )
-    min_score: Optional[int] = Field(
+    min_score: int | None = Field(
         default=None,
         description="Minimum Steam review score (0-10)",
         ge=0,
         le=10,
         examples=[7],
     )
-    min_reviews: Optional[int] = Field(
+    min_reviews: int | None = Field(
         default=None,
         description="Minimum number of reviews",
         ge=0,
         examples=[1000],
     )
-    is_entered: Optional[bool] = Field(
+    is_entered: bool | None = Field(
         default=None,
         description="Filter by entry status",
         examples=[False],
     )
-    is_hidden: Optional[bool] = Field(
+    is_hidden: bool | None = Field(
         default=None,
         description="Filter by hidden status",
         examples=[False],
     )
-    search: Optional[str] = Field(
+    search: str | None = Field(
         default=None,
         description="Search by game name",
         examples=["Portal"],
@@ -395,7 +395,7 @@ class GiveawayEntryResponse(BaseModel):
         description="Entry result message",
         examples=["Successfully entered giveaway"],
     )
-    entry_id: Optional[int] = Field(
+    entry_id: int | None = Field(
         default=None,
         description="Entry record ID if successful",
         examples=[456],

@@ -9,11 +9,12 @@ This module contains comprehensive tests for the Giveaway model, including:
 - Foreign key relationships with Game model
 """
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from models.base import Base
 from models.game import Game

@@ -1,15 +1,16 @@
 """Unit tests for game API schemas."""
 
-import pytest
 from datetime import datetime
+
+import pytest
 from pydantic import ValidationError
 
 from api.schemas.game import (
     GameBase,
-    GameResponse,
-    GameList,
     GameFilter,
+    GameList,
     GameRefreshResponse,
+    GameResponse,
     GameStats,
 )
 

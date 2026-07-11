@@ -5,9 +5,9 @@ methods for searching games, finding stale cache entries, and managing
 Steam game metadata.
 """
 
-from typing import List, Optional
 from datetime import datetime, timedelta
-from sqlalchemy import select, or_
+
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.game import Game
@@ -46,7 +46,7 @@ class GameRepository(BaseRepository[Game]):
         """
         super().__init__(Game, session)
 
-    async def get_by_app_id(self, app_id: int) -> Optional[Game]:
+    async def get_by_app_id(self, app_id: int) -> Game | None:
         """
         Get game by Steam App ID.
 
@@ -89,7 +89,7 @@ class GameRepository(BaseRepository[Game]):
 
     async def search_by_name(
         self, query: str, limit: int = 10
-    ) -> List[Game]:
+    ) -> list[Game]:
         """
         Search games by name (case-insensitive partial match).
 
@@ -114,8 +114,8 @@ class GameRepository(BaseRepository[Game]):
         return list(result.scalars().all())
 
     async def get_stale_games(
-        self, days_threshold: int = 7, limit: Optional[int] = None
-    ) -> List[Game]:
+        self, days_threshold: int = 7, limit: int | None = None
+    ) -> list[Game]:
         """
         Get games with stale cached data that need refreshing.
 
@@ -151,7 +151,7 @@ class GameRepository(BaseRepository[Game]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_by_type(self, game_type: str) -> List[Game]:
+    async def get_by_type(self, game_type: str) -> list[Game]:
         """
         Get all games of a specific type.
 
@@ -167,7 +167,7 @@ class GameRepository(BaseRepository[Game]):
         """
         return await self.filter_by(type=game_type)
 
-    async def get_bundles(self) -> List[Game]:
+    async def get_bundles(self) -> list[Game]:
         """
         Get all bundle entries.
 
@@ -183,7 +183,7 @@ class GameRepository(BaseRepository[Game]):
         """
         return await self.filter_by(is_bundle=True)
 
-    async def get_by_main_game(self, game_id: int) -> List[Game]:
+    async def get_by_main_game(self, game_id: int) -> list[Game]:
         """
         Get all DLCs/content for a specific game.
 
@@ -202,7 +202,7 @@ class GameRepository(BaseRepository[Game]):
 
     async def get_highly_rated(
         self, min_score: int = 7, min_reviews: int = 1000, limit: int = 50
-    ) -> List[Game]:
+    ) -> list[Game]:
         """
         Get highly rated games matching minimum thresholds.
 
@@ -230,7 +230,7 @@ class GameRepository(BaseRepository[Game]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def mark_refreshed(self, app_id: int) -> Optional[Game]:
+    async def mark_refreshed(self, app_id: int) -> Game | None:
         """
         Mark a game as refreshed by updating last_refreshed_at to now.
 
@@ -250,7 +250,7 @@ class GameRepository(BaseRepository[Game]):
         """
         return await self.update(app_id, last_refreshed_at=datetime.utcnow())
 
-    async def bulk_mark_refreshed(self, app_ids: List[int]) -> None:
+    async def bulk_mark_refreshed(self, app_ids: list[int]) -> None:
         """
         Mark multiple games as refreshed.
 
@@ -329,7 +329,7 @@ class GameRepository(BaseRepository[Game]):
             "bundle": len(bundles),
         }
 
-    async def get_without_reviews(self, limit: Optional[int] = None) -> List[Game]:
+    async def get_without_reviews(self, limit: int | None = None) -> list[Game]:
         """
         Get games that don't have review data yet.
 

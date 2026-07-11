@@ -10,8 +10,9 @@ import structlog
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
+from core.events import event_manager
 from core.exceptions import (
-    AppException,
+    AppError,
     ConfigurationError,
     InsufficientPointsError,
     RateLimitError,
@@ -19,11 +20,10 @@ from core.exceptions import (
     SchedulerError,
     SteamAPIError,
     SteamGiftsError,
-    SteamGiftsSessionExpiredError,
     SteamGiftsNotConfiguredError,
+    SteamGiftsSessionExpiredError,
     ValidationError,
 )
-from core.events import event_manager
 
 logger = structlog.get_logger()
 
@@ -56,9 +56,9 @@ def create_error_response(
     return JSONResponse(status_code=status_code, content=content)
 
 
-async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
+async def app_exception_handler(request: Request, exc: AppError) -> JSONResponse:
     """
-    Handler for base AppException.
+    Handler for base AppError.
 
     Args:
         request: The request that caused the exception

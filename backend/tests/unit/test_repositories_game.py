@@ -4,12 +4,12 @@ Tests the game-specific repository methods including search, cache management,
 and filtering capabilities for Steam game data.
 """
 
-import pytest
 from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
-from models.game import Game
 from repositories.game import GameRepository
 
 

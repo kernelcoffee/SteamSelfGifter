@@ -17,8 +17,9 @@ import sys
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
-from utils.steamgifts_client import SteamGiftsClient
 from sqlalchemy import create_engine, text
+
+from utils.steamgifts_client import SteamGiftsClient
 
 
 def get_session_from_db():

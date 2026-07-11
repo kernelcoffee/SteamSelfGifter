@@ -9,13 +9,14 @@ This module contains comprehensive tests for the ActivityLog model, including:
 - Filtering and chronological ordering
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from models.base import Base
 from models.activity_log import ActivityLog
+from models.base import Base
 
 
 @pytest.fixture

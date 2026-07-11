@@ -1,15 +1,16 @@
 """Unit tests for settings API schemas."""
 
-import pytest
 from datetime import datetime
+
+import pytest
 from pydantic import ValidationError
 
 from api.schemas.settings import (
+    ConfigurationValidation,
     SettingsBase,
     SettingsResponse,
     SettingsUpdate,
     SteamGiftsCredentials,
-    ConfigurationValidation,
 )
 
 

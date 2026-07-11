@@ -1,24 +1,23 @@
 """Shared pytest fixtures for all tests."""
 
 import asyncio
+from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from models.base import Base
-from db.session import get_db
 from api.dependencies import get_database
 from api.main import app
+from db.session import get_db
+from models.base import Base
 from workers import scheduler as scheduler_module
 from workers.scheduler import SchedulerManager
-
 
 # Use in-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -126,7 +125,7 @@ async def async_engine():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def async_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
+async def async_session(async_engine) -> AsyncGenerator[AsyncSession]:
     """Create async session for each test."""
     async_session_maker = async_sessionmaker(
         async_engine,
@@ -142,7 +141,7 @@ async def async_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def test_client(async_engine) -> AsyncGenerator[AsyncClient, None]:
+async def test_client(async_engine) -> AsyncGenerator[AsyncClient]:
     """Create async test client with test database.
 
     Each request gets its own session, with auto-commit to persist data.
@@ -157,7 +156,7 @@ async def test_client(async_engine) -> AsyncGenerator[AsyncClient, None]:
     )
 
     # Override the get_db dependency - manually manage session lifecycle
-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    async def override_get_db() -> AsyncGenerator[AsyncSession]:
         session = async_session_maker()
         try:
             yield session
@@ -182,7 +181,7 @@ async def test_client(async_engine) -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest.fixture(scope="function")
-def sync_test_client(async_engine) -> Generator[TestClient, None, None]:
+def sync_test_client(async_engine) -> Generator[TestClient]:
     """Create synchronous test client for simpler tests."""
 
     # Create session factory for test database
@@ -195,7 +194,7 @@ def sync_test_client(async_engine) -> Generator[TestClient, None, None]:
     )
 
     # Override the get_db dependency - manually manage session lifecycle
-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    async def override_get_db() -> AsyncGenerator[AsyncSession]:
         session = async_session_maker()
         try:
             yield session

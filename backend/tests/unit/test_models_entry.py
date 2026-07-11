@@ -9,15 +9,15 @@ This module contains comprehensive tests for the Entry model, including:
 - Points tracking and error message handling
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from models.base import Base
-from models.game import Game  # Import Game so foreign key resolves
-from models.giveaway import Giveaway
 from models.entry import Entry
+from models.giveaway import Giveaway
 
 
 @pytest.fixture

@@ -15,21 +15,21 @@ When no PHPSESSID is configured the context still yields, but with
 started). Callers should check ``ctx.authenticated`` before touching services.
 """
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import AsyncIterator, Optional
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import AsyncSessionLocal
-from services.giveaway_service import GiveawayService
 from services.game_service import GameService
-from services.settings_service import SettingsService
+from services.giveaway_service import GiveawayService
 from services.notification_service import NotificationService
 from services.scheduler_service import SchedulerService
-from utils.steamgifts_client import SteamGiftsClient
+from services.settings_service import SettingsService
 from utils.steam_client import SteamClient
+from utils.steamgifts_client import SteamGiftsClient
 
 logger = structlog.get_logger()
 
@@ -45,10 +45,10 @@ class AutomationContext:
     session: AsyncSession
     settings: object
     settings_service: SettingsService
-    game_service: Optional[GameService] = None
-    giveaway_service: Optional[GiveawayService] = None
-    notification_service: Optional[NotificationService] = None
-    scheduler_service: Optional[SchedulerService] = None
+    game_service: GameService | None = None
+    giveaway_service: GiveawayService | None = None
+    notification_service: NotificationService | None = None
+    scheduler_service: SchedulerService | None = None
 
     @property
     def authenticated(self) -> bool:

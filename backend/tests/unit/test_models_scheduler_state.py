@@ -8,8 +8,9 @@ This module contains comprehensive tests for the SchedulerState model, including
 - Lifecycle testing from initial state through multiple scans
 """
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 

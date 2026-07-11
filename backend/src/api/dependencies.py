@@ -5,15 +5,16 @@ enabling clean dependency injection of database sessions and service layers.
 """
 
 from typing import Annotated
+
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_db
-from services.settings_service import SettingsService
-from services.notification_service import NotificationService
 from services.game_service import GameService
 from services.giveaway_service import GiveawayService
+from services.notification_service import NotificationService
 from services.scheduler_service import SchedulerService
+from services.settings_service import SettingsService
 from utils.steam_client import SteamClient
 from utils.steamgifts_client import SteamGiftsClient
 

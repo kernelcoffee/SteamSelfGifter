@@ -1,16 +1,14 @@
 """Unit tests for GiveawayService."""
 
-import pytest
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
-from models.game import Game
-from models.giveaway import Giveaway
-from models.entry import Entry
-from services.giveaway_service import GiveawayService
 from services.game_service import GameService
+from services.giveaway_service import GiveawayService
 from utils.steamgifts_client import SteamGiftsClient, SteamGiftsError
 
 
@@ -504,7 +502,7 @@ async def test_get_giveaway_stats(test_db, mock_sg_client, mock_game_service):
         service = GiveawayService(session, mock_sg_client, mock_game_service)
 
         # Create active giveaway
-        ga1 = await service.giveaway_repo.create(
+        await service.giveaway_repo.create(
             code="GA1",
             url="https://www.steamgifts.com/giveaway/GA1/",
             game_name="Active",

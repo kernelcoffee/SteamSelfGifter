@@ -4,13 +4,16 @@ This module provides the service layer for game operations, coordinating
 between the GameRepository and external Steam API client.
 """
 
-from typing import Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime
+
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from repositories.game import GameRepository
-from utils.steam_client import SteamClient, SteamAPIError
 from models.game import Game
+from repositories.game import GameRepository
+from utils.steam_client import SteamAPIError, SteamClient
+
+logger = structlog.get_logger()
 
 
 class GameService:
@@ -59,7 +62,7 @@ class GameService:
 
     async def get_or_fetch_game(
         self, app_id: int, force_refresh: bool = False
-    ) -> Optional[Game]:
+    ) -> Game | None:
         """
         Get game from cache or fetch from Steam API.
 
@@ -98,7 +101,7 @@ class GameService:
 
         except SteamAPIError as e:
             # Log error and return cached data if available
-            print(f"Error fetching game {app_id}: {e}")
+            logger.error("game_fetch_failed", app_id=app_id, error=str(e))
             return await self.repo.get_by_id(app_id)
 
     async def _save_game_from_steam_data(
@@ -154,10 +157,9 @@ class GameService:
                     review_score = review_data.get("review_score")
                     total_positive = review_data.get("total_positive")
                     total_negative = review_data.get("total_negative")
-                    total_reviews_from_api = review_data.get("total_reviews")
             except Exception as e:
                 # If review fetch fails, continue without review data
-                print(f"Failed to fetch reviews for {app_id}: {e}")
+                logger.warning("game_review_fetch_failed", app_id=app_id, error=str(e))
         bundle_content = None
         if is_bundle:
             # Extract bundle apps
@@ -174,6 +176,12 @@ class GameService:
             if fullgame:
                 game_id = int(fullgame.get("appid", 0)) or None
 
+        total_reviews = (
+            total_positive + total_negative
+            if (total_positive is not None and total_negative is not None)
+            else None
+        )
+
         # Check if game already exists
         existing_game = await self.repo.get_by_id(app_id)
 
@@ -189,7 +197,7 @@ class GameService:
             existing_game.review_score = review_score
             existing_game.total_positive = total_positive
             existing_game.total_negative = total_negative
-            existing_game.total_reviews = total_positive + total_negative if (total_positive is not None and total_negative is not None) else None
+            existing_game.total_reviews = total_reviews
             existing_game.last_refreshed_at = datetime.utcnow()
 
             return existing_game
@@ -207,7 +215,7 @@ class GameService:
                 review_score=review_score,
                 total_positive=total_positive,
                 total_negative=total_negative,
-                total_reviews=total_positive + total_negative if (total_positive is not None and total_negative is not None) else None,
+                total_reviews=total_reviews,
                 last_refreshed_at=datetime.utcnow(),
             )
 
@@ -240,7 +248,7 @@ class GameService:
                     await self._save_game_from_steam_data(game.id, steam_data)
                     refreshed_count += 1
             except SteamAPIError as e:
-                print(f"Error refreshing game {game.id}: {e}")
+                logger.error("game_refresh_failed", game_id=game.id, error=str(e))
                 continue
 
         if refreshed_count > 0:
@@ -249,8 +257,8 @@ class GameService:
         return refreshed_count
 
     async def search_games(
-        self, query: str, limit: Optional[int] = 20
-    ) -> List[Game]:
+        self, query: str, limit: int | None = 20
+    ) -> list[Game]:
         """
         Search cached games by name.
 
@@ -270,7 +278,7 @@ class GameService:
 
     async def get_highly_rated_games(
         self, min_score: int = 8, min_reviews: int = 1000, limit: int = 50
-    ) -> List[Game]:
+    ) -> list[Game]:
         """
         Get highly-rated games from cache.
 
@@ -290,8 +298,8 @@ class GameService:
         )
 
     async def get_games_by_type(
-        self, game_type: str, limit: Optional[int] = None
-    ) -> List[Game]:
+        self, game_type: str, limit: int | None = None
+    ) -> list[Game]:
         """
         Get games by type (game, dlc, bundle).
 
@@ -340,7 +348,7 @@ class GameService:
             "stale_count": stale_count,
         }
 
-    async def bulk_cache_games(self, app_ids: List[int]) -> int:
+    async def bulk_cache_games(self, app_ids: list[int]) -> int:
         """
         Cache multiple games from Steam API.
 
@@ -370,7 +378,7 @@ class GameService:
                 if game:
                     cached_count += 1
             except Exception as e:
-                print(f"Error caching game {app_id}: {e}")
+                logger.error("game_cache_failed", app_id=app_id, error=str(e))
                 continue
 
         await self.session.commit()

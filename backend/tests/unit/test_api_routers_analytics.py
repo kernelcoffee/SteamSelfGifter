@@ -1,18 +1,19 @@
 """Unit tests for analytics API router."""
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
-from datetime import datetime, UTC
 
 from api.routers.analytics import (
     get_analytics_overview,
+    get_dashboard_data,
     get_entry_summary,
-    get_giveaway_summary,
     get_game_summary,
-    get_scheduler_summary,
+    get_giveaway_summary,
     get_points_analytics,
     get_recent_activity,
-    get_dashboard_data,
+    get_scheduler_summary,
 )
 
 

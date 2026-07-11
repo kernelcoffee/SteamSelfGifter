@@ -8,16 +8,16 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
+from core.config import settings as app_settings
+from models.activity_log import ActivityLog  # noqa: F401
 
 # Import our models and config
 from models.base import Base
-from models.settings import Settings  # noqa: F401
-from models.giveaway import Giveaway  # noqa: F401
 from models.entry import Entry  # noqa: F401
 from models.game import Game  # noqa: F401
+from models.giveaway import Giveaway  # noqa: F401
 from models.scheduler_state import SchedulerState  # noqa: F401
-from models.activity_log import ActivityLog  # noqa: F401
-from core.config import settings as app_settings
+from models.settings import Settings  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

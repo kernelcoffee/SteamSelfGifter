@@ -1,12 +1,11 @@
 """Unit tests for GiveawayRepository."""
 
-import pytest
 from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
-from models.game import Game  # Import Game so foreign key works
-from models.giveaway import Giveaway
 from repositories.giveaway import GiveawayRepository
 
 
@@ -34,7 +33,7 @@ async def test_get_by_code_found(test_db):
         repo = GiveawayRepository(session)
 
         # Create giveaway
-        giveaway = await repo.create(
+        await repo.create(
             code="ABC123", game_name="Portal 2", price=50, url="http://test.com"
         )
         await session.commit()

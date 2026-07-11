@@ -4,25 +4,26 @@ This module provides REST API endpoints for analytics and statistics,
 aggregating data from giveaways, entries, and games.
 """
 
-from typing import Dict, Any, Optional
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 from fastapi import APIRouter, Query
 
+from api.dependencies import GameServiceDep, GiveawayServiceDep, SchedulerServiceDep, SettingsServiceDep
 from api.schemas.common import create_success_response
-from api.dependencies import GiveawayServiceDep, GameServiceDep, SchedulerServiceDep, SettingsServiceDep
 
 router = APIRouter()
 
 
 @router.get(
     "/overview",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get analytics overview",
     description="Get a comprehensive overview of all statistics.",
 )
 async def get_analytics_overview(
     giveaway_service: GiveawayServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get analytics overview.
 
@@ -55,7 +56,7 @@ async def get_analytics_overview(
     )
 
 
-def _get_period_start(period: Optional[str]) -> Optional[datetime]:
+def _get_period_start(period: str | None) -> datetime | None:
     """Convert period string to start datetime."""
     if not period or period == "all":
         return None
@@ -74,17 +75,17 @@ def _get_period_start(period: Optional[str]) -> Optional[datetime]:
 
 @router.get(
     "/entries/summary",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get entry summary",
     description="Get summary statistics about entries.",
 )
 async def get_entry_summary(
     giveaway_service: GiveawayServiceDep,
-    period: Optional[str] = Query(
+    period: str | None = Query(
         default=None,
         description="Time period: day, week, month, year, or all",
     ),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get entry summary statistics.
 
@@ -121,17 +122,17 @@ async def get_entry_summary(
 
 @router.get(
     "/giveaways/summary",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get giveaway summary",
     description="Get summary statistics about giveaways.",
 )
 async def get_giveaway_summary(
     giveaway_service: GiveawayServiceDep,
-    period: Optional[str] = Query(
+    period: str | None = Query(
         default=None,
         description="Time period: day, week, month, year, or all",
     ),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get giveaway summary statistics.
 
@@ -167,13 +168,13 @@ async def get_giveaway_summary(
 
 @router.get(
     "/games/summary",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get game cache summary",
     description="Get summary statistics about cached game data.",
 )
 async def get_game_summary(
     game_service: GameServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get game cache summary statistics.
 
@@ -196,13 +197,13 @@ async def get_game_summary(
 
 @router.get(
     "/scheduler/summary",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get scheduler summary",
     description="Get summary statistics about scheduler operations.",
 )
 async def get_scheduler_summary(
     scheduler_service: SchedulerServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get scheduler summary statistics.
 
@@ -224,13 +225,13 @@ async def get_scheduler_summary(
 
 @router.get(
     "/points",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get points analytics",
     description="Get detailed analytics about points spent.",
 )
 async def get_points_analytics(
     giveaway_service: GiveawayServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get points analytics.
 
@@ -266,14 +267,14 @@ async def get_points_analytics(
 
 @router.get(
     "/recent-activity",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get recent activity",
     description="Get summary of recent activity including entries and scans.",
 )
 async def get_recent_activity(
     giveaway_service: GiveawayServiceDep,
     hours: int = Query(default=24, ge=1, le=168, description="Hours to look back"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get recent activity summary.
 
@@ -308,7 +309,7 @@ async def get_recent_activity(
 
 @router.get(
     "/dashboard",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get dashboard data",
     description="Get all data needed for the main dashboard in a single request.",
 )
@@ -316,7 +317,7 @@ async def get_dashboard_data(
     giveaway_service: GiveawayServiceDep,
     scheduler_service: SchedulerServiceDep,
     settings_service: SettingsServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get all dashboard data in a single request.
 
@@ -368,6 +369,9 @@ async def get_dashboard_data(
     # Get safety stats
     safety_stats = await giveaway_service.giveaway_repo.get_safety_stats()
 
+    last_scan_at = scheduler_stats.get("last_scan_at")
+    next_scan_at = scheduler_stats.get("next_scan_at")
+
     return create_success_response(
         data={
             "session": {
@@ -400,8 +404,8 @@ async def get_dashboard_data(
             "scheduler": {
                 "running": scheduler_stats.get("running", False),
                 "paused": scheduler_stats.get("paused", False),
-                "last_scan": scheduler_stats.get("last_scan_at").isoformat() if scheduler_stats.get("last_scan_at") else None,
-                "next_scan": scheduler_stats.get("next_scan_at").isoformat() if scheduler_stats.get("next_scan_at") else None,
+                "last_scan": last_scan_at.isoformat() if last_scan_at else None,
+                "next_scan": next_scan_at.isoformat() if next_scan_at else None,
             },
         }
     )

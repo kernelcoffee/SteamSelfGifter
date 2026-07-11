@@ -10,21 +10,21 @@ unsafe → enter) so unsafe giveaways are never entered.
 
 import asyncio
 import random
-from datetime import datetime, UTC
-from typing import Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 
+from core.events import event_manager
+from services.eligibility import EligibilityCriteria
 from services.giveaway_service import GiveawayService
 from services.notification_service import NotificationService
-from services.eligibility import EligibilityCriteria
 from workers.context import automation_context
-from core.events import event_manager
 
 logger = structlog.get_logger()
 
 
-async def process_giveaways() -> Dict[str, Any]:
+async def process_giveaways() -> dict[str, Any]:
     """
     Process eligible giveaways and enter them automatically (manual trigger).
 
@@ -60,7 +60,7 @@ async def process_giveaways() -> Dict[str, Any]:
         return stats
 
 
-def _skipped_stats(reason: str) -> Dict[str, Any]:
+def _skipped_stats(reason: str) -> dict[str, Any]:
     """Build a uniform 'skipped' result for the processor."""
     return {
         "eligible": 0,
@@ -76,7 +76,7 @@ async def _process_entries(
     giveaway_service: GiveawayService,
     notification_service: NotificationService,
     settings,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Internal entry processing logic.
 
@@ -217,7 +217,10 @@ async def _process_entries(
     await notification_service.log_activity(
         level="info",
         event_type="entry",
-        message=f"Processing completed: {stats['entered']} entered, {stats['failed']} failed, {stats['points_spent']}P spent",
+        message=(
+            f"Processing completed: {stats['entered']} entered, "
+            f"{stats['failed']} failed, {stats['points_spent']}P spent"
+        ),
         details=stats
     )
 
@@ -226,7 +229,7 @@ async def _process_entries(
     return stats
 
 
-async def enter_single_giveaway(giveaway_code: str) -> Dict[str, Any]:
+async def enter_single_giveaway(giveaway_code: str) -> dict[str, Any]:
     """
     Enter a single giveaway by code (manual, user-initiated entry).
 

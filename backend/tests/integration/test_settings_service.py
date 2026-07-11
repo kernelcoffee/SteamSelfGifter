@@ -4,8 +4,8 @@ Run with: pytest tests/integration/ --run-integration --phpsessid="YOUR_SESSION_
 """
 
 import pytest
+
 from services.settings_service import SettingsService
-from repositories.settings import SettingsRepository
 
 
 @pytest.mark.integration
@@ -78,7 +78,6 @@ class TestSettingsServiceIntegration:
 
         # Verify no XSRF token initially
         settings = await service.get_settings()
-        initial_xsrf = settings.xsrf_token
 
         # Test session (should fetch and save XSRF token)
         result = await service.test_session()

@@ -1,13 +1,11 @@
 """Unit tests for EntryRepository."""
 
-import pytest
 from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
-from models.game import Game  # Import for foreign key
-from models.giveaway import Giveaway  # Import for foreign key
-from models.entry import Entry
 from repositories.entry import EntryRepository
 
 
@@ -51,7 +49,7 @@ async def test_get_by_giveaway_found(test_db, sample_giveaway):
     async with test_db() as session:
         repo = EntryRepository(session)
 
-        entry = await repo.create(
+        await repo.create(
             giveaway_id=sample_giveaway,
             points_spent=50,
             entry_type="manual",
@@ -287,7 +285,7 @@ async def test_get_in_date_range(test_db, sample_giveaway):
         old_entry.created_at = now - timedelta(days=2)
 
         # Create entry today
-        recent_entry = await repo.create(
+        await repo.create(
             giveaway_id=sample_giveaway + 1,
             points_spent=30,
             entry_type="auto",

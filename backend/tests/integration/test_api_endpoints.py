@@ -4,9 +4,10 @@ Run with: pytest tests/integration/ --run-integration --phpsessid="YOUR_SESSION_
 """
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
+
 from api.main import app
-from db.session import AsyncSessionLocal, init_db
+from db.session import init_db
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ class TestAPIEndpointsIntegration:
             data = response.json()
             assert data["data"]["phpsessid"] == phpsessid
 
-            print(f"\n  Settings saved and retrieved successfully")
+            print("\n  Settings saved and retrieved successfully")
 
     async def test_test_session_endpoint(self, setup_db, phpsessid, user_agent):
         """Test the test-session endpoint with real credentials."""
@@ -71,7 +72,7 @@ class TestAPIEndpointsIntegration:
             assert "username" in data["data"]
             assert "points" in data["data"]
 
-            print(f"\n  Session test passed via API")
+            print("\n  Session test passed via API")
             print(f"  Username: {data['data']['username']}")
             print(f"  Points: {data['data']['points']}")
 

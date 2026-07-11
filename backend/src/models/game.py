@@ -1,7 +1,8 @@
 """Steam game/DLC/bundle data model."""
 
 from datetime import datetime
-from sqlalchemy import String, Integer, Boolean, DateTime, Text, JSON
+
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base, TimestampMixin

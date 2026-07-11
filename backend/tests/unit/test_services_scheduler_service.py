@@ -1,13 +1,14 @@
 """Unit tests for SchedulerService."""
 
-import pytest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from unittest.mock import MagicMock, patch
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
-from services.scheduler_service import SchedulerService
 from services.giveaway_service import GiveawayService
+from services.scheduler_service import SchedulerService
 from workers.scheduler import SchedulerManager
 
 

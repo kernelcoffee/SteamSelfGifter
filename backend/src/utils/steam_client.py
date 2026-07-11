@@ -5,9 +5,13 @@ automatic rate limiting, retry logic, and error handling.
 """
 
 import asyncio
-from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
+from typing import Any
+
 import httpx
+import structlog
+
+logger = structlog.get_logger()
 
 
 class RateLimiter:
@@ -126,7 +130,7 @@ class SteamClient:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         rate_limit_calls: int = 100,
         rate_limit_window: int = 60,
         max_retries: int = 3,
@@ -158,7 +162,7 @@ class SteamClient:
             window_seconds=rate_limit_window
         )
 
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def start(self):
         """
@@ -205,9 +209,9 @@ class SteamClient:
     async def _request(
         self,
         url: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         retry_count: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Make HTTP request with rate limiting and retry logic.
 
@@ -272,7 +276,7 @@ class SteamClient:
 
                 raise SteamAPIError(f"Network error: {e}")
 
-    async def get_app_details(self, app_id: int) -> Optional[Dict[str, Any]]:
+    async def get_app_details(self, app_id: int) -> dict[str, Any] | None:
         """
         Get detailed information about a Steam app/game.
 
@@ -303,7 +307,7 @@ class SteamClient:
         except SteamAPINotFoundError:
             return None
 
-    async def get_owned_games(self, steam_id: str) -> list[Dict[str, Any]]:
+    async def get_owned_games(self, steam_id: str) -> list[dict[str, Any]]:
         """
         Get list of games owned by a Steam user.
 
@@ -338,7 +342,7 @@ class SteamClient:
         response = data.get("response", {})
         return response.get("games", [])
 
-    async def get_player_summary(self, steam_id: str) -> Optional[Dict[str, Any]]:
+    async def get_player_summary(self, steam_id: str) -> dict[str, Any] | None:
         """
         Get Steam player profile information.
 
@@ -373,7 +377,7 @@ class SteamClient:
 
         return players[0] if players else None
 
-    async def get_app_reviews(self, app_id: int) -> Optional[Dict[str, Any]]:
+    async def get_app_reviews(self, app_id: int) -> dict[str, Any] | None:
         """
         Get review statistics for a Steam app.
 
@@ -407,14 +411,17 @@ class SteamClient:
                     url,
                     params=params,
                     headers={
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        ),
                         "Accept": "application/json",
                         "Accept-Language": "en-US,en;q=0.9",
                     }
                 )
 
                 if response.status_code != 200:
-                    print(f"Review API returned {response.status_code} for {app_id}")
+                    logger.warning("review_api_error", status_code=response.status_code, app_id=app_id)
                     return None
 
                 data = response.json()
@@ -432,10 +439,10 @@ class SteamClient:
             }
 
         except Exception as e:
-            print(f"Error fetching reviews for {app_id}: {e}")
+            logger.error("review_fetch_failed", app_id=app_id, error=str(e))
             return None
 
-    async def search_games(self, query: str, max_results: int = 10) -> list[Dict[str, Any]]:
+    async def search_games(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
         """
         Search Steam store for games (basic implementation).
 

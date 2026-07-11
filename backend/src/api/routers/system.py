@@ -6,9 +6,9 @@ system information, and activity logs.
 
 import csv
 import json
-from io import StringIO
-from typing import Dict, Any
 from datetime import datetime
+from io import StringIO
+from typing import Any
 
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
@@ -17,12 +17,11 @@ from api.dependencies import NotificationServiceDep
 from api.schemas.common import create_success_response
 from core.config import settings
 
-
 router = APIRouter()
 
 
-@router.get("/health", response_model=Dict[str, Any])
-async def health_check() -> Dict[str, Any]:
+@router.get("/health", response_model=dict[str, Any])
+async def health_check() -> dict[str, Any]:
     """
     Health check endpoint.
 
@@ -50,8 +49,8 @@ async def health_check() -> Dict[str, Any]:
     )
 
 
-@router.get("/info", response_model=Dict[str, Any])
-async def system_info() -> Dict[str, Any]:
+@router.get("/info", response_model=dict[str, Any])
+async def system_info() -> dict[str, Any]:
     """
     Get system information.
 
@@ -81,13 +80,15 @@ async def system_info() -> Dict[str, Any]:
     )
 
 
-@router.get("/logs", response_model=Dict[str, Any])
+@router.get("/logs", response_model=dict[str, Any])
 async def get_logs(
     notification_service: NotificationServiceDep,
     limit: int = Query(default=50, ge=1, le=500, description="Number of logs to retrieve"),
     level: str | None = Query(default=None, description="Filter by log level (info, warning, error)"),
-    event_type: str | None = Query(default=None, description="Filter by event type (scan, entry, error, config, scheduler)"),
-) -> Dict[str, Any]:
+    event_type: str | None = Query(
+        default=None, description="Filter by event type (scan, entry, error, config, scheduler)"
+    ),
+) -> dict[str, Any]:
     """
     Get recent activity logs.
 
@@ -155,10 +156,10 @@ async def get_logs(
     )
 
 
-@router.delete("/logs", response_model=Dict[str, Any])
+@router.delete("/logs", response_model=dict[str, Any])
 async def clear_logs(
     notification_service: NotificationServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Clear all activity logs.
 

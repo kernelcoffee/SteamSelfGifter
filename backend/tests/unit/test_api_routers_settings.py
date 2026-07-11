@@ -1,18 +1,18 @@
 """Unit tests for settings API router."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
 
 from api.routers.settings import (
-    get_settings,
-    update_settings,
-    set_credentials,
     clear_credentials,
-    validate_configuration,
+    get_settings,
     reset_to_defaults,
+    set_credentials,
+    update_settings,
+    validate_configuration,
 )
 from api.schemas.settings import SettingsUpdate, SteamGiftsCredentials
 from models.settings import Settings

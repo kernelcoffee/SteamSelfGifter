@@ -1,7 +1,8 @@
 """Activity and event logging model."""
 
 from datetime import datetime
-from sqlalchemy import String, Integer, DateTime, Text
+
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base

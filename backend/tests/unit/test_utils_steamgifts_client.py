@@ -1,17 +1,20 @@
 """Unit tests for SteamGiftsClient."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
-import httpx
 
+import httpx
+import pytest
+
+from core.exceptions import (
+    SteamGiftsError,
+)
+from core.exceptions import (
+    SteamGiftsSessionExpiredError as SteamGiftsAuthError,
+)
 from utils.steamgifts_client import (
     SteamGiftsClient,
     SteamGiftsNotFoundError,
-)
-from core.exceptions import (
-    SteamGiftsError,
-    SteamGiftsSessionExpiredError as SteamGiftsAuthError,
 )
 
 

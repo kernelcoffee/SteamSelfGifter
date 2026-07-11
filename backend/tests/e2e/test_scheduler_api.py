@@ -9,8 +9,9 @@ test database. Two pieces of wiring make that possible (see ``_wire_scheduler_e2
   so each test gets a fresh, isolated ``SchedulerManager`` patched into both.
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 

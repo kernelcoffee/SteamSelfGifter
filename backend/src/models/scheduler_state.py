@@ -1,7 +1,8 @@
 """Scheduler state and statistics model."""
 
 from datetime import datetime
-from sqlalchemy import Integer, DateTime
+
+from sqlalchemy import DateTime, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base, TimestampMixin

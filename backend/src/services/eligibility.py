@@ -16,8 +16,6 @@ release date fails ``max_game_age``.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
-
 
 # === Reason codes (stored on Giveaway.eligibility_reason) ===
 ELIGIBLE = "eligible"
@@ -55,10 +53,10 @@ class EligibilityCriteria:
     """
 
     min_price: int = 0
-    max_price: Optional[int] = None
-    min_score: Optional[int] = None
-    min_reviews: Optional[int] = None
-    max_game_age: Optional[int] = None
+    max_price: int | None = None
+    min_score: int | None = None
+    min_reviews: int | None = None
+    max_game_age: int | None = None
 
     @property
     def needs_game_data(self) -> bool:

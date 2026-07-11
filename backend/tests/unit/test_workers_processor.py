@@ -1,7 +1,8 @@
 """Unit tests for giveaway processor worker."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from tests.conftest import patch_automation_context
 

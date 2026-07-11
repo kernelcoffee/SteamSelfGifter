@@ -4,15 +4,16 @@ This module provides the service layer for scheduler operations, coordinating
 between repositories and giveaway entry automation.
 """
 
-from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from typing import Any
 
-from repositories.settings import SettingsRepository
-from repositories.giveaway import GiveawayRepository
-from services.giveaway_service import GiveawayService
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.scheduler_state import SchedulerState
+from repositories.giveaway import GiveawayRepository
+from repositories.settings import SettingsRepository
+from services.giveaway_service import GiveawayService
 from workers.scheduler import scheduler_manager
 
 # Job ID for the win check job
@@ -85,7 +86,7 @@ class SchedulerService:
 
         return state
 
-    async def get_scheduler_stats(self) -> Dict[str, Any]:
+    async def get_scheduler_stats(self) -> dict[str, Any]:
         """
         Get scheduler statistics.
 
@@ -207,7 +208,7 @@ class SchedulerService:
         """
         scheduler_manager.resume()
 
-    def get_scheduler_status(self) -> Dict[str, Any]:
+    def get_scheduler_status(self) -> dict[str, Any]:
         """
         Get combined scheduler status.
 
@@ -240,7 +241,7 @@ class SchedulerService:
         """
         return scheduler_manager.is_running and not scheduler_manager.is_paused
 
-    async def schedule_next_win_check(self) -> Optional[datetime]:
+    async def schedule_next_win_check(self) -> datetime | None:
         """
         Schedule a win check job for when the next entered giveaway expires.
 
@@ -329,7 +330,7 @@ class SchedulerService:
             await self.schedule_next_win_check()
 
     async def update_win_check_for_new_entry(
-        self, giveaway_end_time: Optional[datetime]
+        self, giveaway_end_time: datetime | None
     ) -> None:
         """
         Update win check job after entering a new giveaway.
@@ -362,7 +363,7 @@ class SchedulerService:
                 # New giveaway expires sooner, update the job
                 self._schedule_win_check_job(new_check_time)
 
-    def get_win_check_status(self) -> Dict[str, Any]:
+    def get_win_check_status(self) -> dict[str, Any]:
         """
         Get status of the win check job.
 

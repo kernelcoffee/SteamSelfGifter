@@ -4,8 +4,8 @@ This module provides Pydantic schemas for settings-related
 API requests and responses.
 """
 
-from typing import Optional
 from datetime import datetime
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -17,7 +17,7 @@ class SettingsBase(BaseModel):
     """
 
     # SteamGifts Authentication
-    phpsessid: Optional[str] = Field(
+    phpsessid: str | None = Field(
         default=None,
         description="SteamGifts session cookie for authentication",
         examples=["abc123def456..."],
@@ -27,7 +27,7 @@ class SettingsBase(BaseModel):
         description="Browser user agent string for HTTP requests",
         examples=["Mozilla/5.0 (X11; Linux x86_64) Firefox/82.0"],
     )
-    xsrf_token: Optional[str] = Field(
+    xsrf_token: str | None = Field(
         default=None,
         description="Anti-CSRF token from SteamGifts",
         examples=["xyz789..."],
@@ -89,7 +89,7 @@ class SettingsBase(BaseModel):
         ge=0,
         examples=[1000],
     )
-    autojoin_max_game_age: Optional[int] = Field(
+    autojoin_max_game_age: int | None = Field(
         default=None,
         description="Maximum game age in years (None = no limit)",
         ge=1,
@@ -103,7 +103,7 @@ class SettingsBase(BaseModel):
         ge=1,
         examples=[30],
     )
-    max_entries_per_cycle: Optional[int] = Field(
+    max_entries_per_cycle: int | None = Field(
         default=None,
         description="Max entries per scan cycle (None = unlimited)",
         ge=1,
@@ -173,7 +173,7 @@ class SettingsResponse(SettingsBase):
         description="Settings ID (always 1 for singleton)",
         examples=[1],
     )
-    last_synced_at: Optional[datetime] = Field(
+    last_synced_at: datetime | None = Field(
         default=None,
         description="Last sync with SteamGifts",
         examples=["2025-10-14T12:00:00"],
@@ -234,100 +234,100 @@ class SettingsUpdate(BaseModel):
     """
 
     # SteamGifts Authentication
-    phpsessid: Optional[str] = Field(
+    phpsessid: str | None = Field(
         default=None,
         description="SteamGifts session cookie",
     )
-    user_agent: Optional[str] = Field(
+    user_agent: str | None = Field(
         default=None,
         description="Browser user agent string",
     )
-    xsrf_token: Optional[str] = Field(
+    xsrf_token: str | None = Field(
         default=None,
         description="Anti-CSRF token",
     )
 
     # DLC Settings
-    dlc_enabled: Optional[bool] = Field(
+    dlc_enabled: bool | None = Field(
         default=None,
         description="Whether to enter DLC giveaways",
     )
 
     # Safety Settings
-    safety_check_enabled: Optional[bool] = Field(
+    safety_check_enabled: bool | None = Field(
         default=None,
         description="Check giveaways for traps before auto-entering",
     )
-    auto_hide_unsafe: Optional[bool] = Field(
+    auto_hide_unsafe: bool | None = Field(
         default=None,
         description="Automatically hide unsafe giveaways on SteamGifts",
     )
 
     # Auto-join Settings
-    autojoin_enabled: Optional[bool] = Field(
+    autojoin_enabled: bool | None = Field(
         default=None,
         description="Enable automatic giveaway entry",
     )
-    autojoin_start_at: Optional[int] = Field(
+    autojoin_start_at: int | None = Field(
         default=None,
         description="Start entering when points >= this value",
         ge=0,
     )
-    autojoin_stop_at: Optional[int] = Field(
+    autojoin_stop_at: int | None = Field(
         default=None,
         description="Stop entering when points <= this value",
         ge=0,
     )
-    autojoin_min_price: Optional[int] = Field(
+    autojoin_min_price: int | None = Field(
         default=None,
         description="Minimum giveaway price in points",
         ge=0,
     )
-    autojoin_min_score: Optional[int] = Field(
+    autojoin_min_score: int | None = Field(
         default=None,
         description="Minimum Steam review score (0-10)",
         ge=0,
         le=10,
     )
-    autojoin_min_reviews: Optional[int] = Field(
+    autojoin_min_reviews: int | None = Field(
         default=None,
         description="Minimum number of reviews required",
         ge=0,
     )
-    autojoin_max_game_age: Optional[int] = Field(
+    autojoin_max_game_age: int | None = Field(
         default=None,
         description="Maximum game age in years (None = no limit)",
         ge=1,
     )
 
     # Scheduler Settings
-    scan_interval_minutes: Optional[int] = Field(
+    scan_interval_minutes: int | None = Field(
         default=None,
         description="How often to scan for giveaways (minutes)",
         ge=1,
     )
-    max_entries_per_cycle: Optional[int] = Field(
+    max_entries_per_cycle: int | None = Field(
         default=None,
         description="Max entries per scan cycle",
         ge=1,
     )
-    automation_enabled: Optional[bool] = Field(
+    automation_enabled: bool | None = Field(
         default=None,
         description="Master switch for automation",
     )
 
     # Advanced Settings
-    max_scan_pages: Optional[int] = Field(
+    max_scan_pages: int | None = Field(
         default=None,
         description="Maximum SteamGifts pages to scan per cycle",
         ge=1,
     )
-    entry_delay_min: Optional[int] = Field(
+    entry_delay_min: int | None = Field(
         default=None,
         description="Minimum delay between entries (seconds)",
         ge=0,
     )
-    entry_delay_max: Optional[int] = Field(
+    entry_delay_max: int | None = Field(
         default=None,
         description="Maximum delay between entries (seconds)",
         ge=0,
@@ -367,7 +367,7 @@ class SteamGiftsCredentials(BaseModel):
         min_length=1,
         examples=["abc123def456..."],
     )
-    user_agent: Optional[str] = Field(
+    user_agent: str | None = Field(
         default=None,
         description="Optional user agent string",
         examples=["Mozilla/5.0 (X11; Linux x86_64) Firefox/82.0"],
