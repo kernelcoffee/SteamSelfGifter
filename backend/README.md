@@ -6,7 +6,7 @@ FastAPI-based REST API for SteamSelfGifter with SQLite persistence, WebSocket su
 
 - **Framework**: FastAPI
 - **Database**: SQLite with SQLAlchemy (async)
-- **Python**: 3.13+
+- **Python**: 3.14+
 
 ## Directory Structure
 

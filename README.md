@@ -2,7 +2,7 @@
 
 [![Tests](https://github.com/kernelcoffee/SteamSelfGifter/actions/workflows/test.yml/badge.svg)](https://github.com/kernelcoffee/SteamSelfGifter/actions/workflows/test.yml)
 [![Docker](https://github.com/kernelcoffee/SteamSelfGifter/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/kernelcoffee/SteamSelfGifter/actions/workflows/docker-publish.yml)
-[![Python Version](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 SteamSelfGifter is an automated bot for entering Steam game giveaways on SteamGifts.com. It features a modern web interface for managing your giveaway entries, tracking wins, and configuring automation settings.
