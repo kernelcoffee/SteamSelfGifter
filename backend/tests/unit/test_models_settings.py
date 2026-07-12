@@ -4,8 +4,9 @@ Tests the application settings singleton model that stores all user-configurable
 settings for SteamSelfGifter automation.
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -117,7 +118,6 @@ def test_settings_update_timestamp(session):
     session.add(settings)
     session.commit()
 
-    original_updated_at = settings.updated_at
 
     # Update the settings
     settings.autojoin_enabled = True

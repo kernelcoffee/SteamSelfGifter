@@ -1,17 +1,18 @@
 """Unit tests for game API schemas."""
 
+
 import pytest
-from datetime import datetime
 from pydantic import ValidationError
 
 from api.schemas.game import (
     GameBase,
-    GameResponse,
-    GameList,
     GameFilter,
+    GameList,
     GameRefreshResponse,
+    GameResponse,
     GameStats,
 )
+from core.time import utcnow
 
 
 def test_game_base():
@@ -99,7 +100,7 @@ def test_game_response():
         name="Portal 2",
         type="game",
         review_score=9,
-        last_refreshed_at=datetime.utcnow()
+        last_refreshed_at=utcnow()
     )
 
     assert game.id == 620
@@ -157,7 +158,7 @@ def test_game_refresh_response():
     response = GameRefreshResponse(
         refreshed=True,
         message="Game data refreshed successfully",
-        last_refreshed_at=datetime.utcnow()
+        last_refreshed_at=utcnow()
     )
 
     assert response.refreshed is True

@@ -1,8 +1,9 @@
 """Unit tests for NotificationService."""
 
-import pytest
 import json
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
 from services.notification_service import NotificationService

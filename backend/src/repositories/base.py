@@ -5,16 +5,14 @@ database operations (Create, Read, Update, Delete) for SQLAlchemy models.
 All model-specific repositories should inherit from this class.
 """
 
-from typing import Generic, TypeVar, Type, List, Any, Dict, Optional
-from sqlalchemy import select, update, delete
+from typing import Any
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
-# Type variable for SQLAlchemy models
-ModelType = TypeVar("ModelType", bound=DeclarativeBase)
 
-
-class BaseRepository(Generic[ModelType]):
+class BaseRepository[ModelType: DeclarativeBase]:
     """
     Generic base repository for async CRUD operations.
 
@@ -45,7 +43,7 @@ class BaseRepository(Generic[ModelType]):
         - Does not auto-commit (caller controls transaction boundaries)
     """
 
-    def __init__(self, model: Type[ModelType], session: AsyncSession):
+    def __init__(self, model: type[ModelType], session: AsyncSession):
         """
         Initialize repository with model and database session.
 
@@ -59,7 +57,7 @@ class BaseRepository(Generic[ModelType]):
         self.model = model
         self.session = session
 
-    async def get_by_id(self, id_value: Any) -> Optional[ModelType]:
+    async def get_by_id(self, id_value: Any) -> ModelType | None:
         """
         Retrieve a single record by its primary key.
 
@@ -77,8 +75,8 @@ class BaseRepository(Generic[ModelType]):
         return await self.session.get(self.model, id_value)
 
     async def get_all(
-        self, limit: Optional[int] = None, offset: Optional[int] = None
-    ) -> List[ModelType]:
+        self, limit: int | None = None, offset: int | None = None
+    ) -> list[ModelType]:
         """
         Retrieve all records with optional pagination.
 
@@ -132,7 +130,7 @@ class BaseRepository(Generic[ModelType]):
         await self.session.flush()  # Flush to get auto-generated fields
         return instance
 
-    async def update(self, id_value: Any, **kwargs) -> Optional[ModelType]:
+    async def update(self, id_value: Any, **kwargs) -> ModelType | None:
         """
         Update an existing record by primary key.
 
@@ -223,7 +221,7 @@ class BaseRepository(Generic[ModelType]):
         instance = await self.get_by_id(id_value)
         return instance is not None
 
-    async def bulk_create(self, items: List[Dict[str, Any]]) -> List[ModelType]:
+    async def bulk_create(self, items: list[dict[str, Any]]) -> list[ModelType]:
         """
         Create multiple records in a single operation.
 
@@ -249,7 +247,7 @@ class BaseRepository(Generic[ModelType]):
         await self.session.flush()
         return instances
 
-    async def filter_by(self, **kwargs) -> List[ModelType]:
+    async def filter_by(self, **kwargs) -> list[ModelType]:
         """
         Filter records by field values.
 
@@ -269,7 +267,7 @@ class BaseRepository(Generic[ModelType]):
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def get_one_or_none(self, **kwargs) -> Optional[ModelType]:
+    async def get_one_or_none(self, **kwargs) -> ModelType | None:
         """
         Get a single record matching the filter criteria.
 

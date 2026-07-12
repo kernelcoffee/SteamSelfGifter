@@ -4,20 +4,19 @@ This module provides REST API endpoints for settings management,
 including authentication, automation, and configuration validation.
 """
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
-from typing import Dict, Any
 
 from api.dependencies import SettingsServiceDep
+from api.schemas.common import (
+    create_success_response,
+)
 from api.schemas.settings import (
+    ConfigurationValidation,
     SettingsResponse,
     SettingsUpdate,
     SteamGiftsCredentials,
-    ConfigurationValidation,
-)
-from api.schemas.common import (
-    MessageResponse,
-    create_success_response,
-    create_error_response,
 )
 
 router = APIRouter()
@@ -25,11 +24,11 @@ router = APIRouter()
 
 @router.get(
     "",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get application settings",
     description="Retrieve current application settings including authentication, automation, and configuration.",
 )
-async def get_settings(settings_service: SettingsServiceDep) -> Dict[str, Any]:
+async def get_settings(settings_service: SettingsServiceDep) -> dict[str, Any]:
     """
     Get application settings.
 
@@ -60,14 +59,14 @@ async def get_settings(settings_service: SettingsServiceDep) -> Dict[str, Any]:
 
 @router.put(
     "",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Update application settings",
     description="Update application settings. All fields are optional for partial updates.",
 )
 async def update_settings(
     update_data: SettingsUpdate,
     settings_service: SettingsServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Update application settings.
 
@@ -114,14 +113,14 @@ async def update_settings(
 
 @router.post(
     "/credentials",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Set SteamGifts credentials",
     description="Configure SteamGifts authentication credentials (PHPSESSID cookie).",
 )
 async def set_credentials(
     credentials: SteamGiftsCredentials,
     settings_service: SettingsServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Set SteamGifts authentication credentials.
 
@@ -159,13 +158,13 @@ async def set_credentials(
 
 @router.delete(
     "/credentials",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Clear SteamGifts credentials",
     description="Remove SteamGifts authentication credentials.",
 )
 async def clear_credentials(
     settings_service: SettingsServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Clear SteamGifts credentials.
 
@@ -181,13 +180,13 @@ async def clear_credentials(
 
 @router.post(
     "/validate",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Validate configuration",
     description="Validate current settings configuration and return any errors or warnings.",
 )
 async def validate_configuration(
     settings_service: SettingsServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Validate current configuration.
 
@@ -216,13 +215,13 @@ async def validate_configuration(
 
 @router.post(
     "/reset",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Reset settings to defaults",
     description="Reset all settings to default values while preserving credentials.",
 )
 async def reset_to_defaults(
     settings_service: SettingsServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Reset settings to default values.
 
@@ -240,13 +239,13 @@ async def reset_to_defaults(
 
 @router.post(
     "/test-session",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Test SteamGifts session",
     description="Validate the current PHPSESSID by fetching user info from SteamGifts.",
 )
 async def test_session(
     settings_service: SettingsServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Test SteamGifts session validity.
 

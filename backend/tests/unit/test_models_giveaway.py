@@ -9,12 +9,14 @@ This module contains comprehensive tests for the Giveaway model, including:
 - Foreign key relationships with Game model
 """
 
-import pytest
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from core.time import utcnow
 from models.base import Base
 from models.game import Game
 from models.giveaway import Giveaway
@@ -78,8 +80,8 @@ def test_giveaway_creation_with_all_fields(session):
     # WHEN: Creating a giveaway with all fields populated including safety and entry data
     # THEN: All fields are correctly stored
 
-    end_time = datetime.utcnow() + timedelta(days=7)
-    entered_at = datetime.utcnow()
+    end_time = utcnow() + timedelta(days=7)
+    entered_at = utcnow()
 
     giveaway = Giveaway(
         code="XYZ789",
@@ -164,7 +166,7 @@ def test_is_active_property_active_giveaway(session):
     # WHEN: Checking the is_active and is_expired properties
     # THEN: is_active is True and is_expired is False
 
-    future_time = datetime.utcnow() + timedelta(hours=24)
+    future_time = utcnow() + timedelta(hours=24)
     giveaway = Giveaway(
         code="ACTIVE1",
         url="/test",
@@ -185,7 +187,7 @@ def test_is_expired_property(session):
     # WHEN: Checking the is_active and is_expired properties
     # THEN: is_active is False and is_expired is True
 
-    past_time = datetime.utcnow() - timedelta(hours=1)
+    past_time = utcnow() - timedelta(hours=1)
     giveaway = Giveaway(
         code="EXPIRED1",
         url="/test",
@@ -225,7 +227,7 @@ def test_time_remaining_property(session):
     # WHEN: Accessing the time_remaining property
     # THEN: The property returns approximately 7200 seconds
 
-    future_time = datetime.utcnow() + timedelta(hours=2)
+    future_time = utcnow() + timedelta(hours=2)
     giveaway = Giveaway(
         code="TIME1",
         url="/test",
@@ -249,7 +251,7 @@ def test_time_remaining_expired(session):
     # WHEN: Accessing the time_remaining property
     # THEN: The property returns 0 (not negative)
 
-    past_time = datetime.utcnow() - timedelta(hours=1)
+    past_time = utcnow() - timedelta(hours=1)
     giveaway = Giveaway(
         code="EXPIRED2",
         url="/test",
@@ -356,7 +358,7 @@ def test_giveaway_entry_tracking(session):
     # WHEN: Marking the giveaway as entered with a timestamp
     # THEN: The is_entered and entered_at fields are correctly updated
 
-    now = datetime.utcnow()
+    now = utcnow()
     giveaway = Giveaway(
         code="ENTRY1",
         url="/test",
@@ -449,7 +451,7 @@ def test_giveaway_update(session):
     # Update fields
     giveaway.is_hidden = True
     giveaway.is_entered = True
-    giveaway.entered_at = datetime.utcnow()
+    giveaway.entered_at = utcnow()
     giveaway.safety_score = 85
     session.commit()
 

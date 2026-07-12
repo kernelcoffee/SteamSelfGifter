@@ -5,9 +5,10 @@ methods for tracking entry history, calculating statistics, and analyzing
 entry performance.
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
-from sqlalchemy import select, and_, func
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.entry import Entry
@@ -47,7 +48,7 @@ class EntryRepository(BaseRepository[Entry]):
         """
         super().__init__(Entry, session)
 
-    async def get_by_giveaway(self, giveaway_id: int) -> Optional[Entry]:
+    async def get_by_giveaway(self, giveaway_id: int) -> Entry | None:
         """
         Get entry for a specific giveaway.
 
@@ -67,8 +68,8 @@ class EntryRepository(BaseRepository[Entry]):
         return result.scalar_one_or_none()
 
     async def get_recent(
-        self, limit: Optional[int] = 20, offset: Optional[int] = None
-    ) -> List[Entry]:
+        self, limit: int | None = 20, offset: int | None = None
+    ) -> list[Entry]:
         """
         Get recent entries ordered by creation time (most recent first).
 
@@ -94,8 +95,8 @@ class EntryRepository(BaseRepository[Entry]):
         return list(result.scalars().all())
 
     async def get_by_status(
-        self, status: str, limit: Optional[int] = None
-    ) -> List[Entry]:
+        self, status: str, limit: int | None = None
+    ) -> list[Entry]:
         """
         Get entries by status.
 
@@ -123,7 +124,7 @@ class EntryRepository(BaseRepository[Entry]):
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def get_successful(self, limit: Optional[int] = None) -> List[Entry]:
+    async def get_successful(self, limit: int | None = None) -> list[Entry]:
         """
         Get all successful entries.
 
@@ -138,7 +139,7 @@ class EntryRepository(BaseRepository[Entry]):
         """
         return await self.get_by_status("success", limit)
 
-    async def get_failed(self, limit: Optional[int] = None) -> List[Entry]:
+    async def get_failed(self, limit: int | None = None) -> list[Entry]:
         """
         Get all failed entries.
 
@@ -153,7 +154,7 @@ class EntryRepository(BaseRepository[Entry]):
         """
         return await self.get_by_status("failed", limit)
 
-    async def get_pending(self, limit: Optional[int] = None) -> List[Entry]:
+    async def get_pending(self, limit: int | None = None) -> list[Entry]:
         """
         Get all pending entries.
 
@@ -169,8 +170,8 @@ class EntryRepository(BaseRepository[Entry]):
         return await self.get_by_status("pending", limit)
 
     async def get_by_entry_type(
-        self, entry_type: str, limit: Optional[int] = None
-    ) -> List[Entry]:
+        self, entry_type: str, limit: int | None = None
+    ) -> list[Entry]:
         """
         Get entries by type.
 
@@ -200,8 +201,8 @@ class EntryRepository(BaseRepository[Entry]):
         self,
         start_date: datetime,
         end_date: datetime,
-        limit: Optional[int] = None,
-    ) -> List[Entry]:
+        limit: int | None = None,
+    ) -> list[Entry]:
         """
         Get entries within a date range.
 
@@ -215,8 +216,8 @@ class EntryRepository(BaseRepository[Entry]):
 
         Example:
             >>> # Get entries from last 7 days
-            >>> start = datetime.utcnow() - timedelta(days=7)
-            >>> end = datetime.utcnow()
+            >>> start = utcnow() - timedelta(days=7)
+            >>> end = utcnow()
             >>> recent = await repo.get_in_date_range(start, end)
         """
         query = (
@@ -399,7 +400,7 @@ class EntryRepository(BaseRepository[Entry]):
             },
         }
 
-    async def get_stats_since(self, since: datetime) -> Dict[str, Any]:
+    async def get_stats_since(self, since: datetime) -> dict[str, Any]:
         """
         Get entry statistics since a specific date.
 
@@ -411,10 +412,10 @@ class EntryRepository(BaseRepository[Entry]):
 
         Example:
             >>> from datetime import datetime, timedelta
-            >>> week_ago = datetime.utcnow() - timedelta(days=7)
+            >>> week_ago = utcnow() - timedelta(days=7)
             >>> stats = await repo.get_stats_since(week_ago)
         """
-        from sqlalchemy import func, case
+        from sqlalchemy import case, func
 
         # Single query to get all counts
         query = select(
@@ -455,7 +456,7 @@ class EntryRepository(BaseRepository[Entry]):
             },
         }
 
-    async def get_recent_failures(self, limit: int = 10) -> List[Entry]:
+    async def get_recent_failures(self, limit: int = 10) -> list[Entry]:
         """
         Get recent failed entries (for debugging).
 
@@ -481,8 +482,8 @@ class EntryRepository(BaseRepository[Entry]):
         return list(result.scalars().all())
 
     async def get_entries_since(
-        self, since: datetime, limit: Optional[int] = None
-    ) -> List[Entry]:
+        self, since: datetime, limit: int | None = None
+    ) -> list[Entry]:
         """
         Get all entries created after a specific time.
 
@@ -495,7 +496,7 @@ class EntryRepository(BaseRepository[Entry]):
 
         Example:
             >>> # Get entries from last hour
-            >>> one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            >>> one_hour_ago = utcnow() - timedelta(hours=1)
             >>> recent = await repo.get_entries_since(one_hour_ago)
         """
         query = (

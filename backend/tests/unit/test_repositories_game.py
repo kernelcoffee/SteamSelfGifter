@@ -4,12 +4,13 @@ Tests the game-specific repository methods including search, cache management,
 and filtering capabilities for Steam game data.
 """
 
-import pytest
-from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from datetime import timedelta
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from core.time import utcnow
 from models.base import Base
-from models.game import Game
 from repositories.game import GameRepository
 
 
@@ -146,8 +147,8 @@ async def test_get_stale_games_old_data(game_repo, session):
     # WHEN: Stale games are requested
     # THEN: Games older than threshold should be returned
 
-    old_date = datetime.utcnow() - timedelta(days=10)
-    recent_date = datetime.utcnow() - timedelta(days=3)
+    old_date = utcnow() - timedelta(days=10)
+    recent_date = utcnow() - timedelta(days=3)
 
     await game_repo.create(
         id=730, name="CS2", type="game", last_refreshed_at=old_date
@@ -286,10 +287,10 @@ async def test_mark_refreshed(game_repo, session):
     await game_repo.create(id=730, name="CS2", type="game")
     await session.commit()
 
-    before = datetime.utcnow()
+    before = utcnow()
     game = await game_repo.mark_refreshed(730)
     await session.commit()
-    after = datetime.utcnow()
+    after = utcnow()
 
     assert game is not None
     assert game.last_refreshed_at is not None

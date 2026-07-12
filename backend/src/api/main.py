@@ -9,6 +9,7 @@ Creates and configures the FastAPI application with:
 """
 
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import FastAPI
@@ -23,16 +24,16 @@ from api.middleware import (
     scheduler_error_handler,
     steam_api_error_handler,
     steamgifts_error_handler,
-    steamgifts_session_expired_handler,
     steamgifts_not_configured_handler,
+    steamgifts_session_expired_handler,
     unhandled_exception_handler,
     validation_error_handler,
 )
+from api.routers import analytics, entries, games, giveaways, scheduler, system, websocket
 from api.routers import settings as settings_router
-from api.routers import system, websocket, scheduler, giveaways, games, entries, analytics
 from core.config import settings
 from core.exceptions import (
-    AppException,
+    AppError,
     ConfigurationError,
     InsufficientPointsError,
     RateLimitError,
@@ -40,8 +41,8 @@ from core.exceptions import (
     SchedulerError,
     SteamAPIError,
     SteamGiftsError,
-    SteamGiftsSessionExpiredError,
     SteamGiftsNotConfiguredError,
+    SteamGiftsSessionExpiredError,
     ValidationError,
 )
 from core.logging import setup_logging
@@ -60,9 +61,8 @@ async def lifespan(app: FastAPI):
     """
     from db.session import AsyncSessionLocal, init_db
     from services.settings_service import SettingsService
-    from workers.scheduler import scheduler_manager
     from workers.automation import automation_cycle
-    from workers.safety_checker import safety_check_cycle
+    from workers.scheduler import scheduler_manager
 
     # Startup
     setup_logging()
@@ -97,15 +97,6 @@ async def lifespan(app: FastAPI):
                     job_id="automation_cycle",
                     minutes=scan_interval,
                 )
-
-                # Add safety check job (runs every 45 seconds, slow rate to avoid rate limits)
-                if app_settings.safety_check_enabled:
-                    scheduler_manager.add_interval_job(
-                        func=safety_check_cycle,
-                        job_id="safety_check",
-                        seconds=45,
-                    )
-                    logger.info("safety_check_job_started", interval_seconds=45)
 
                 logger.info(
                     "scheduler_auto_started",
@@ -146,18 +137,24 @@ app.add_middleware(
 )
 
 # Register exception handlers
-app.add_exception_handler(AppException, app_exception_handler)
-app.add_exception_handler(ConfigurationError, configuration_error_handler)
-app.add_exception_handler(ResourceNotFoundError, resource_not_found_handler)
-app.add_exception_handler(ValidationError, validation_error_handler)
-app.add_exception_handler(SteamGiftsSessionExpiredError, steamgifts_session_expired_handler)
-app.add_exception_handler(SteamGiftsNotConfiguredError, steamgifts_not_configured_handler)
-app.add_exception_handler(SteamGiftsError, steamgifts_error_handler)
-app.add_exception_handler(SteamAPIError, steam_api_error_handler)
-app.add_exception_handler(InsufficientPointsError, insufficient_points_handler)
-app.add_exception_handler(RateLimitError, rate_limit_error_handler)
-app.add_exception_handler(SchedulerError, scheduler_error_handler)
-app.add_exception_handler(Exception, unhandled_exception_handler)
+# Handlers take their concrete exception subclass; Starlette's signature is
+# declared over plain Exception, hence the dict[..., Any] indirection.
+_exception_handlers: dict[type[Exception], Any] = {
+    AppError: app_exception_handler,
+    ConfigurationError: configuration_error_handler,
+    ResourceNotFoundError: resource_not_found_handler,
+    ValidationError: validation_error_handler,
+    SteamGiftsSessionExpiredError: steamgifts_session_expired_handler,
+    SteamGiftsNotConfiguredError: steamgifts_not_configured_handler,
+    SteamGiftsError: steamgifts_error_handler,
+    SteamAPIError: steam_api_error_handler,
+    InsufficientPointsError: insufficient_points_handler,
+    RateLimitError: rate_limit_error_handler,
+    SchedulerError: scheduler_error_handler,
+    Exception: unhandled_exception_handler,
+}
+for _exc_class, _handler in _exception_handlers.items():
+    app.add_exception_handler(_exc_class, _handler)
 
 # Include API routers
 app.include_router(

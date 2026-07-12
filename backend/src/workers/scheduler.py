@@ -5,16 +5,17 @@ Uses APScheduler to manage periodic tasks like giveaway scanning
 and entry processing.
 """
 
-from typing import Callable, Any
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 import structlog
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.job import Job
 from apscheduler.jobstores.memory import MemoryJobStore
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
-from apscheduler.job import Job
+from apscheduler.triggers.interval import IntervalTrigger
 
 from core.config import settings
 
@@ -253,7 +254,7 @@ class SchedulerManager:
 
         Example:
             >>> from datetime import datetime, timedelta
-            >>> run_at = datetime.utcnow() + timedelta(hours=2)
+            >>> run_at = utcnow() + timedelta(hours=2)
             >>> scheduler_manager.add_date_job(
             ...     func=check_wins,
             ...     job_id="win_check_123",

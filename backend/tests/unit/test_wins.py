@@ -1,8 +1,11 @@
 """Unit tests for win detection and tracking functionality."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from core.time import utcnow
 
 
 class TestSteamGiftsClientGetWonGiveaways:
@@ -47,8 +50,9 @@ class TestSteamGiftsClientGetWonGiveaways:
     @pytest.mark.asyncio
     async def test_parse_won_giveaways(self, sample_won_html):
         """Test parsing won giveaways from HTML."""
-        from utils.steamgifts_client import SteamGiftsClient
         from bs4 import BeautifulSoup
+
+        from utils.steamgifts_client import SteamGiftsClient
 
         client = SteamGiftsClient(phpsessid="test", user_agent="test")
 
@@ -105,8 +109,9 @@ class TestSteamGiftsClientGetWonGiveaways:
     @pytest.mark.asyncio
     async def test_parse_won_giveaway_missing_link(self):
         """Test parsing fails gracefully when link is missing."""
-        from utils.steamgifts_client import SteamGiftsClient
         from bs4 import BeautifulSoup
+
+        from utils.steamgifts_client import SteamGiftsClient
 
         html = '<div class="table__row-inner-wrap"><div>No link here</div></div>'
         soup = BeautifulSoup(html, "html.parser")
@@ -168,10 +173,11 @@ class TestGiveawayRepositoryNextExpiring:
     async def test_get_next_expiring_entered_returns_soonest(self):
         """Test get_next_expiring_entered returns the soonest expiring giveaway."""
         from datetime import timedelta
+
         from repositories.giveaway import GiveawayRepository
 
         # Create mock giveaways with different end times
-        now = datetime.utcnow()
+        now = utcnow()
 
         mock_session = AsyncMock()
         mock_result = MagicMock()

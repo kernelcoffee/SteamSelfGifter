@@ -4,34 +4,35 @@ This module provides REST API endpoints for game operations,
 including fetching, searching, refreshing, and viewing statistics.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query, status
 
+from api.dependencies import GameServiceDep
 from api.schemas.common import create_success_response
 from api.schemas.game import (
-    GameResponse,
     GameRefreshResponse,
+    GameResponse,
     GameStats,
 )
-from api.dependencies import GameServiceDep
 
 router = APIRouter()
 
 
 @router.get(
     "/",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="List games",
     description="Get a list of cached games with optional filtering.",
 )
 async def list_games(
     game_service: GameServiceDep,
-    type: Optional[str] = Query(default=None, description="Filter by type (game, dlc, bundle)"),
-    min_score: Optional[int] = Query(default=None, ge=0, le=10, description="Minimum review score"),
-    min_reviews: Optional[int] = Query(default=None, ge=0, description="Minimum reviews"),
-    search: Optional[str] = Query(default=None, description="Search by game name"),
+    type: str | None = Query(default=None, description="Filter by type (game, dlc, bundle)"),
+    min_score: int | None = Query(default=None, ge=0, le=10, description="Minimum review score"),
+    min_reviews: int | None = Query(default=None, ge=0, description="Minimum reviews"),
+    search: str | None = Query(default=None, description="Search by game name"),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List cached games with filtering options.
 
@@ -80,13 +81,13 @@ async def list_games(
 
 @router.get(
     "/stats",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get game statistics",
     description="Get statistics about games in the cache.",
 )
 async def get_game_stats(
     game_service: GameServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get game cache statistics.
 
@@ -109,7 +110,7 @@ async def get_game_stats(
 
 @router.get(
     "/search/{query}",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Search games",
     description="Search cached games by name.",
 )
@@ -117,7 +118,7 @@ async def search_games(
     query: str,
     game_service: GameServiceDep,
     limit: int = Query(default=20, ge=1, le=100, description="Maximum results"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Search games by name.
 
@@ -145,7 +146,7 @@ async def search_games(
 
 @router.get(
     "/highly-rated",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get highly rated games",
     description="Get games with high review scores.",
 )
@@ -154,7 +155,7 @@ async def get_highly_rated_games(
     min_score: int = Query(default=8, ge=0, le=10, description="Minimum review score"),
     min_reviews: int = Query(default=1000, ge=0, description="Minimum reviews"),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get highly rated games.
 
@@ -183,7 +184,7 @@ async def get_highly_rated_games(
 
 @router.get(
     "/{app_id}",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Get game by App ID",
     description="Get a specific game by Steam App ID. Fetches from Steam if not cached.",
 )
@@ -191,7 +192,7 @@ async def get_game(
     app_id: int,
     game_service: GameServiceDep,
     force_refresh: bool = Query(default=False, description="Force refresh from Steam API"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get a specific game by App ID.
 
@@ -219,14 +220,14 @@ async def get_game(
 
 @router.post(
     "/{app_id}/refresh",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Refresh game data",
     description="Force refresh game data from Steam API.",
 )
 async def refresh_game(
     app_id: int,
     game_service: GameServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Refresh game data from Steam API.
 
@@ -263,14 +264,14 @@ async def refresh_game(
 
 @router.post(
     "/refresh-stale",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Refresh stale games",
     description="Refresh games with stale cached data.",
 )
 async def refresh_stale_games(
     game_service: GameServiceDep,
     limit: int = Query(default=10, ge=1, le=50, description="Maximum games to refresh"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Refresh stale cached games.
 
@@ -299,14 +300,14 @@ async def refresh_stale_games(
 
 @router.post(
     "/bulk-cache",
-    response_model=Dict[str, Any],
+    response_model=dict[str, Any],
     summary="Bulk cache games",
     description="Cache multiple games by their Steam App IDs.",
 )
 async def bulk_cache_games(
-    app_ids: List[int],
+    app_ids: list[int],
     game_service: GameServiceDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Cache multiple games from Steam API.
 

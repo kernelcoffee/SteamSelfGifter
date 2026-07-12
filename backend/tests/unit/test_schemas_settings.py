@@ -1,16 +1,17 @@
 """Unit tests for settings API schemas."""
 
+
 import pytest
-from datetime import datetime
 from pydantic import ValidationError
 
 from api.schemas.settings import (
+    ConfigurationValidation,
     SettingsBase,
     SettingsResponse,
     SettingsUpdate,
     SteamGiftsCredentials,
-    ConfigurationValidation,
 )
+from core.time import utcnow
 
 
 def test_settings_base_defaults():
@@ -118,9 +119,9 @@ def test_settings_response_from_dict():
         "max_scan_pages": 3,
         "entry_delay_min": 8,
         "entry_delay_max": 12,
-        "last_synced_at": datetime.utcnow(),
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
+        "last_synced_at": utcnow(),
+        "created_at": utcnow(),
+        "updated_at": utcnow(),
     }
 
     settings = SettingsResponse(**data)

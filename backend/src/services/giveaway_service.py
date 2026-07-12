@@ -4,17 +4,22 @@ This module provides the service layer for giveaway operations, coordinating
 between repositories and external SteamGifts client.
 """
 
-from typing import Optional, List, Tuple
-from datetime import datetime
+from collections import Counter
+
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from repositories.giveaway import GiveawayRepository
-from repositories.entry import EntryRepository
-from utils.steamgifts_client import SteamGiftsClient
 from core.exceptions import SteamGiftsError
-from services.game_service import GameService
-from models.giveaway import Giveaway
+from core.time import utcnow
 from models.entry import Entry
+from models.giveaway import Giveaway
+from repositories.entry import EntryRepository
+from repositories.giveaway import GiveawayRepository
+from services.eligibility import ELIGIBLE, EligibilityCriteria, evaluate_eligibility
+from services.game_service import GameService
+from utils.steamgifts_client import SteamGiftsClient
+
+logger = structlog.get_logger()
 
 
 class GiveawayService:
@@ -79,11 +84,11 @@ class GiveawayService:
     async def sync_giveaways(
         self,
         pages: int = 1,
-        search_query: Optional[str] = None,
-        giveaway_type: Optional[str] = None,
+        search_query: str | None = None,
+        giveaway_type: str | None = None,
         dlc_only: bool = False,
-        min_copies: Optional[int] = None,
-    ) -> Tuple[int, int]:
+        min_copies: int | None = None,
+    ) -> tuple[int, int]:
         """
         Sync giveaways from SteamGifts to database.
 
@@ -132,7 +137,7 @@ class GiveawayService:
                         try:
                             await self.game_service.get_or_fetch_game(ga_data["game_id"])
                         except Exception as e:
-                            print(f"Error caching game {ga_data['game_id']}: {e}")
+                            logger.error("game_cache_failed", game_id=ga_data["game_id"], error=str(e))
 
                     if existing:
                         # Update existing giveaway
@@ -144,7 +149,7 @@ class GiveawayService:
                         new_count += 1
 
             except SteamGiftsError as e:
-                print(f"Error fetching page {page}: {e}")
+                logger.error("giveaway_page_fetch_failed", page=page, error=str(e))
                 break
 
         await self.session.commit()
@@ -166,7 +171,6 @@ class GiveawayService:
             >>> new_wins = await service.sync_wins(pages=2)
             >>> print(f"Found {new_wins} new wins!")
         """
-        from datetime import datetime
 
         new_wins = 0
 
@@ -181,7 +185,7 @@ class GiveawayService:
                     if giveaway and not giveaway.is_won:
                         # Mark as won
                         giveaway.is_won = True
-                        giveaway.won_at = win.get("won_at") or datetime.utcnow()
+                        giveaway.won_at = win.get("won_at") or utcnow()
                         new_wins += 1
 
                     elif not giveaway:
@@ -195,12 +199,12 @@ class GiveawayService:
                             game_id=win.get("game_id"),
                             is_entered=True,
                             is_won=True,
-                            won_at=win.get("won_at") or datetime.utcnow(),
+                            won_at=win.get("won_at") or utcnow(),
                         )
                         new_wins += 1
 
             except Exception as e:
-                print(f"Error fetching wins page {page}: {e}")
+                logger.error("wins_page_fetch_failed", page=page, error=str(e))
                 break
 
         await self.session.commit()
@@ -256,7 +260,7 @@ class GiveawayService:
                         synced_count += 1
 
             except Exception as e:
-                print(f"Error fetching entered page {page}: {e}")
+                logger.error("entered_page_fetch_failed", page=page, error=str(e))
                 break
 
         await self.session.commit()
@@ -264,7 +268,7 @@ class GiveawayService:
 
     async def get_won_giveaways(
         self, limit: int = 50, offset: int = 0
-    ) -> List[Giveaway]:
+    ) -> list[Giveaway]:
         """
         Get all won giveaways from database.
 
@@ -333,7 +337,7 @@ class GiveawayService:
 
     async def enter_giveaway(
         self, giveaway_code: str, entry_type: str = "manual"
-    ) -> Optional[Entry]:
+    ) -> Entry | None:
         """
         Enter a giveaway and record the entry.
 
@@ -352,13 +356,13 @@ class GiveawayService:
         # Get giveaway
         giveaway = await self.giveaway_repo.get_by_code(giveaway_code)
         if not giveaway:
-            print(f"Giveaway {giveaway_code} not found in database")
+            logger.warning("giveaway_not_found", code=giveaway_code)
             return None
 
         # Check if already entered
         existing_entry = await self.entry_repo.get_by_giveaway(giveaway.id)
         if existing_entry:
-            print(f"Already entered giveaway {giveaway_code}")
+            logger.info("giveaway_already_entered", code=giveaway_code)
             return existing_entry
 
         # Try to enter
@@ -403,18 +407,18 @@ class GiveawayService:
             )
             await self.session.commit()
 
-            print(f"Error entering giveaway {giveaway_code}: {e}")
+            logger.error("giveaway_entry_error", code=giveaway_code, error=str(e))
             return None
 
     async def get_eligible_giveaways(
         self,
         min_price: int = 0,
-        max_price: Optional[int] = None,
-        min_score: Optional[int] = None,
-        min_reviews: Optional[int] = None,
-        max_game_age: Optional[int] = None,
+        max_price: int | None = None,
+        min_score: int | None = None,
+        min_reviews: int | None = None,
+        max_game_age: int | None = None,
         limit: int = 50,
-    ) -> List[Giveaway]:
+    ) -> list[Giveaway]:
         """
         Get eligible giveaways based on criteria.
 
@@ -456,10 +460,56 @@ class GiveawayService:
 
         return giveaways
 
+    async def evaluate_and_get_eligible(
+        self, criteria: EligibilityCriteria, limit: int | None = None
+    ) -> list[Giveaway]:
+        """
+        Evaluate every active candidate, record why each one did or didn't qualify,
+        and return the eligible giveaways (highest price first, optionally limited).
+
+        This is the decision step for the automation/process cycle. Every active,
+        not-entered giveaway gets ``eligibility_reason`` and ``eligibility_checked_at``
+        persisted, so the UI can show why a giveaway wasn't entered. The returned
+        set is identical to :meth:`get_eligible_giveaways` for the same criteria —
+        only the recorded reasons are new (see :mod:`services.eligibility`).
+
+        Args:
+            criteria: the active autojoin thresholds.
+            limit: maximum number of eligible giveaways to return (None = all).
+
+        Returns:
+            Eligible giveaways, ordered by price descending.
+        """
+        now = utcnow()
+        candidates = await self.giveaway_repo.get_active_unentered()
+
+        games = await self.game_service.repo.get_by_ids(
+            [g.game_id for g in candidates if g.game_id]
+        )
+
+        eligible: list[Giveaway] = []
+        for giveaway in candidates:
+            game = games.get(giveaway.game_id) if giveaway.game_id else None
+            reason = evaluate_eligibility(giveaway, game, criteria, now)
+            giveaway.eligibility_reason = reason
+            giveaway.eligibility_checked_at = now
+            if reason == ELIGIBLE:
+                eligible.append(giveaway)
+
+        await self.session.commit()
+
+        # Developer observability (not the user-facing ActivityLog): a one-line
+        # breakdown of why the candidate pool did/didn't qualify this cycle.
+        counts = Counter(g.eligibility_reason or "unknown" for g in candidates)
+        logger.info("eligibility_evaluated", total=len(candidates), **dict(counts))
+
+        # candidates are already ordered by price desc, so eligible is too.
+        return eligible[:limit] if limit else eligible
+
     async def get_active_giveaways(
-        self, limit: Optional[int] = None, offset: int = 0, min_score: Optional[int] = None,
-        is_safe: Optional[bool] = None
-    ) -> List[Giveaway]:
+        self, limit: int | None = None, offset: int = 0, min_score: int | None = None,
+        is_safe: bool | None = None
+    ) -> list[Giveaway]:
         """
         Get all active (non-expired) giveaways.
 
@@ -478,8 +528,8 @@ class GiveawayService:
         return await self.giveaway_repo.get_active(limit=limit, offset=offset, min_score=min_score, is_safe=is_safe)
 
     async def get_all_giveaways(
-        self, limit: Optional[int] = None, offset: int = 0
-    ) -> List[Giveaway]:
+        self, limit: int | None = None, offset: int = 0
+    ) -> list[Giveaway]:
         """
         Get all giveaways (including expired ones).
 
@@ -496,8 +546,8 @@ class GiveawayService:
         return await self.giveaway_repo.get_all(limit=limit, offset=offset)
 
     async def get_entered_giveaways(
-        self, limit: Optional[int] = None, active_only: bool = False
-    ) -> List[Giveaway]:
+        self, limit: int | None = None, active_only: bool = False
+    ) -> list[Giveaway]:
         """
         Get entered giveaways.
 
@@ -514,8 +564,8 @@ class GiveawayService:
         return await self.giveaway_repo.get_entered(limit=limit, active_only=active_only)
 
     async def get_expiring_soon(
-        self, hours: int = 24, limit: Optional[int] = None
-    ) -> List[Giveaway]:
+        self, hours: int = 24, limit: int | None = None
+    ) -> list[Giveaway]:
         """
         Get giveaways expiring within specified hours.
 
@@ -532,8 +582,8 @@ class GiveawayService:
         return await self.giveaway_repo.get_expiring_soon(hours=hours, limit=limit)
 
     async def enrich_giveaways_with_game_data(
-        self, giveaways: List[Giveaway]
-    ) -> List[Giveaway]:
+        self, giveaways: list[Giveaway]
+    ) -> list[Giveaway]:
         """
         Enrich giveaways with game data (thumbnail, reviews).
 
@@ -717,8 +767,8 @@ class GiveawayService:
         return True
 
     async def search_giveaways(
-        self, query: str, limit: Optional[int] = 20
-    ) -> List[Giveaway]:
+        self, query: str, limit: int | None = 20
+    ) -> list[Giveaway]:
         """
         Search giveaways by game name.
 
@@ -735,8 +785,8 @@ class GiveawayService:
         return await self.giveaway_repo.search_by_game_name(query, limit=limit)
 
     async def get_entry_history(
-        self, limit: int = 50, status: Optional[str] = None
-    ) -> List[Entry]:
+        self, limit: int = 50, status: str | None = None
+    ) -> list[Entry]:
         """
         Get entry history.
 
@@ -821,7 +871,7 @@ class GiveawayService:
             return await self.sg_client.get_user_points()
         except SteamGiftsError as e:
             # If we can't fetch points, return 0 rather than failing
-            print(f"Failed to fetch current points: {e}")
+            logger.error("points_fetch_failed", error=str(e))
             return 0
 
     async def check_giveaway_safety(self, giveaway_code: str) -> dict:
@@ -880,14 +930,14 @@ class GiveawayService:
         game_id = await self.sg_client.get_giveaway_game_id(giveaway_code)
 
         if not game_id:
-            print(f"Could not get game_id for giveaway {giveaway_code}")
+            logger.warning("game_id_lookup_failed", code=giveaway_code)
             return False
 
         # Hide on SteamGifts
         try:
             await self.sg_client.hide_giveaway(game_id)
         except SteamGiftsError as e:
-            print(f"Failed to hide on SteamGifts: {e}")
+            logger.error("steamgifts_hide_failed", code=giveaway_code, error=str(e))
             return False
 
         # Also hide locally
@@ -919,12 +969,12 @@ class GiveawayService:
         try:
             return await self.sg_client.post_comment(giveaway_code, comment_text)
         except SteamGiftsError as e:
-            print(f"Failed to post comment: {e}")
+            logger.error("comment_post_failed", code=giveaway_code, error=str(e))
             return False
 
     async def enter_giveaway_with_safety_check(
         self, giveaway_code: str, entry_type: str = "auto"
-    ) -> Optional[Entry]:
+    ) -> Entry | None:
         """
         Enter a giveaway with safety check.
 
@@ -948,7 +998,7 @@ class GiveawayService:
             safety = await self.check_giveaway_safety(giveaway_code)
 
             if not safety["is_safe"]:
-                print(f"Giveaway {giveaway_code} is unsafe: {safety['details']}")
+                logger.warning("giveaway_unsafe", code=giveaway_code, details=safety["details"])
 
                 # Try to hide it on SteamGifts
                 await self.hide_on_steamgifts(giveaway_code)
@@ -968,7 +1018,7 @@ class GiveawayService:
                 return None
 
         except Exception as e:
-            print(f"Safety check failed for {giveaway_code}: {e}")
+            logger.error("safety_check_failed", code=giveaway_code, error=str(e))
             # Continue without safety check if it fails
 
         # Proceed with normal entry

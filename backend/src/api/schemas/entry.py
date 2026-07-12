@@ -4,8 +4,8 @@ This module provides Pydantic schemas for giveaway entry-related
 API requests and responses.
 """
 
-from typing import Optional
 from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -39,7 +39,7 @@ class EntryBase(BaseModel):
         pattern="^(success|failed)$",
         examples=["success"],
     )
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None,
         description="Error message if entry failed",
         examples=["Insufficient points"],
@@ -59,7 +59,7 @@ class EntryResponse(EntryBase):
         ...     points_spent=50,
         ...     entry_type="manual",
         ...     status="success",
-        ...     entered_at=datetime.utcnow()
+        ...     entered_at=utcnow()
         ... )
     """
 
@@ -136,19 +136,19 @@ class EntryFilter(BaseModel):
         ... )
     """
 
-    entry_type: Optional[str] = Field(
+    entry_type: str | None = Field(
         default=None,
         description="Filter by entry type (manual, auto, wishlist)",
         pattern="^(manual|auto|wishlist)$",
         examples=["auto"],
     )
-    status: Optional[str] = Field(
+    status: str | None = Field(
         default=None,
         description="Filter by status (success, failed)",
         pattern="^(success|failed)$",
         examples=["success"],
     )
-    giveaway_id: Optional[int] = Field(
+    giveaway_id: int | None = Field(
         default=None,
         description="Filter by giveaway ID",
         examples=[123],
@@ -262,7 +262,7 @@ class EntryHistoryItem(BaseModel):
         description="Name of the game",
         examples=["Portal 2"],
     )
-    game_id: Optional[int] = Field(
+    game_id: int | None = Field(
         default=None,
         description="Steam App ID if available",
         examples=[620],

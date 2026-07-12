@@ -1,7 +1,8 @@
 """Unit tests for WebSocket router."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import WebSocketDisconnect
 
 from api.routers.websocket import websocket_endpoint

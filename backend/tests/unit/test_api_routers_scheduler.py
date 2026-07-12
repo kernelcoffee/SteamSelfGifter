@@ -1,19 +1,20 @@
 """Unit tests for scheduler API router."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi import HTTPException
 
 from api.routers.scheduler import (
+    enter_giveaway,
     get_scheduler_status,
-    start_scheduler,
-    stop_scheduler,
     pause_scheduler,
     resume_scheduler,
-    trigger_scan,
-    trigger_quick_scan,
+    start_scheduler,
+    stop_scheduler,
     trigger_processing,
-    enter_giveaway,
+    trigger_quick_scan,
+    trigger_scan,
 )
 
 

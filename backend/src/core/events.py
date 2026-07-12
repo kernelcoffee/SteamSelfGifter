@@ -4,11 +4,11 @@ This module provides the EventManager class for broadcasting events to
 connected WebSocket clients, enabling real-time updates in the web UI.
 """
 
-import asyncio
-import json
-from datetime import datetime
-from typing import Dict, Any, Set
+from typing import Any
+
 from fastapi import WebSocket
+
+from core.time import utcnow
 
 
 class EventManager:
@@ -46,7 +46,7 @@ class EventManager:
 
     def __init__(self):
         """Initialize EventManager with empty connection set."""
-        self.active_connections: Set[WebSocket] = set()
+        self.active_connections: set[WebSocket] = set()
 
     async def connect(self, websocket: WebSocket) -> None:
         """
@@ -75,7 +75,7 @@ class EventManager:
         """
         self.active_connections.discard(websocket)
 
-    async def send_event(self, websocket: WebSocket, event: Dict[str, Any]) -> None:
+    async def send_event(self, websocket: WebSocket, event: dict[str, Any]) -> None:
         """
         Send an event to a specific WebSocket client.
 
@@ -92,7 +92,7 @@ class EventManager:
         """
         await websocket.send_json(event)
 
-    async def broadcast_event(self, event_type: str, data: Dict[str, Any]) -> None:
+    async def broadcast_event(self, event_type: str, data: dict[str, Any]) -> None:
         """
         Broadcast an event to all connected WebSocket clients.
 
@@ -123,7 +123,7 @@ class EventManager:
         event = {
             "type": event_type,
             "data": data,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
         }
 
         # Track disconnected clients for removal
@@ -145,7 +145,7 @@ class EventManager:
         self,
         level: str,
         message: str,
-        details: Dict[str, Any] | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         """
         Broadcast a notification message to all connected clients.
@@ -186,7 +186,7 @@ class EventManager:
         """
         return len(self.active_connections)
 
-    async def broadcast_stats_update(self, stats: Dict[str, Any]) -> None:
+    async def broadcast_stats_update(self, stats: dict[str, Any]) -> None:
         """
         Broadcast statistics update to all connected clients.
 

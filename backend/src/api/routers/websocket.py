@@ -5,8 +5,8 @@ bidirectional communication between the server and web clients.
 """
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from core.events import event_manager
 
+from core.events import event_manager
 
 router = APIRouter()
 
@@ -99,13 +99,10 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # Wait for messages from client (e.g., keepalive pings)
             # This also allows us to detect when the client disconnects
-            data = await websocket.receive_text()
+            await websocket.receive_text()
 
             # We could process client messages here if needed in the future
             # For now, we just ignore them (they're just keepalive messages)
-            # Example: Handle ping/pong
-            # if data == "ping":
-            #     await websocket.send_text("pong")
 
     except WebSocketDisconnect:
         # Client disconnected - clean up the connection

@@ -21,7 +21,7 @@ RUN npm run build
 # -----------------------------------------------------------------------------
 # Stage 2: Build Backend
 # -----------------------------------------------------------------------------
-FROM python:3.13-slim AS backend-build
+FROM python:3.14-slim AS backend-build
 
 WORKDIR /app
 
@@ -37,7 +37,7 @@ RUN pip install --no-cache-dir .
 # -----------------------------------------------------------------------------
 # Stage 3: Final Runtime Image
 # -----------------------------------------------------------------------------
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Install nginx and supervisor
 RUN apt-get update && apt-get install -y --no-install-recommends \

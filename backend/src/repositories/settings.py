@@ -5,7 +5,7 @@ follows a singleton pattern (always id=1). It wraps the BaseRepository with
 convenience methods for getting and updating the single settings record.
 """
 
-from typing import Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.settings import Settings
@@ -108,7 +108,7 @@ class SettingsRepository(BaseRepository[Settings]):
 
         return settings
 
-    async def get_phpsessid(self) -> Optional[str]:
+    async def get_phpsessid(self) -> str | None:
         """
         Get the SteamGifts session ID.
 

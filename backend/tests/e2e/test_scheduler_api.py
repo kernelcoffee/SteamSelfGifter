@@ -1,12 +1,45 @@
-"""End-to-end tests for scheduler API endpoints."""
+"""End-to-end tests for scheduler API endpoints.
+
+These drive the real FastAPI app + router + APScheduler against the in-memory
+test database. Two pieces of wiring make that possible (see ``_wire_scheduler_e2e``):
+
+- Worker jobs open their own DB session via ``workers.context.AsyncSessionLocal``
+  (outside FastAPI's dependency injection), so it's patched onto the test engine.
+- The router and service bind the module-level ``scheduler_manager`` at import,
+  so each test gets a fresh, isolated ``SchedulerManager`` patched into both.
+"""
+
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-# Skip these tests for now - APScheduler causes event loop conflicts in CI
-# The scheduler functionality is covered by unit tests in test_api_routers_scheduler.py
-# and test_services_scheduler_service.py
-pytestmark = pytest.mark.skip(reason="APScheduler causes event loop conflicts in test suite - covered by unit tests")
+from workers.scheduler import SchedulerManager
+
+
+@pytest.fixture(autouse=True)
+def _wire_scheduler_e2e(async_engine):
+    """Point worker DB sessions at the test engine and isolate the scheduler.
+
+    ``async_engine`` is the same function-scoped in-memory engine the
+    ``test_client`` fixture uses, so worker sessions share the test database.
+    """
+    worker_session_factory = async_sessionmaker(
+        async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=True,
+    )
+
+    fresh_manager = SchedulerManager()
+
+    with patch("workers.context.AsyncSessionLocal", worker_session_factory), \
+         patch("api.routers.scheduler.scheduler_manager", fresh_manager), \
+         patch("services.scheduler_service.scheduler_manager", fresh_manager):
+        yield
+        if fresh_manager.is_running:
+            fresh_manager.stop(wait=False)
 
 
 @pytest.mark.asyncio
@@ -31,7 +64,7 @@ async def test_start_scheduler(test_client: AsyncClient):
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
-    assert data["data"]["message"] == "Scheduler started"
+    assert data["data"]["message"] == "Scheduler started with automation cycle"
     assert data["data"]["running"] is True
 
     # Clean up - stop the scheduler

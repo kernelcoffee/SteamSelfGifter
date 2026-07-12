@@ -1,7 +1,7 @@
 from typing import Any
 
 
-class AppException(Exception):
+class AppError(Exception):
     """Base exception for all application errors"""
 
     def __init__(
@@ -14,28 +14,28 @@ class AppException(Exception):
 
 
 # Configuration errors
-class ConfigurationError(AppException):
+class ConfigurationError(AppError):
     """Configuration related errors"""
 
     pass
 
 
 # Resource errors
-class ResourceNotFoundError(AppException):
+class ResourceNotFoundError(AppError):
     """Resource not found"""
 
     pass
 
 
 # Validation errors
-class ValidationError(AppException):
+class ValidationError(AppError):
     """Input validation errors"""
 
     pass
 
 
 # External API errors
-class SteamGiftsError(AppException):
+class SteamGiftsError(AppError):
     """SteamGifts API errors"""
 
     pass
@@ -59,26 +59,26 @@ class SteamGiftsNotConfiguredError(SteamGiftsAuthError):
     pass
 
 
-class SteamAPIError(AppException):
+class SteamAPIError(AppError):
     """Steam API errors"""
 
     pass
 
 
 # Business logic errors
-class InsufficientPointsError(AppException):
+class InsufficientPointsError(AppError):
     """Not enough points for operation"""
 
     pass
 
 
-class RateLimitError(AppException):
+class RateLimitError(AppError):
     """Rate limit exceeded"""
 
     pass
 
 
-class SchedulerError(AppException):
+class SchedulerError(AppError):
     """Scheduler related errors"""
 
     pass

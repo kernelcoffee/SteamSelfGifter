@@ -4,13 +4,11 @@ This module provides base Pydantic schemas for API responses,
 ensuring consistent response structure across all endpoints.
 """
 
-from typing import Any, Optional, Generic, TypeVar
-from datetime import datetime
+from typing import Any
+
 from pydantic import BaseModel, Field
 
-
-# Generic type variable for data payload
-T = TypeVar("T")
+from core.time import utcnow
 
 
 class ResponseMeta(BaseModel):
@@ -36,33 +34,33 @@ class ResponseMeta(BaseModel):
         description="Response timestamp in ISO 8601 format",
         examples=["2025-10-14T12:00:00Z"],
     )
-    request_id: Optional[str] = Field(
+    request_id: str | None = Field(
         default=None,
         description="Request identifier for tracing",
         examples=["req_abc123"],
     )
 
     # Pagination fields (optional)
-    page: Optional[int] = Field(
+    page: int | None = Field(
         default=None,
         description="Current page number (1-indexed)",
         ge=1,
         examples=[1],
     )
-    per_page: Optional[int] = Field(
+    per_page: int | None = Field(
         default=None,
         description="Items per page",
         ge=1,
         le=100,
         examples=[20],
     )
-    total: Optional[int] = Field(
+    total: int | None = Field(
         default=None,
         description="Total number of items",
         ge=0,
         examples=[100],
     )
-    total_pages: Optional[int] = Field(
+    total_pages: int | None = Field(
         default=None,
         description="Total number of pages",
         ge=0,
@@ -85,7 +83,7 @@ class ResponseMeta(BaseModel):
     }
 
 
-class SuccessResponse(BaseModel, Generic[T]):
+class SuccessResponse[T](BaseModel):
     """
     Standard success response wrapper.
 
@@ -166,7 +164,7 @@ class ErrorDetail(BaseModel):
         description="Human-readable error message",
         examples=["Not enough points to enter this giveaway"],
     )
-    details: Optional[dict[str, Any]] = Field(
+    details: dict[str, Any] | None = Field(
         default=None,
         description="Additional error details",
         examples=[{"required": 50, "available": 30}],
@@ -286,10 +284,10 @@ class MessageResponse(BaseModel):
 
 def create_success_response(
     data: Any,
-    page: Optional[int] = None,
-    per_page: Optional[int] = None,
-    total: Optional[int] = None,
-    request_id: Optional[str] = None,
+    page: int | None = None,
+    per_page: int | None = None,
+    total: int | None = None,
+    request_id: str | None = None,
 ) -> dict:
     """
     Helper function to create a success response dictionary.
@@ -313,7 +311,7 @@ def create_success_response(
         True
     """
     meta = ResponseMeta(
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=utcnow().isoformat() + "Z",
         request_id=request_id,
         page=page,
         per_page=per_page,
@@ -331,8 +329,8 @@ def create_success_response(
 def create_error_response(
     code: str,
     message: str,
-    details: Optional[dict[str, Any]] = None,
-    request_id: Optional[str] = None,
+    details: dict[str, Any] | None = None,
+    request_id: str | None = None,
 ) -> dict:
     """
     Helper function to create an error response dictionary.
@@ -356,7 +354,7 @@ def create_error_response(
         False
     """
     meta = ResponseMeta(
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=utcnow().isoformat() + "Z",
         request_id=request_id,
     )
 

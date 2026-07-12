@@ -5,8 +5,9 @@ Or set STEAMGIFTS_PHPSESSID environment variable.
 """
 
 import pytest
-from utils.steamgifts_client import SteamGiftsClient
+
 from core.exceptions import SteamGiftsAuthError
+from utils.steamgifts_client import SteamGiftsClient
 
 
 @pytest.mark.integration

@@ -1,7 +1,7 @@
 """Repository for ActivityLog model."""
 
-from typing import Optional
-from sqlalchemy import select, desc
+
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.activity_log import ActivityLog
@@ -41,7 +41,7 @@ class ActivityLogRepository:
         level: str,
         event_type: str,
         message: str,
-        details: Optional[str] = None,
+        details: str | None = None,
     ) -> ActivityLog:
         """
         Create a new activity log entry.
@@ -73,7 +73,7 @@ class ActivityLogRepository:
         await self.session.flush()
         return log
 
-    async def get_by_id(self, log_id: int) -> Optional[ActivityLog]:
+    async def get_by_id(self, log_id: int) -> ActivityLog | None:
         """
         Get activity log by ID.
 
@@ -203,7 +203,8 @@ class ActivityLogRepository:
         from sqlalchemy import delete
         result = await self.session.execute(delete(ActivityLog))
         await self.session.commit()
-        return result.rowcount
+        # execute() is typed as Result, but DELETE always yields a CursorResult.
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def count(self) -> int:
         """

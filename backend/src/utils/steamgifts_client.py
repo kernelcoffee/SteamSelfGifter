@@ -5,16 +5,19 @@ including authentication, scraping giveaways, and entering giveaways.
 """
 
 import re
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
+from typing import Any
+
 import httpx
+import structlog
 from bs4 import BeautifulSoup
 
 from core.exceptions import (
     SteamGiftsError,
     SteamGiftsSessionExpiredError,
-    SteamGiftsNotConfiguredError,
 )
+
+logger = structlog.get_logger()
 
 
 class SteamGiftsNotFoundError(SteamGiftsError):
@@ -81,7 +84,7 @@ class SteamGiftsClient:
         self,
         phpsessid: str,
         user_agent: str,
-        xsrf_token: Optional[str] = None,
+        xsrf_token: str | None = None,
         timeout_seconds: int = 30,
     ):
         """
@@ -104,7 +107,7 @@ class SteamGiftsClient:
         self.xsrf_token = xsrf_token
         self.timeout_seconds = timeout_seconds
 
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def start(self):
         """
@@ -252,7 +255,7 @@ class SteamGiftsClient:
 
         return int(match.group(1))
 
-    async def get_user_info(self) -> Dict[str, Any]:
+    async def get_user_info(self) -> dict[str, Any]:
         """
         Get current user's info (username and points).
 
@@ -307,7 +310,7 @@ class SteamGiftsClient:
         # Method 1: Look for nav__avatar-inner-wrap (user avatar link)
         avatar_link = soup.find("a", class_="nav__avatar-inner-wrap")
         if avatar_link:
-            href = avatar_link.get("href", "")
+            href = str(avatar_link.get("href", "") or "")
             username_match = re.search(r"/user/([^/]+)", href)
             if username_match:
                 username = username_match.group(1)
@@ -320,7 +323,7 @@ class SteamGiftsClient:
             if nav_container:
                 user_link = nav_container.find("a", href=re.compile(r"^/user/"))
                 if user_link:
-                    href = user_link.get("href", "")
+                    href = str(user_link.get("href", "") or "")
                     username_match = re.search(r"/user/([^/]+)", href)
                     if username_match:
                         username = username_match.group(1)
@@ -334,7 +337,7 @@ class SteamGiftsClient:
                 while parent and parent.name != "nav":
                     user_link = parent.find("a", href=re.compile(r"^/user/"))
                     if user_link:
-                        href = user_link.get("href", "")
+                        href = str(user_link.get("href", "") or "")
                         username_match = re.search(r"/user/([^/]+)", href)
                         if username_match:
                             username = username_match.group(1)
@@ -356,11 +359,11 @@ class SteamGiftsClient:
     async def get_giveaways(
         self,
         page: int = 1,
-        search_query: Optional[str] = None,
-        giveaway_type: Optional[str] = None,
+        search_query: str | None = None,
+        giveaway_type: str | None = None,
         dlc_only: bool = False,
-        min_copies: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+        min_copies: int | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Get list of giveaways from SteamGifts.
 
@@ -403,7 +406,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaways/search"
-        params = {"page": page}
+        params: dict[str, str | int] = {"page": page}
 
         if search_query:
             params["q"] = search_query
@@ -445,12 +448,12 @@ class SteamGiftsClient:
                     giveaways.append(giveaway)
             except Exception as e:
                 # Log error but continue parsing other giveaways
-                print(f"Error parsing giveaway: {e}")
+                logger.warning("giveaway_parse_failed", error=str(e))
                 continue
 
         return giveaways
 
-    def _parse_giveaway_element(self, element) -> Optional[Dict[str, Any]]:
+    def _parse_giveaway_element(self, element) -> dict[str, Any] | None:
         """
         Parse giveaway data from HTML element.
 
@@ -589,7 +592,7 @@ class SteamGiftsClient:
 
             # If type is "error", there's usually a message
             error_msg = result.get("msg", "Unknown error")
-            print(f"Failed to enter giveaway: {error_msg}")
+            logger.warning("giveaway_entry_rejected", error=error_msg)
             return False
 
         except Exception as e:
@@ -599,7 +602,7 @@ class SteamGiftsClient:
                 details={"error": str(e)},
             )
 
-    async def get_giveaway_details(self, giveaway_code: str) -> Dict[str, Any]:
+    async def get_giveaway_details(self, giveaway_code: str) -> dict[str, Any]:
         """
         Get detailed information about a specific giveaway.
 
@@ -664,7 +667,7 @@ class SteamGiftsClient:
         # Real implementation would scrape the giveaway page
         return False
 
-    async def get_won_giveaways(self, page: int = 1) -> List[Dict[str, Any]]:
+    async def get_won_giveaways(self, page: int = 1) -> list[dict[str, Any]]:
         """
         Get list of won giveaways from SteamGifts.
 
@@ -691,7 +694,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaways/won"
-        params = {"page": page}
+        params: dict[str, str | int] = {"page": page}
 
         response = await self._client.get(url, params=params)
 
@@ -715,12 +718,12 @@ class SteamGiftsClient:
                 if won:
                     won_giveaways.append(won)
             except Exception as e:
-                print(f"Error parsing won giveaway: {e}")
+                logger.warning("won_giveaway_parse_failed", error=str(e))
                 continue
 
         return won_giveaways
 
-    def _parse_won_giveaway_row(self, row) -> Optional[Dict[str, Any]]:
+    def _parse_won_giveaway_row(self, row) -> dict[str, Any] | None:
         """
         Parse a won giveaway row from the /giveaways/won page.
 
@@ -787,7 +790,7 @@ class SteamGiftsClient:
             "steam_key": steam_key,
         }
 
-    async def get_entered_giveaways(self, page: int = 1) -> List[Dict[str, Any]]:
+    async def get_entered_giveaways(self, page: int = 1) -> list[dict[str, Any]]:
         """
         Get list of entered giveaways from SteamGifts.
 
@@ -815,7 +818,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaways/entered"
-        params = {"page": page}
+        params: dict[str, str | int] = {"page": page}
 
         response = await self._client.get(url, params=params)
 
@@ -839,12 +842,12 @@ class SteamGiftsClient:
                 if entered:
                     entered_giveaways.append(entered)
             except Exception as e:
-                print(f"Error parsing entered giveaway: {e}")
+                logger.warning("entered_giveaway_parse_failed", error=str(e))
                 continue
 
         return entered_giveaways
 
-    def _parse_entered_giveaway_row(self, row) -> Optional[Dict[str, Any]]:
+    def _parse_entered_giveaway_row(self, row) -> dict[str, Any] | None:
         """
         Parse an entered giveaway row from the /giveaways/entered page.
 
@@ -937,7 +940,7 @@ class SteamGiftsClient:
             "entered_at": entered_at,
         }
 
-    def check_page_safety(self, html_content: str) -> Dict[str, Any]:
+    def check_page_safety(self, html_content: str) -> dict[str, Any]:
         """
         Check if a giveaway page contains suspicious content.
 
@@ -1001,7 +1004,7 @@ class SteamGiftsClient:
             "details": found_bad_words,
         }
 
-    async def check_giveaway_safety(self, giveaway_code: str) -> Dict[str, Any]:
+    async def check_giveaway_safety(self, giveaway_code: str) -> dict[str, Any]:
         """
         Check if a specific giveaway is safe to enter.
 
@@ -1085,7 +1088,7 @@ class SteamGiftsClient:
         # SteamGifts returns empty response on success
         return response.status_code == 200
 
-    async def get_giveaway_game_id(self, giveaway_code: str) -> Optional[int]:
+    async def get_giveaway_game_id(self, giveaway_code: str) -> int | None:
         """
         Get the Steam game ID for a giveaway.
 
@@ -1119,7 +1122,7 @@ class SteamGiftsClient:
         if featured:
             game_id = featured.get("data-game-id")
             if game_id:
-                return int(game_id)
+                return int(str(game_id))
 
         return None
 

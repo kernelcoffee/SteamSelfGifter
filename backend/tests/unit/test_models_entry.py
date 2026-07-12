@@ -9,15 +9,16 @@ This module contains comprehensive tests for the Entry model, including:
 - Points tracking and error message handling
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from core.time import utcnow
 from models.base import Base
-from models.game import Game  # Import Game so foreign key resolves
-from models.giveaway import Giveaway
 from models.entry import Entry
+from models.giveaway import Giveaway
 
 
 @pytest.fixture
@@ -97,7 +98,7 @@ def test_entry_creation_complete(session, giveaway):
     # WHEN: Creating an entry with all fields populated including error message
     # THEN: All fields are correctly stored
 
-    now = datetime.utcnow()
+    now = utcnow()
     entry = Entry(
         giveaway_id=giveaway.id,
         points_spent=100,

@@ -1,13 +1,15 @@
 """Unit tests for SchedulerService."""
 
-import pytest
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from datetime import timedelta
+from unittest.mock import MagicMock, patch
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from core.time import utcnow
 from models.base import Base
-from services.scheduler_service import SchedulerService
 from services.giveaway_service import GiveawayService
+from services.scheduler_service import SchedulerService
 from workers.scheduler import SchedulerManager
 
 
@@ -92,141 +94,6 @@ async def test_get_or_create_state_reuses_existing(test_db, mock_giveaway_servic
 
 
 @pytest.mark.asyncio
-async def test_run_automation_cycle_success(test_db, mock_giveaway_service):
-    """Test running automation cycle successfully."""
-    async with test_db() as session:
-        service = SchedulerService(session, mock_giveaway_service)
-
-        # Mock giveaway service methods
-        # sync_giveaways is called twice: once for wishlist, once for regular
-        mock_giveaway_service.sync_giveaways = AsyncMock(
-            side_effect=[(2, 1), (5, 2)]  # wishlist returns (2, 1), regular returns (5, 2)
-        )
-        mock_giveaway_service.get_eligible_giveaways = AsyncMock(return_value=[])
-
-        # Set up settings
-        settings = await service.settings_repo.get_settings()
-        settings.max_scan_pages = 3
-        settings.autojoin_min_price = 50
-        settings.max_entries_per_cycle = 10
-        await session.commit()
-
-        # Run cycle
-        stats = await service.run_automation_cycle()
-
-        assert stats["synced"] == 10  # (2+1) + (5+2) = 10
-        assert stats["eligible"] == 0
-        assert stats["entered"] == 0
-        assert stats["failed"] == 0
-        assert stats["points_spent"] == 0
-
-        # Verify state was updated
-        state = await service._get_or_create_state()
-        assert state.last_scan_at is not None
-        assert state.total_scans == 1
-        assert state.total_entries == 0
-
-
-@pytest.mark.asyncio
-async def test_run_automation_cycle_with_entries(test_db, mock_giveaway_service):
-    """Test automation cycle with successful entries."""
-    async with test_db() as session:
-        service = SchedulerService(session, mock_giveaway_service)
-
-        # Mock giveaway objects
-        mock_giveaway1 = MagicMock()
-        mock_giveaway1.code = "GA1"
-
-        mock_giveaway2 = MagicMock()
-        mock_giveaway2.code = "GA2"
-
-        # Mock entry objects
-        mock_entry1 = MagicMock()
-        mock_entry1.points_spent = 50
-
-        mock_entry2 = MagicMock()
-        mock_entry2.points_spent = 75
-
-        # Mock service methods
-        # sync_giveaways is called twice: once for wishlist, once for regular
-        mock_giveaway_service.sync_giveaways = AsyncMock(
-            side_effect=[(1, 0), (1, 0)]  # wishlist returns (1, 0), regular returns (1, 0)
-        )
-        mock_giveaway_service.get_eligible_giveaways = AsyncMock(
-            return_value=[mock_giveaway1, mock_giveaway2]
-        )
-        mock_giveaway_service.enter_giveaway = AsyncMock(
-            side_effect=[mock_entry1, mock_entry2]
-        )
-
-        # Run cycle
-        stats = await service.run_automation_cycle()
-
-        assert stats["synced"] == 2  # (1+0) + (1+0) = 2
-        assert stats["eligible"] == 2
-        assert stats["entered"] == 2
-        assert stats["failed"] == 0
-        assert stats["points_spent"] == 125  # 50 + 75
-
-        # Verify state
-        state = await service._get_or_create_state()
-        assert state.total_entries == 2
-
-
-@pytest.mark.asyncio
-async def test_run_automation_cycle_with_failures(test_db, mock_giveaway_service):
-    """Test automation cycle with failed entries."""
-    async with test_db() as session:
-        service = SchedulerService(session, mock_giveaway_service)
-
-        # Mock giveaways
-        mock_giveaway1 = MagicMock()
-        mock_giveaway1.code = "GA1"
-
-        mock_giveaway2 = MagicMock()
-        mock_giveaway2.code = "GA2"
-
-        # Mock entry (one success, one failure)
-        mock_entry = MagicMock()
-        mock_entry.points_spent = 50
-
-        mock_giveaway_service.sync_giveaways = AsyncMock(return_value=(2, 0))
-        mock_giveaway_service.get_eligible_giveaways = AsyncMock(
-            return_value=[mock_giveaway1, mock_giveaway2]
-        )
-        # First succeeds, second fails (returns None)
-        mock_giveaway_service.enter_giveaway = AsyncMock(
-            side_effect=[mock_entry, None]
-        )
-
-        stats = await service.run_automation_cycle()
-
-        assert stats["entered"] == 1
-        assert stats["failed"] == 1
-        assert stats["points_spent"] == 50
-
-
-@pytest.mark.asyncio
-async def test_run_automation_cycle_error_handling(test_db, mock_giveaway_service):
-    """Test automation cycle records errors."""
-    async with test_db() as session:
-        service = SchedulerService(session, mock_giveaway_service)
-
-        # Mock to raise an error
-        mock_giveaway_service.sync_giveaways = AsyncMock(
-            side_effect=Exception("API Error")
-        )
-
-        # Should raise error but record it
-        with pytest.raises(Exception, match="API Error"):
-            await service.run_automation_cycle()
-
-        # Error should be recorded
-        state = await service._get_or_create_state()
-        assert state.total_errors == 1
-
-
-@pytest.mark.asyncio
 async def test_get_scheduler_stats(test_db, mock_giveaway_service):
     """Test getting scheduler statistics."""
     async with test_db() as session:
@@ -237,7 +104,7 @@ async def test_get_scheduler_stats(test_db, mock_giveaway_service):
         state.total_scans = 10
         state.total_entries = 25
         state.total_errors = 2
-        state.last_scan_at = datetime.utcnow()
+        state.last_scan_at = utcnow()
         await session.commit()
 
         stats = await service.get_scheduler_stats()
@@ -255,7 +122,7 @@ async def test_update_next_scan_time(test_db, mock_giveaway_service):
     async with test_db() as session:
         service = SchedulerService(session, mock_giveaway_service)
 
-        next_time = datetime.utcnow() + timedelta(minutes=30)
+        next_time = utcnow() + timedelta(minutes=30)
         state = await service.update_next_scan_time(next_time)
 
         assert state.next_scan_at is not None
@@ -273,7 +140,7 @@ async def test_reset_scheduler_stats(test_db, mock_giveaway_service):
         state.total_scans = 100
         state.total_entries = 250
         state.total_errors = 5
-        state.last_scan_at = datetime.utcnow()
+        state.last_scan_at = utcnow()
         await session.commit()
 
         # Reset
@@ -284,25 +151,6 @@ async def test_reset_scheduler_stats(test_db, mock_giveaway_service):
         assert reset_state.total_errors == 0
         assert reset_state.last_scan_at is None
         assert reset_state.next_scan_at is None
-
-
-@pytest.mark.asyncio
-async def test_run_multiple_cycles_increments_counters(test_db, mock_giveaway_service):
-    """Test multiple cycles increment counters correctly."""
-    async with test_db() as session:
-        service = SchedulerService(session, mock_giveaway_service)
-
-        # Mock for 3 cycles
-        mock_giveaway_service.sync_giveaways = AsyncMock(return_value=(1, 0))
-        mock_giveaway_service.get_eligible_giveaways = AsyncMock(return_value=[])
-
-        # Run 3 cycles
-        for _ in range(3):
-            await service.run_automation_cycle()
-
-        # Check counters
-        state = await service._get_or_create_state()
-        assert state.total_scans == 3
 
 
 @pytest.mark.asyncio

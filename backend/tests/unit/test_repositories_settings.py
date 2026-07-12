@@ -5,7 +5,7 @@ including automatic creation, updates, and convenience methods.
 """
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
 from models.settings import Settings

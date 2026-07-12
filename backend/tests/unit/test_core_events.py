@@ -1,8 +1,9 @@
 """Unit tests for WebSocket event manager."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from core.events import EventManager, event_manager
 
@@ -106,8 +107,7 @@ async def test_broadcast_event_single_client(manager, mock_websocket):
     """Test broadcasting event to single connected client."""
     await manager.connect(mock_websocket)
 
-    with patch('core.events.datetime') as mock_datetime:
-        mock_datetime.utcnow.return_value = datetime(2024, 1, 15, 10, 30, 0)
+    with patch('core.events.utcnow', return_value=datetime(2024, 1, 15, 10, 30, 0)):
 
         await manager.broadcast_event("scan_complete", {"new": 5, "updated": 3})
 
@@ -277,8 +277,7 @@ async def test_event_structure(manager, mock_websocket):
     """Test that broadcast events have correct structure."""
     await manager.connect(mock_websocket)
 
-    with patch('core.events.datetime') as mock_datetime:
-        mock_datetime.utcnow.return_value = datetime(2024, 1, 15, 10, 30, 45)
+    with patch('core.events.utcnow', return_value=datetime(2024, 1, 15, 10, 30, 45)):
 
         await manager.broadcast_event("test_type", {"key": "value"})
 

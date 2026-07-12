@@ -22,7 +22,7 @@ from api.middleware import (
     validation_error_handler,
 )
 from core.exceptions import (
-    AppException,
+    AppError,
     ConfigurationError,
     InsufficientPointsError,
     RateLimitError,
@@ -82,8 +82,8 @@ def test_create_error_response_without_details():
 
 @pytest.mark.asyncio
 async def test_app_exception_handler(mock_request):
-    """Test AppException handler."""
-    exc = AppException(
+    """Test AppError handler."""
+    exc = AppError(
         message="Application error", code="APP_001", details={"key": "value"}
     )
 
@@ -291,7 +291,7 @@ async def test_exception_handlers_log_correctly(mock_request, caplog):
 async def test_all_handlers_return_json_response(mock_request):
     """Test that all handlers return JSONResponse instances."""
     handlers_and_exceptions = [
-        (app_exception_handler, AppException("msg", "code")),
+        (app_exception_handler, AppError("msg", "code")),
         (configuration_error_handler, ConfigurationError("msg", "code")),
         (resource_not_found_handler, ResourceNotFoundError("msg", "code")),
         (validation_error_handler, ValidationError("msg", "code")),

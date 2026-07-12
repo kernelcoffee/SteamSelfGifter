@@ -5,11 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import (
     get_database,
-    get_settings_service,
     get_notification_service,
+    get_settings_service,
 )
-from services.settings_service import SettingsService
 from services.notification_service import NotificationService
+from services.settings_service import SettingsService
 
 
 @pytest.mark.asyncio

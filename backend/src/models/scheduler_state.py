@@ -1,9 +1,11 @@
 """Scheduler state and statistics model."""
 
 from datetime import datetime
-from sqlalchemy import Integer, DateTime
+
+from sqlalchemy import DateTime, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.time import utcnow
 from models.base import Base, TimestampMixin
 
 
@@ -45,7 +47,7 @@ class SchedulerState(Base, TimestampMixin):
         >>> state = SchedulerState(id=1)
         >>> state.total_scans = 100
         >>> state.total_entries = 250
-        >>> state.last_scan_at = datetime.utcnow()
+        >>> state.last_scan_at = utcnow()
         >>> state.has_run
         True
     """
@@ -119,13 +121,13 @@ class SchedulerState(Base, TimestampMixin):
             Number of seconds since last scan, or None if never ran.
 
         Example:
-            >>> state.last_scan_at = datetime.utcnow() - timedelta(minutes=5)
+            >>> state.last_scan_at = utcnow() - timedelta(minutes=5)
             >>> state.time_since_last_scan
             300  # 5 minutes in seconds
         """
         if not self.last_scan_at:
             return None
-        return int((datetime.utcnow() - self.last_scan_at).total_seconds())
+        return int((utcnow() - self.last_scan_at).total_seconds())
 
     @property
     def time_until_next_scan(self) -> int | None:
@@ -140,5 +142,5 @@ class SchedulerState(Base, TimestampMixin):
         """
         if not self.next_scan_at:
             return None
-        remaining = int((self.next_scan_at - datetime.utcnow()).total_seconds())
+        remaining = int((self.next_scan_at - utcnow()).total_seconds())
         return max(0, remaining)  # Don't return negative values

@@ -4,13 +4,17 @@ This module provides the service layer for game operations, coordinating
 between the GameRepository and external Steam API client.
 """
 
-from typing import Optional, List
-from datetime import datetime, timedelta
+
+import structlog
+from dateutil import parser as date_parser
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from repositories.game import GameRepository
-from utils.steam_client import SteamClient, SteamAPIError
+from core.time import utcnow
 from models.game import Game
+from repositories.game import GameRepository
+from utils.steam_client import SteamAPIError, SteamClient
+
+logger = structlog.get_logger()
 
 
 class GameService:
@@ -59,7 +63,7 @@ class GameService:
 
     async def get_or_fetch_game(
         self, app_id: int, force_refresh: bool = False
-    ) -> Optional[Game]:
+    ) -> Game | None:
         """
         Get game from cache or fetch from Steam API.
 
@@ -98,7 +102,7 @@ class GameService:
 
         except SteamAPIError as e:
             # Log error and return cached data if available
-            print(f"Error fetching game {app_id}: {e}")
+            logger.error("game_fetch_failed", app_id=app_id, error=str(e))
             return await self.repo.get_by_id(app_id)
 
     async def _save_game_from_steam_data(
@@ -129,36 +133,33 @@ class GameService:
             date_str = release_info.get("date")
             if date_str:
                 try:
-                    # Try parsing common date formats
-                    # Steam uses formats like "Jan 1, 2020" or "1 Jan, 2020"
-                    from dateutil import parser
-                    parsed_date = parser.parse(date_str).date()
-                    # Store as ISO format string for consistent storage
-                    release_date = parsed_date.isoformat()
-                except Exception:
-                    # If parsing fails, leave as None
+                    # Steam uses formats like "Jan 1, 2020" or "1 Jan, 2020";
+                    # store as ISO format string for consistent storage.
+                    release_date = date_parser.parse(date_str).date().isoformat()
+                except (ValueError, OverflowError):
+                    # Unparseable date ("Coming soon", "Q3 2026", ...) → None
                     pass
 
         # Check if this is a bundle
         is_bundle = game_type == "bundle"
 
-        # Fetch review data from Steam Reviews API
-        review_score = None
-        total_positive = None
-        total_negative = None
+        # Fetch review data from Steam Reviews API (0 = no reviews / unknown,
+        # matching the non-nullable Game columns).
+        review_score = 0
+        total_positive = 0
+        total_negative = 0
 
         if not is_bundle and game_type == "game":
             try:
                 review_data = await self.steam_client.get_app_reviews(app_id)
                 if review_data:
-                    review_score = review_data.get("review_score")
-                    total_positive = review_data.get("total_positive")
-                    total_negative = review_data.get("total_negative")
-                    total_reviews_from_api = review_data.get("total_reviews")
+                    review_score = review_data.get("review_score") or 0
+                    total_positive = review_data.get("total_positive") or 0
+                    total_negative = review_data.get("total_negative") or 0
             except Exception as e:
                 # If review fetch fails, continue without review data
-                print(f"Failed to fetch reviews for {app_id}: {e}")
-        bundle_content = None
+                logger.warning("game_review_fetch_failed", app_id=app_id, error=str(e))
+        bundle_content: list | None = None
         if is_bundle:
             # Extract bundle apps
             bundle_apps = steam_data.get("package_groups", [])
@@ -173,6 +174,8 @@ class GameService:
             fullgame = steam_data.get("fullgame", {})
             if fullgame:
                 game_id = int(fullgame.get("appid", 0)) or None
+
+        total_reviews = total_positive + total_negative
 
         # Check if game already exists
         existing_game = await self.repo.get_by_id(app_id)
@@ -189,8 +192,8 @@ class GameService:
             existing_game.review_score = review_score
             existing_game.total_positive = total_positive
             existing_game.total_negative = total_negative
-            existing_game.total_reviews = total_positive + total_negative if (total_positive is not None and total_negative is not None) else None
-            existing_game.last_refreshed_at = datetime.utcnow()
+            existing_game.total_reviews = total_reviews
+            existing_game.last_refreshed_at = utcnow()
 
             return existing_game
         else:
@@ -207,8 +210,8 @@ class GameService:
                 review_score=review_score,
                 total_positive=total_positive,
                 total_negative=total_negative,
-                total_reviews=total_positive + total_negative if (total_positive is not None and total_negative is not None) else None,
-                last_refreshed_at=datetime.utcnow(),
+                total_reviews=total_reviews,
+                last_refreshed_at=utcnow(),
             )
 
             return game
@@ -240,7 +243,7 @@ class GameService:
                     await self._save_game_from_steam_data(game.id, steam_data)
                     refreshed_count += 1
             except SteamAPIError as e:
-                print(f"Error refreshing game {game.id}: {e}")
+                logger.error("game_refresh_failed", game_id=game.id, error=str(e))
                 continue
 
         if refreshed_count > 0:
@@ -249,8 +252,8 @@ class GameService:
         return refreshed_count
 
     async def search_games(
-        self, query: str, limit: Optional[int] = 20
-    ) -> List[Game]:
+        self, query: str, limit: int = 20
+    ) -> list[Game]:
         """
         Search cached games by name.
 
@@ -270,7 +273,7 @@ class GameService:
 
     async def get_highly_rated_games(
         self, min_score: int = 8, min_reviews: int = 1000, limit: int = 50
-    ) -> List[Game]:
+    ) -> list[Game]:
         """
         Get highly-rated games from cache.
 
@@ -290,8 +293,8 @@ class GameService:
         )
 
     async def get_games_by_type(
-        self, game_type: str, limit: Optional[int] = None
-    ) -> List[Game]:
+        self, game_type: str, limit: int | None = None
+    ) -> list[Game]:
         """
         Get games by type (game, dlc, bundle).
 
@@ -340,7 +343,7 @@ class GameService:
             "stale_count": stale_count,
         }
 
-    async def bulk_cache_games(self, app_ids: List[int]) -> int:
+    async def bulk_cache_games(self, app_ids: list[int]) -> int:
         """
         Cache multiple games from Steam API.
 
@@ -370,7 +373,7 @@ class GameService:
                 if game:
                     cached_count += 1
             except Exception as e:
-                print(f"Error caching game {app_id}: {e}")
+                logger.error("game_cache_failed", app_id=app_id, error=str(e))
                 continue
 
         await self.session.commit()

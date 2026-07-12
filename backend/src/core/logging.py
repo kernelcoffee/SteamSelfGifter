@@ -1,6 +1,7 @@
 import logging
 import sys
 from pathlib import Path
+
 import structlog
 
 from core.config import settings

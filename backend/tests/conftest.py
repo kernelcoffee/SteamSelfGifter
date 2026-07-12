@@ -1,22 +1,23 @@
 """Shared pytest fixtures for all tests."""
 
 import asyncio
-from typing import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from models.base import Base
-from db.session import get_db
 from api.dependencies import get_database
 from api.main import app
+from db.session import get_db
+from models.base import Base
 from workers import scheduler as scheduler_module
 from workers.scheduler import SchedulerManager
-
 
 # Use in-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -43,6 +44,53 @@ def reset_scheduler_global():
 
     # Restore the original
     scheduler_module.scheduler_manager = original_manager
+
+
+def patch_automation_context(target_module: str, settings, **service_mocks):
+    """Patch ``<target_module>.automation_context`` to yield a mock context.
+
+    Worker jobs (automation/processor/scanner) get their session, settings and
+    services from ``automation_context``. Tests use this helper to inject a
+    fake context instead of standing up real clients.
+
+    Args:
+        target_module: e.g. ``"workers.scanner"`` — the module whose
+            ``automation_context`` reference is patched.
+        settings: the settings object to expose as ``ctx.settings``. If its
+            ``phpsessid`` is falsy, ``ctx.authenticated`` is False and services
+            stay ``None`` (mirrors the not-authenticated path).
+        **service_mocks: override any context attribute, e.g.
+            ``giveaway_service=mock``, ``notification_service=mock``.
+
+    Returns:
+        A tuple ``(patcher, ctx)`` — use ``patcher`` as a context manager and
+        inspect ``ctx`` for the mock services.
+    """
+    authenticated = bool(getattr(settings, "phpsessid", None))
+
+    ctx = MagicMock()
+    ctx.session = service_mocks.get("session", AsyncMock())
+    ctx.settings = settings
+    ctx.settings_service = service_mocks.get("settings_service", AsyncMock())
+    ctx.authenticated = authenticated
+
+    if authenticated:
+        ctx.game_service = service_mocks.get("game_service", AsyncMock())
+        ctx.giveaway_service = service_mocks.get("giveaway_service", AsyncMock())
+        ctx.notification_service = service_mocks.get("notification_service", AsyncMock())
+        ctx.scheduler_service = service_mocks.get("scheduler_service", AsyncMock())
+    else:
+        ctx.game_service = None
+        ctx.giveaway_service = None
+        ctx.notification_service = None
+        ctx.scheduler_service = None
+
+    @asynccontextmanager
+    async def fake_context():
+        yield ctx
+
+    patcher = patch(f"{target_module}.automation_context", fake_context)
+    return patcher, ctx
 
 
 @pytest.fixture(scope="session")
@@ -77,7 +125,7 @@ async def async_engine():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def async_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
+async def async_session(async_engine) -> AsyncGenerator[AsyncSession]:
     """Create async session for each test."""
     async_session_maker = async_sessionmaker(
         async_engine,
@@ -93,7 +141,7 @@ async def async_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def test_client(async_engine) -> AsyncGenerator[AsyncClient, None]:
+async def test_client(async_engine) -> AsyncGenerator[AsyncClient]:
     """Create async test client with test database.
 
     Each request gets its own session, with auto-commit to persist data.
@@ -108,7 +156,7 @@ async def test_client(async_engine) -> AsyncGenerator[AsyncClient, None]:
     )
 
     # Override the get_db dependency - manually manage session lifecycle
-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    async def override_get_db() -> AsyncGenerator[AsyncSession]:
         session = async_session_maker()
         try:
             yield session
@@ -133,7 +181,7 @@ async def test_client(async_engine) -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest.fixture(scope="function")
-def sync_test_client(async_engine) -> Generator[TestClient, None, None]:
+def sync_test_client(async_engine) -> Generator[TestClient]:
     """Create synchronous test client for simpler tests."""
 
     # Create session factory for test database
@@ -146,7 +194,7 @@ def sync_test_client(async_engine) -> Generator[TestClient, None, None]:
     )
 
     # Override the get_db dependency - manually manage session lifecycle
-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    async def override_get_db() -> AsyncGenerator[AsyncSession]:
         session = async_session_maker()
         try:
             yield session

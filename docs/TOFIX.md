@@ -25,7 +25,7 @@ This document tracks disabled warnings, skipped tests, and other technical debt 
 | `integration/*` | All | Requires `--run-integration` flag and valid PHPSESSID |
 
 **Test counts (as of last run):**
-- Backend: 718 passed, 31 skipped
+- Backend: 751 passed, 2 skipped (integration tests excluded; they need `--run-integration` + a valid PHPSESSID)
 - Frontend: 170 passed, 0 skipped
 
 ## Future Improvements

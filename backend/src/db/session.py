@@ -4,8 +4,8 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
-    create_async_engine,
     async_sessionmaker,
+    create_async_engine,
 )
 
 from core.config import settings
@@ -30,7 +30,7 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     """
     Dependency function for FastAPI to get database sessions.
 
@@ -66,12 +66,14 @@ async def init_db() -> None:
     For existing databases without alembic_version table, it will first
     stamp the database at the initial migration to avoid recreating tables.
     """
-    import os
     import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-    from alembic import command
-    from alembic.config import Config
+    import os
     import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+
+    from alembic.config import Config
+
+    from alembic import command
 
     def run_migrations():
         # Get the directory where alembic.ini is located

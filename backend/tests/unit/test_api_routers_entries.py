@@ -1,20 +1,21 @@
 """Unit tests for entries API router."""
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
-from datetime import datetime, UTC
 from fastapi import HTTPException
 
 from api.routers.entries import (
-    list_entries,
+    get_entries_for_giveaway,
+    get_entry,
+    get_entry_history,
     get_entry_stats,
+    get_failed_entries,
     get_recent_entries,
     get_successful_entries,
-    get_failed_entries,
-    get_entry_history,
-    get_entry,
-    get_entries_for_giveaway,
     get_total_points_spent,
+    list_entries,
 )
 
 
