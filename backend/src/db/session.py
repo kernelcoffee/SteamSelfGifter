@@ -75,7 +75,7 @@ async def init_db() -> None:
 
     from alembic import command
 
-    def run_migrations():
+    def run_migrations() -> None:
         # Get the directory where alembic.ini is located
         src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         alembic_ini = os.path.join(src_dir, "alembic.ini")

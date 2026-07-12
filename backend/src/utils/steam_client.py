@@ -52,7 +52,7 @@ class RateLimiter:
         self.calls: list[datetime] = []
         self.lock = asyncio.Lock()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> RateLimiter:
         """Acquire rate limit (async context manager)."""
         async with self.lock:
             now = utcnow()
@@ -77,7 +77,7 @@ class RateLimiter:
 
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit rate limit context."""
         pass
 
@@ -166,7 +166,7 @@ class SteamClient:
 
         self._client: httpx.AsyncClient | None = None
 
-    async def start(self):
+    async def start(self) -> None:
         """
         Start the client session.
 
@@ -186,7 +186,7 @@ class SteamClient:
                 headers=headers
             )
 
-    async def close(self):
+    async def close(self) -> None:
         """
         Close the client session.
 
@@ -199,12 +199,12 @@ class SteamClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> SteamClient:
         """Start session (async context manager)."""
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Close session (async context manager)."""
         await self.close()
 
@@ -267,7 +267,8 @@ class SteamClient:
                         f"Steam API error: {response.status_code}"
                     )
 
-                return response.json()
+                payload: dict[str, Any] = response.json()
+                return payload
 
             except httpx.HTTPError as e:
                 # Network/connection error - retry if possible
@@ -304,7 +305,8 @@ class SteamClient:
             if not app_data or not app_data.get("success"):
                 return None
 
-            return app_data.get("data")
+            details: dict[str, Any] | None = app_data.get("data")
+            return details
 
         except SteamAPINotFoundError:
             return None
@@ -342,7 +344,8 @@ class SteamClient:
 
         data = await self._request(url, params)
         response = data.get("response", {})
-        return response.get("games", [])
+        games: list[dict[str, Any]] = response.get("games", [])
+        return games
 
     async def get_player_summary(self, steam_id: str) -> dict[str, Any] | None:
         """

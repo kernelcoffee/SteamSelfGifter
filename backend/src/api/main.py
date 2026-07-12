@@ -8,6 +8,7 @@ Creates and configures the FastAPI application with:
 - Lifespan events for startup/shutdown
 """
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -51,7 +52,7 @@ logger = structlog.get_logger()
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     Application lifespan manager.
 
@@ -201,7 +202,7 @@ app.include_router(
 
 
 @app.get("/", tags=["root"])
-async def root():
+async def root() -> dict[str, Any]:
     """
     Root endpoint.
 
@@ -217,7 +218,7 @@ async def root():
 
 
 @app.get("/health", tags=["root"])
-async def health_check():
+async def health_check() -> dict[str, str]:
     """
     Simple health check endpoint.
 

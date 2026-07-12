@@ -5,6 +5,7 @@ API requests and responses.
 """
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field, field_serializer
 
@@ -166,7 +167,7 @@ class GiveawayResponse(GiveawayBase):
     )
 
     @field_serializer('end_time', 'discovered_at', 'entered_at', 'won_at', 'eligibility_checked_at')
-    def serialize_datetime(self, dt: datetime | None, _info) -> str | None:
+    def serialize_datetime(self, dt: datetime | None, _info: Any) -> str | None:
         """Serialize datetime with UTC timezone suffix."""
         if dt is None:
             return None

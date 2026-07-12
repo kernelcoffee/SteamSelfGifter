@@ -77,14 +77,15 @@ ignore = []
 python_version = "3.14"
 mypy_path = "src"
 explicit_package_bases = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
 
+# Overrides must stay last: any key after a [[...overrides]] table belongs to it.
 [[tool.mypy.overrides]]
 # APScheduler 3.x ships no type stubs.
 module = "apscheduler.*"
 ignore_missing_imports = true
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

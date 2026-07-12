@@ -518,43 +518,44 @@ interface JobCountdownProps {
   job: SchedulerJob;
 }
 
+function formatCountdown(nextRun: string | null | undefined): string {
+  if (!nextRun) {
+    return 'Not scheduled';
+  }
+
+  const diff = new Date(nextRun).getTime() - Date.now();
+
+  if (diff <= 0) {
+    return 'Running now...';
+  }
+
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
+}
+
 function JobCountdown({ job }: JobCountdownProps) {
-  const [countdown, setCountdown] = useState<string>('');
+  // Re-render once per second; the countdown itself is derived during render,
+  // so no state is written inside the effect body.
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     if (!job.next_run) {
-      setCountdown('Not scheduled');
       return;
     }
-
-    const updateCountdown = () => {
-      const now = new Date();
-      const nextRun = new Date(job.next_run!);
-      const diff = nextRun.getTime() - now.getTime();
-
-      if (diff <= 0) {
-        setCountdown('Running now...');
-        return;
-      }
-
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-      if (hours > 0) {
-        setCountdown(`${hours}h ${minutes}m ${seconds}s`);
-      } else if (minutes > 0) {
-        setCountdown(`${minutes}m ${seconds}s`);
-      } else {
-        setCountdown(`${seconds}s`);
-      }
-    };
-
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000);
-
+    const interval = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(interval);
   }, [job.next_run]);
+
+  const countdown = formatCountdown(job.next_run);
 
   const jobLabel = job.name === 'scan_giveaways' ? 'Next scan' :
                    job.name === 'process_giveaways' ? 'Next process' : job.name;

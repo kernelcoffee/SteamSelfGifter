@@ -6,7 +6,7 @@ API requests and responses.
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class SettingsBase(BaseModel):
@@ -137,7 +137,7 @@ class SettingsBase(BaseModel):
 
     @field_validator("entry_delay_max")
     @classmethod
-    def validate_delay_range(cls, v, info):
+    def validate_delay_range(cls, v: int, info: ValidationInfo) -> int:
         """Validate that entry_delay_max >= entry_delay_min."""
         if "entry_delay_min" in info.data and v < info.data["entry_delay_min"]:
             raise ValueError("entry_delay_max must be >= entry_delay_min")
@@ -145,7 +145,7 @@ class SettingsBase(BaseModel):
 
     @field_validator("autojoin_stop_at")
     @classmethod
-    def validate_point_thresholds(cls, v, info):
+    def validate_point_thresholds(cls, v: int, info: ValidationInfo) -> int:
         """Validate that autojoin_stop_at <= autojoin_start_at."""
         if "autojoin_start_at" in info.data and v > info.data["autojoin_start_at"]:
             raise ValueError("autojoin_stop_at must be <= autojoin_start_at")
@@ -375,7 +375,7 @@ class SteamGiftsCredentials(BaseModel):
 
     @field_validator("phpsessid")
     @classmethod
-    def validate_phpsessid(cls, v):
+    def validate_phpsessid(cls, v: str) -> str:
         """Validate PHPSESSID is not empty after stripping."""
         if not v or not v.strip():
             raise ValueError("phpsessid cannot be empty")

@@ -64,7 +64,7 @@ class SettingsService:
         """
         return await self.repo.get_settings()
 
-    async def update_settings(self, **kwargs) -> Settings:
+    async def update_settings(self, **kwargs: Any) -> Settings:
         """
         Update settings with validation.
 

@@ -6,13 +6,10 @@ This document tracks disabled warnings, skipped tests, and other technical debt 
 
 ### Frontend (`frontend/eslint.config.js`)
 
-| Rule | Reason | Files Affected |
-|------|--------|----------------|
-| `react-hooks/set-state-in-effect` | False positives for valid patterns (initializing form state from fetched data, countdown timers) | `Settings.tsx`, `Dashboard.tsx` |
-
-**Details:**
-- `Settings.tsx`: Initializes form state when settings data is fetched - standard pattern for forms with async data
-- `Dashboard.tsx`: Updates countdown timer state every second - valid use of setInterval in useEffect
+None - `react-hooks/set-state-in-effect` was re-enabled after refactoring
+`Settings.tsx` (form initializes from loaded data in an inner component,
+remounted via `key` on refetch) and `Dashboard.tsx` (countdown derived during
+render, driven by a tick interval).
 
 ## Skipped Tests
 
@@ -20,18 +17,24 @@ This document tracks disabled warnings, skipped tests, and other technical debt 
 
 | Test File | Tests Skipped | Reason |
 |-----------|---------------|--------|
-| `test_api_main.py` | 2 | Requires database setup - covered by e2e tests |
-| `test_scheduler_api.py` | 12 (entire file) | APScheduler causes event loop conflicts in test suite - covered by unit tests |
 | `integration/*` | All | Requires `--run-integration` flag and valid PHPSESSID |
 
 **Test counts (as of last run):**
-- Backend: 751 passed, 2 skipped (integration tests excluded; they need `--run-integration` + a valid PHPSESSID)
+- Backend: 759 passed, 0 skipped (integration tests excluded; they need `--run-integration` + a valid PHPSESSID)
 - Frontend: 170 passed, 0 skipped
 
 ## Future Improvements
 
 ### Code Quality
 
-- [ ] Re-enable `react-hooks/set-state-in-effect` after refactoring affected components
-- [ ] Fix APScheduler event loop conflicts to enable scheduler e2e tests in CI
+- [x] Re-enable `react-hooks/set-state-in-effect` after refactoring affected components
+- [x] Fix APScheduler event loop conflicts to enable scheduler e2e tests in CI (fixed by the automation-layer consolidation)
 - [ ] Add more integration test coverage with mocked external services
+
+### Dependency Notes
+
+- **APScheduler stays on 3.x** (evaluated 2026-07-12): 4.0 has never shipped a
+  stable release (PyPI latest is 3.11.x), and the event-loop conflicts that
+  motivated the upgrade were fixed by the automation-layer consolidation
+  (scheduler e2e tests run, 0 skips). The `apscheduler>=3.11.0,<4` pin in
+  `backend/pyproject.toml` is deliberate; revisit if a stable 4.x appears.

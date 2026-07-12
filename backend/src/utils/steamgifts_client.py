@@ -4,6 +4,7 @@ This module provides an async HTTP client for interacting with SteamGifts.com,
 including authentication, scraping giveaways, and entering giveaways.
 """
 
+import asyncio
 import re
 from datetime import datetime
 from typing import Any
@@ -16,6 +17,7 @@ from core.exceptions import (
     SteamGiftsError,
     SteamGiftsSessionExpiredError,
 )
+from utils.steam_client import RateLimiter
 
 logger = structlog.get_logger()
 
@@ -86,6 +88,9 @@ class SteamGiftsClient:
         user_agent: str,
         xsrf_token: str | None = None,
         timeout_seconds: int = 30,
+        rate_limit_calls: int = 30,
+        rate_limit_window: int = 60,
+        max_retries: int = 3,
     ):
         """
         Initialize SteamGifts client.
@@ -95,6 +100,9 @@ class SteamGiftsClient:
             user_agent: User-Agent header to use
             xsrf_token: XSRF token (if known), otherwise will be extracted
             timeout_seconds: Request timeout in seconds
+            rate_limit_calls: Max requests per rate-limit window
+            rate_limit_window: Rate-limit window in seconds
+            max_retries: Retry attempts for transient failures
 
         Example:
             >>> client = SteamGiftsClient(
@@ -106,10 +114,16 @@ class SteamGiftsClient:
         self.user_agent = user_agent
         self.xsrf_token = xsrf_token
         self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+
+        self.rate_limiter = RateLimiter(
+            max_calls=rate_limit_calls,
+            window_seconds=rate_limit_window,
+        )
 
         self._client: httpx.AsyncClient | None = None
 
-    async def start(self):
+    async def start(self) -> None:
         """
         Start the client session.
 
@@ -135,7 +149,7 @@ class SteamGiftsClient:
             if not self.xsrf_token and self.phpsessid:
                 await self._refresh_xsrf_token()
 
-    async def close(self):
+    async def close(self) -> None:
         """
         Close the client session.
 
@@ -148,16 +162,95 @@ class SteamGiftsClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> SteamGiftsClient:
         """Start session (async context manager)."""
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Close session (async context manager)."""
         await self.close()
 
-    async def _refresh_xsrf_token(self):
+    async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
+        """Rate-limited GET with retry/backoff for transient failures.
+
+        Retries on transport errors, 5xx responses and 429 (honoring a numeric
+        Retry-After header when present).
+        """
+        if self._client is None:
+            raise RuntimeError("Client session not started. Call start() first.")
+
+        attempt = 0
+        while True:
+            async with self.rate_limiter:
+                try:
+                    response = await self._client.get(url, **kwargs)
+                except httpx.TransportError as e:
+                    if attempt >= self.max_retries:
+                        raise SteamGiftsError(
+                            f"Request failed after {attempt + 1} attempts: {e}",
+                            code="SG_002",
+                            details={"url": url},
+                        ) from e
+                    delay = min(2.0**attempt, 30.0)
+                    logger.warning(
+                        "steamgifts_request_retry",
+                        url=url, attempt=attempt + 1, delay=delay, error=str(e),
+                    )
+                    await asyncio.sleep(delay)
+                    attempt += 1
+                    continue
+
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt >= self.max_retries:
+                    return response  # let the caller's status handling report it
+                delay = min(2.0**attempt, 30.0)
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After", "")
+                    if retry_after.isdigit():
+                        delay = min(float(retry_after), 60.0)
+                logger.warning(
+                    "steamgifts_request_retry",
+                    url=url, attempt=attempt + 1, delay=delay,
+                    status_code=response.status_code,
+                )
+                await asyncio.sleep(delay)
+                attempt += 1
+                continue
+
+            return response
+
+    async def _post(self, url: str, **kwargs: Any) -> httpx.Response:
+        """Rate-limited POST, retried only on connect errors.
+
+        POSTs mutate state on SteamGifts (enter/hide/comment), so a request
+        that may have reached the server is never replayed; only failures to
+        connect at all are retried.
+        """
+        if self._client is None:
+            raise RuntimeError("Client session not started. Call start() first.")
+
+        attempt = 0
+        while True:
+            async with self.rate_limiter:
+                try:
+                    return await self._client.post(url, **kwargs)
+                except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                    if attempt >= self.max_retries:
+                        raise SteamGiftsError(
+                            f"Request failed after {attempt + 1} attempts: {e}",
+                            code="SG_002",
+                            details={"url": url},
+                        ) from e
+                    delay = min(2.0**attempt, 30.0)
+                    logger.warning(
+                        "steamgifts_request_retry",
+                        url=url, attempt=attempt + 1, delay=delay, error=str(e),
+                    )
+                    await asyncio.sleep(delay)
+                    attempt += 1
+
+    async def _refresh_xsrf_token(self) -> None:
         """
         Refresh XSRF token by fetching homepage.
 
@@ -170,7 +263,7 @@ class SteamGiftsClient:
         if self._client is None:
             raise RuntimeError("Client session not started. Call start() first.")
 
-        response = await self._client.get(self.BASE_URL)
+        response = await self._get(self.BASE_URL)
 
         if response.status_code != 200:
             raise SteamGiftsSessionExpiredError(
@@ -184,16 +277,17 @@ class SteamGiftsClient:
         # XSRF token is in a hidden input or data attribute
         token_input = soup.find("input", {"name": "xsrf_token"})
         if token_input:
-            self.xsrf_token = token_input.get("value")
+            value = token_input.get("value")
+            self.xsrf_token = str(value) if value else None
             return
 
         # Try to find it in data-form attribute
-        form_element = soup.find(attrs={"data-form": True})
+        form_element = soup.find(lambda tag: tag.has_attr("data-form"))
         if form_element:
             # Token might be in a JSON-encoded string
             import json
             try:
-                form_data = json.loads(form_element["data-form"])
+                form_data = json.loads(str(form_element["data-form"]))
                 if "xsrf_token" in form_data:
                     self.xsrf_token = form_data["xsrf_token"]
                     return
@@ -223,7 +317,7 @@ class SteamGiftsClient:
         if self._client is None:
             raise RuntimeError("Client session not started. Call start() first.")
 
-        response = await self._client.get(self.BASE_URL)
+        response = await self._get(self.BASE_URL)
 
         if response.status_code != 200:
             raise SteamGiftsSessionExpiredError(
@@ -272,7 +366,7 @@ class SteamGiftsClient:
         if self._client is None:
             raise RuntimeError("Client session not started. Call start() first.")
 
-        response = await self._client.get(self.BASE_URL)
+        response = await self._get(self.BASE_URL)
 
         if response.status_code != 200:
             raise SteamGiftsSessionExpiredError(
@@ -420,7 +514,7 @@ class SteamGiftsClient:
         if min_copies:
             params["copy_min"] = str(min_copies)
 
-        response = await self._client.get(url, params=params)
+        response = await self._get(url, params=params)
 
         if response.status_code != 200:
             raise SteamGiftsError(
@@ -453,7 +547,7 @@ class SteamGiftsClient:
 
         return giveaways
 
-    def _parse_giveaway_element(self, element) -> dict[str, Any] | None:
+    def _parse_giveaway_element(self, element: Any) -> dict[str, Any] | None:
         """
         Parse giveaway data from HTML element.
 
@@ -573,7 +667,7 @@ class SteamGiftsClient:
             "code": giveaway_code,
         }
 
-        response = await self._client.post(url, data=data)
+        response = await self._post(url, data=data)
 
         if response.status_code != 200:
             raise SteamGiftsError(
@@ -623,7 +717,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaway/{giveaway_code}/"
-        response = await self._client.get(url)
+        response = await self._get(url)
 
         if response.status_code == 404:
             raise SteamGiftsNotFoundError(f"Giveaway not found: {giveaway_code}")
@@ -696,7 +790,7 @@ class SteamGiftsClient:
         url = f"{self.BASE_URL}/giveaways/won"
         params: dict[str, str | int] = {"page": page}
 
-        response = await self._client.get(url, params=params)
+        response = await self._get(url, params=params)
 
         if response.status_code != 200:
             raise SteamGiftsError(
@@ -723,7 +817,7 @@ class SteamGiftsClient:
 
         return won_giveaways
 
-    def _parse_won_giveaway_row(self, row) -> dict[str, Any] | None:
+    def _parse_won_giveaway_row(self, row: Any) -> dict[str, Any] | None:
         """
         Parse a won giveaway row from the /giveaways/won page.
 
@@ -820,7 +914,7 @@ class SteamGiftsClient:
         url = f"{self.BASE_URL}/giveaways/entered"
         params: dict[str, str | int] = {"page": page}
 
-        response = await self._client.get(url, params=params)
+        response = await self._get(url, params=params)
 
         if response.status_code != 200:
             raise SteamGiftsError(
@@ -847,7 +941,7 @@ class SteamGiftsClient:
 
         return entered_giveaways
 
-    def _parse_entered_giveaway_row(self, row) -> dict[str, Any] | None:
+    def _parse_entered_giveaway_row(self, row: Any) -> dict[str, Any] | None:
         """
         Parse an entered giveaway row from the /giveaways/entered page.
 
@@ -1028,7 +1122,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaway/{giveaway_code}/"
-        response = await self._client.get(url)
+        response = await self._get(url)
 
         if response.status_code == 404:
             raise SteamGiftsNotFoundError(f"Giveaway not found: {giveaway_code}")
@@ -1076,7 +1170,7 @@ class SteamGiftsClient:
             "do": "hide_giveaways_by_game_id",
         }
 
-        response = await self._client.post(url, data=data)
+        response = await self._post(url, data=data)
 
         if response.status_code != 200:
             raise SteamGiftsError(
@@ -1110,7 +1204,7 @@ class SteamGiftsClient:
             raise RuntimeError("Client session not started. Call start() first.")
 
         url = f"{self.BASE_URL}/giveaway/{giveaway_code}/"
-        response = await self._client.get(url)
+        response = await self._get(url)
 
         if response.status_code != 200:
             return None
@@ -1161,7 +1255,7 @@ class SteamGiftsClient:
             "parent_id": "",
         }
 
-        response = await self._client.post(url, data=data)
+        response = await self._post(url, data=data)
 
         if response.status_code != 200:
             raise SteamGiftsError(

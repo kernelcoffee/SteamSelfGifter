@@ -12,7 +12,7 @@ router = APIRouter()
 
 
 @router.websocket("/events")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket) -> None:
     """
     WebSocket endpoint for real-time event streaming.
 

@@ -23,8 +23,6 @@ export default tseslint.config(
         'warn',
         { allowConstantExport: true },
       ],
-      // Disable overly strict rules for valid patterns
-      'react-hooks/set-state-in-effect': 'off',
     },
   }
 );

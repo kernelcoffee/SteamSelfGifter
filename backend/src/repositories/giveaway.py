@@ -6,6 +6,7 @@ giveaway visibility.
 """
 
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -798,7 +799,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         }
 
     async def create_or_update_by_code(
-        self, code: str, **kwargs
+        self, code: str, **kwargs: Any
     ) -> Giveaway:
         """
         Create new giveaway or update existing by code (upsert).
