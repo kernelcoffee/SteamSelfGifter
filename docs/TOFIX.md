@@ -30,3 +30,11 @@ render, driven by a tick interval).
 - [x] Re-enable `react-hooks/set-state-in-effect` after refactoring affected components
 - [x] Fix APScheduler event loop conflicts to enable scheduler e2e tests in CI (fixed by the automation-layer consolidation)
 - [ ] Add more integration test coverage with mocked external services
+
+### Dependency Notes
+
+- **APScheduler stays on 3.x** (evaluated 2026-07-12): 4.0 has never shipped a
+  stable release (PyPI latest is 3.11.x), and the event-loop conflicts that
+  motivated the upgrade were fixed by the automation-layer consolidation
+  (scheduler e2e tests run, 0 skips). The `apscheduler>=3.11.0,<4` pin in
+  `backend/pyproject.toml` is deliberate; revisit if a stable 4.x appears.
