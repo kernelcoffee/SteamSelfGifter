@@ -189,7 +189,7 @@ async def clear_logs(
 async def export_logs(
     notification_service: NotificationServiceDep,
     format: str = Query(default="json", description="Export format (json or csv)"),
-):
+) -> StreamingResponse:
     """
     Export all activity logs.
 

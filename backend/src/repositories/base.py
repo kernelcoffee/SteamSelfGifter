@@ -103,7 +103,7 @@ class BaseRepository[ModelType: DeclarativeBase]:
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def create(self, **kwargs) -> ModelType:
+    async def create(self, **kwargs: Any) -> ModelType:
         """
         Create and persist a new record.
 
@@ -130,7 +130,7 @@ class BaseRepository[ModelType: DeclarativeBase]:
         await self.session.flush()  # Flush to get auto-generated fields
         return instance
 
-    async def update(self, id_value: Any, **kwargs) -> ModelType | None:
+    async def update(self, id_value: Any, **kwargs: Any) -> ModelType | None:
         """
         Update an existing record by primary key.
 
@@ -247,7 +247,7 @@ class BaseRepository[ModelType: DeclarativeBase]:
         await self.session.flush()
         return instances
 
-    async def filter_by(self, **kwargs) -> list[ModelType]:
+    async def filter_by(self, **kwargs: Any) -> list[ModelType]:
         """
         Filter records by field values.
 
@@ -267,7 +267,7 @@ class BaseRepository[ModelType: DeclarativeBase]:
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def get_one_or_none(self, **kwargs) -> ModelType | None:
+    async def get_one_or_none(self, **kwargs: Any) -> ModelType | None:
         """
         Get a single record matching the filter criteria.
 

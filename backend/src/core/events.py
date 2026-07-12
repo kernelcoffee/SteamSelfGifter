@@ -44,7 +44,7 @@ class EventManager:
         active_connections: Set of currently connected WebSocket clients
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize EventManager with empty connection set."""
         self.active_connections: set[WebSocket] = set()
 

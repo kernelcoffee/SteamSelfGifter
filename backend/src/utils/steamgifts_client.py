@@ -123,7 +123,7 @@ class SteamGiftsClient:
 
         self._client: httpx.AsyncClient | None = None
 
-    async def start(self):
+    async def start(self) -> None:
         """
         Start the client session.
 
@@ -149,7 +149,7 @@ class SteamGiftsClient:
             if not self.xsrf_token and self.phpsessid:
                 await self._refresh_xsrf_token()
 
-    async def close(self):
+    async def close(self) -> None:
         """
         Close the client session.
 
@@ -162,12 +162,12 @@ class SteamGiftsClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> SteamGiftsClient:
         """Start session (async context manager)."""
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Close session (async context manager)."""
         await self.close()
 
@@ -250,7 +250,7 @@ class SteamGiftsClient:
                     await asyncio.sleep(delay)
                     attempt += 1
 
-    async def _refresh_xsrf_token(self):
+    async def _refresh_xsrf_token(self) -> None:
         """
         Refresh XSRF token by fetching homepage.
 
@@ -277,16 +277,17 @@ class SteamGiftsClient:
         # XSRF token is in a hidden input or data attribute
         token_input = soup.find("input", {"name": "xsrf_token"})
         if token_input:
-            self.xsrf_token = token_input.get("value")
+            value = token_input.get("value")
+            self.xsrf_token = str(value) if value else None
             return
 
         # Try to find it in data-form attribute
-        form_element = soup.find(attrs={"data-form": True})
+        form_element = soup.find(lambda tag: tag.has_attr("data-form"))
         if form_element:
             # Token might be in a JSON-encoded string
             import json
             try:
-                form_data = json.loads(form_element["data-form"])
+                form_data = json.loads(str(form_element["data-form"]))
                 if "xsrf_token" in form_data:
                     self.xsrf_token = form_data["xsrf_token"]
                     return
@@ -546,7 +547,7 @@ class SteamGiftsClient:
 
         return giveaways
 
-    def _parse_giveaway_element(self, element) -> dict[str, Any] | None:
+    def _parse_giveaway_element(self, element: Any) -> dict[str, Any] | None:
         """
         Parse giveaway data from HTML element.
 
@@ -816,7 +817,7 @@ class SteamGiftsClient:
 
         return won_giveaways
 
-    def _parse_won_giveaway_row(self, row) -> dict[str, Any] | None:
+    def _parse_won_giveaway_row(self, row: Any) -> dict[str, Any] | None:
         """
         Parse a won giveaway row from the /giveaways/won page.
 
@@ -940,7 +941,7 @@ class SteamGiftsClient:
 
         return entered_giveaways
 
-    def _parse_entered_giveaway_row(self, row) -> dict[str, Any] | None:
+    def _parse_entered_giveaway_row(self, row: Any) -> dict[str, Any] | None:
         """
         Parse an entered giveaway row from the /giveaways/entered page.
 

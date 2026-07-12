@@ -16,6 +16,7 @@ release date fails ``max_game_age``.
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 # === Reason codes (stored on Giveaway.eligibility_reason) ===
 ELIGIBLE = "eligible"
@@ -68,7 +69,7 @@ class EligibilityCriteria:
         )
 
 
-def evaluate_eligibility(giveaway, game, criteria: EligibilityCriteria, now: datetime) -> str:
+def evaluate_eligibility(giveaway: Any, game: Any, criteria: EligibilityCriteria, now: datetime) -> str:
     """Return the reason code describing this giveaway's autojoin outcome.
 
     Conditions are checked in a fixed precedence so that a multi-failure giveaway

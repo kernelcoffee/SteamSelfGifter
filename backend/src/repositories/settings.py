@@ -6,6 +6,8 @@ convenience methods for getting and updating the single settings record.
 """
 
 
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.settings import Settings
@@ -71,7 +73,7 @@ class SettingsRepository(BaseRepository[Settings]):
 
         return settings
 
-    async def update_settings(self, **kwargs) -> Settings:
+    async def update_settings(self, **kwargs: Any) -> Settings:
         """
         Update the singleton settings record.
 

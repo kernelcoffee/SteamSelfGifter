@@ -312,7 +312,7 @@ class SchedulerManager:
         Returns:
             List of Job instances
         """
-        return self.scheduler.get_jobs()
+        return list(self.scheduler.get_jobs())
 
     def get_status(self) -> dict[str, Any]:
         """

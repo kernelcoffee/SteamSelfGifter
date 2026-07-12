@@ -6,6 +6,7 @@ Steam game metadata.
 """
 
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,7 +68,7 @@ class GameRepository(BaseRepository[Game]):
         """
         return await self.get_by_id(app_id)
 
-    async def get_by_ids(self, app_ids) -> dict[int, Game]:
+    async def get_by_ids(self, app_ids: list[int]) -> dict[int, Game]:
         """
         Batch-fetch games by Steam App ID, keyed by id.
 
@@ -270,7 +271,7 @@ class GameRepository(BaseRepository[Game]):
         for app_id in app_ids:
             await self.update(app_id, last_refreshed_at=now)
 
-    async def create_or_update(self, app_id: int, **kwargs) -> Game:
+    async def create_or_update(self, app_id: int, **kwargs: Any) -> Game:
         """
         Create a new game or update existing one.
 
