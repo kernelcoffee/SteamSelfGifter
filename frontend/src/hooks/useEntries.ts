@@ -84,10 +84,11 @@ export function useEntries(filters: EntryFilters = {}) {
       // Transform backend response to frontend format
       const page = filters.page || 1;
       const limit = filters.limit || 20;
-      const total = response.data.count;
+      // Defensive: a partial/unexpected payload must not blank the page.
+      const total = response.data?.count ?? 0;
 
       return {
-        items: response.data.entries,
+        items: response.data?.entries ?? [],
         total,
         page,
         limit,
