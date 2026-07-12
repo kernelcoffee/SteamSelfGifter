@@ -94,12 +94,13 @@ def test_cors_headers(client):
     assert "access-control-allow-origin" in response.headers
 
 
-@pytest.mark.skip(reason="Requires database setup - covered by e2e tests")
-def test_settings_router_included(client):
+def test_settings_router_included():
     """Test that settings router is included."""
-    # GET /api/v1/settings should exist (even if it returns error without DB)
-    response = client.get("/api/v1/settings")
-    # May return 500 if DB not set up, but route should exist
+    # No DB is set up here; the route must exist and any handler failure must
+    # surface as a 500 rather than a 404 (raise_server_exceptions=False keeps
+    # the TestClient from re-raising the handler's DB error).
+    with TestClient(app, raise_server_exceptions=False) as no_db_client:
+        response = no_db_client.get("/api/v1/settings")
     assert response.status_code in [200, 500]
 
 
@@ -253,16 +254,16 @@ def test_404_not_found(client):
     assert response.status_code == 404
 
 
-@pytest.mark.skip(reason="Requires database setup - covered by e2e tests")
-def test_api_prefix(client):
+def test_api_prefix():
     """Test that API endpoints use correct prefix."""
-    # Settings endpoint
-    response = client.get("/api/v1/settings")
-    assert response.status_code in [200, 500]  # Route exists
+    with TestClient(app, raise_server_exceptions=False) as no_db_client:
+        # Settings endpoint (needs a DB; route must exist even without one)
+        response = no_db_client.get("/api/v1/settings")
+        assert response.status_code in [200, 500]  # Route exists
 
-    # System health endpoint
-    response = client.get("/api/v1/system/health")
-    assert response.status_code == 200
+        # System health endpoint
+        response = no_db_client.get("/api/v1/system/health")
+        assert response.status_code == 200
 
 
 def test_root_endpoint_fields(client):

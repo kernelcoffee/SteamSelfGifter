@@ -20,12 +20,10 @@ This document tracks disabled warnings, skipped tests, and other technical debt 
 
 | Test File | Tests Skipped | Reason |
 |-----------|---------------|--------|
-| `test_api_main.py` | 2 | Requires database setup - covered by e2e tests |
-| `test_scheduler_api.py` | 12 (entire file) | APScheduler causes event loop conflicts in test suite - covered by unit tests |
 | `integration/*` | All | Requires `--run-integration` flag and valid PHPSESSID |
 
 **Test counts (as of last run):**
-- Backend: 751 passed, 2 skipped (integration tests excluded; they need `--run-integration` + a valid PHPSESSID)
+- Backend: 759 passed, 0 skipped (integration tests excluded; they need `--run-integration` + a valid PHPSESSID)
 - Frontend: 170 passed, 0 skipped
 
 ## Future Improvements
@@ -33,5 +31,5 @@ This document tracks disabled warnings, skipped tests, and other technical debt 
 ### Code Quality
 
 - [ ] Re-enable `react-hooks/set-state-in-effect` after refactoring affected components
-- [ ] Fix APScheduler event loop conflicts to enable scheduler e2e tests in CI
+- [x] Fix APScheduler event loop conflicts to enable scheduler e2e tests in CI (fixed by the automation-layer consolidation)
 - [ ] Add more integration test coverage with mocked external services
