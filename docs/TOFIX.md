@@ -6,13 +6,10 @@ This document tracks disabled warnings, skipped tests, and other technical debt 
 
 ### Frontend (`frontend/eslint.config.js`)
 
-| Rule | Reason | Files Affected |
-|------|--------|----------------|
-| `react-hooks/set-state-in-effect` | False positives for valid patterns (initializing form state from fetched data, countdown timers) | `Settings.tsx`, `Dashboard.tsx` |
-
-**Details:**
-- `Settings.tsx`: Initializes form state when settings data is fetched - standard pattern for forms with async data
-- `Dashboard.tsx`: Updates countdown timer state every second - valid use of setInterval in useEffect
+None - `react-hooks/set-state-in-effect` was re-enabled after refactoring
+`Settings.tsx` (form initializes from loaded data in an inner component,
+remounted via `key` on refetch) and `Dashboard.tsx` (countdown derived during
+render, driven by a tick interval).
 
 ## Skipped Tests
 
@@ -30,6 +27,6 @@ This document tracks disabled warnings, skipped tests, and other technical debt 
 
 ### Code Quality
 
-- [ ] Re-enable `react-hooks/set-state-in-effect` after refactoring affected components
+- [x] Re-enable `react-hooks/set-state-in-effect` after refactoring affected components
 - [x] Fix APScheduler event loop conflicts to enable scheduler e2e tests in CI (fixed by the automation-layer consolidation)
 - [ ] Add more integration test coverage with mocked external services

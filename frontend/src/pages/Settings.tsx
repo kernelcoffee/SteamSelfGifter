@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Save, TestTube, AlertCircle, Eye, EyeOff, HelpCircle, ExternalLink } from 'lucide-react';
 import { Card, Button, Input, Toggle, Loading } from '@/components/common';
 import { useSettings, useUpdateSettings, useTestSession } from '@/hooks';
@@ -11,39 +11,61 @@ import type { Settings as SettingsType } from '@/types';
  */
 export function Settings() {
   const { data: settings, isLoading, error } = useSettings();
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+        <Loading text="Loading settings..." />
+      </div>
+    );
+  }
+
+  if (error || !settings) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+        <Card>
+          <div className="flex items-center gap-3 text-red-500">
+            <AlertCircle size={24} />
+            <span>Failed to load settings. Is the backend running?</span>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // Remount the form whenever the server state changes (e.g. after a save's
+  // refetch) so it re-initializes from fresh data without effect-driven state.
+  return <SettingsForm key={settings.updated_at} settings={settings} />;
+}
+
+function SettingsForm({ settings }: { settings: SettingsType }) {
   const updateSettings = useUpdateSettings();
   const testSession = useTestSession();
 
-  const [formData, setFormData] = useState<Partial<SettingsType>>({});
+  const [formData, setFormData] = useState<Partial<SettingsType>>(() => ({
+    phpsessid: settings.phpsessid ?? '',
+    user_agent: settings.user_agent,
+    dlc_enabled: settings.dlc_enabled,
+    safety_check_enabled: settings.safety_check_enabled,
+    auto_hide_unsafe: settings.auto_hide_unsafe,
+    autojoin_enabled: settings.autojoin_enabled,
+    autojoin_start_at: settings.autojoin_start_at,
+    autojoin_stop_at: settings.autojoin_stop_at,
+    autojoin_min_price: settings.autojoin_min_price,
+    autojoin_min_score: settings.autojoin_min_score,
+    autojoin_min_reviews: settings.autojoin_min_reviews,
+    autojoin_max_game_age: settings.autojoin_max_game_age,
+    scan_interval_minutes: settings.scan_interval_minutes,
+    max_entries_per_cycle: settings.max_entries_per_cycle,
+    automation_enabled: settings.automation_enabled,
+    max_scan_pages: settings.max_scan_pages,
+    entry_delay_min: settings.entry_delay_min,
+    entry_delay_max: settings.entry_delay_max,
+  }));
   const [hasChanges, setHasChanges] = useState(false);
   const [showPhpsessid, setShowPhpsessid] = useState(false);
-
-  // Initialize form when settings load
-  useEffect(() => {
-    if (settings) {
-      setFormData({
-        phpsessid: settings.phpsessid ?? '',
-        user_agent: settings.user_agent,
-        dlc_enabled: settings.dlc_enabled,
-        safety_check_enabled: settings.safety_check_enabled,
-        auto_hide_unsafe: settings.auto_hide_unsafe,
-        autojoin_enabled: settings.autojoin_enabled,
-        autojoin_start_at: settings.autojoin_start_at,
-        autojoin_stop_at: settings.autojoin_stop_at,
-        autojoin_min_price: settings.autojoin_min_price,
-        autojoin_min_score: settings.autojoin_min_score,
-        autojoin_min_reviews: settings.autojoin_min_reviews,
-        autojoin_max_game_age: settings.autojoin_max_game_age,
-        scan_interval_minutes: settings.scan_interval_minutes,
-        max_entries_per_cycle: settings.max_entries_per_cycle,
-        automation_enabled: settings.automation_enabled,
-        max_scan_pages: settings.max_scan_pages,
-        entry_delay_min: settings.entry_delay_min,
-        entry_delay_max: settings.entry_delay_max,
-      });
-      setHasChanges(false);
-    }
-  }, [settings]);
 
   const handleChange = (field: keyof SettingsType, value: string | number | boolean | null) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -73,29 +95,6 @@ export function Settings() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
-        <Loading text="Loading settings..." />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
-        <Card>
-          <div className="flex items-center gap-3 text-red-500">
-            <AlertCircle size={24} />
-            <span>Failed to load settings. Is the backend running?</span>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -111,7 +110,7 @@ export function Settings() {
       </div>
 
       {/* First-time Setup Guide */}
-      {!settings?.phpsessid && (
+      {!settings.phpsessid && (
         <Card>
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
             <div className="flex items-start gap-3">
