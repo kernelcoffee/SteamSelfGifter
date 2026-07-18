@@ -1,6 +1,12 @@
 name: Tests
 
-on: [push, pull_request]
+on:
+  push:
+    # master is covered by the docker-publish workflow, which calls this
+    # one before building the image
+    branches-ignore: [master]
+  pull_request:
+  workflow_call:
 
 jobs:
   backend-tests:
