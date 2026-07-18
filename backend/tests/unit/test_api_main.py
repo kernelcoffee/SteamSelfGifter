@@ -10,6 +10,7 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from api.main import app
+from core.config import settings
 from core.exceptions import (
     ConfigurationError,
     InsufficientPointsError,
@@ -31,7 +32,7 @@ def client():
 def test_app_initialization():
     """Test that the FastAPI app is properly initialized."""
     assert app.title == "SteamSelfGifter"
-    assert app.version == "2.0.0"
+    assert app.version == settings.version
     assert app.docs_url == "/docs"
     assert app.redoc_url == "/redoc"
     assert app.openapi_url == "/openapi.json"
@@ -44,7 +45,7 @@ def test_root_endpoint(client):
 
     data = response.json()
     assert data["app"] == "SteamSelfGifter"
-    assert data["version"] == "2.0.0"
+    assert data["version"] == settings.version
     assert data["status"] == "running"
     assert "environment" in data
     assert data["docs"] == "/docs"
@@ -64,7 +65,7 @@ def test_openapi_schema_available(client):
 
     schema = response.json()
     assert schema["info"]["title"] == "SteamSelfGifter"
-    assert schema["info"]["version"] == "2.0.0"
+    assert schema["info"]["version"] == settings.version
 
 
 def test_docs_endpoint_available(client):
