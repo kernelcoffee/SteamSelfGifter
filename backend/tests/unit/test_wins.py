@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.time import utcnow
+from utils import steamgifts_parser
 
 
 class TestSteamGiftsClientGetWonGiveaways:
@@ -52,16 +53,12 @@ class TestSteamGiftsClientGetWonGiveaways:
         """Test parsing won giveaways from HTML."""
         from bs4 import BeautifulSoup
 
-        from utils.steamgifts_client import SteamGiftsClient
-
-        client = SteamGiftsClient(phpsessid="test", user_agent="test")
-
         soup = BeautifulSoup(sample_won_html, "html.parser")
         rows = soup.find_all("div", class_="table__row-inner-wrap")
 
         results = []
         for row in rows:
-            result = client._parse_won_giveaway_row(row)
+            result = steamgifts_parser.parse_won_giveaway_row(row)
             if result:
                 results.append(result)
 
@@ -111,14 +108,11 @@ class TestSteamGiftsClientGetWonGiveaways:
         """Test parsing fails gracefully when link is missing."""
         from bs4 import BeautifulSoup
 
-        from utils.steamgifts_client import SteamGiftsClient
-
         html = '<div class="table__row-inner-wrap"><div>No link here</div></div>'
         soup = BeautifulSoup(html, "html.parser")
         row = soup.find("div", class_="table__row-inner-wrap")
 
-        client = SteamGiftsClient(phpsessid="test", user_agent="test")
-        result = client._parse_won_giveaway_row(row)
+        result = steamgifts_parser.parse_won_giveaway_row(row)
 
         assert result is None
 

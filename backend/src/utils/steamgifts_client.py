@@ -5,19 +5,21 @@ including authentication, scraping giveaways, and entering giveaways.
 """
 
 import asyncio
-import re
 from typing import Any
 
 import httpx
 import structlog
-from bs4 import BeautifulSoup
 
 from core.exceptions import (
     SteamGiftsError,
     SteamGiftsSessionExpiredError,
 )
-from core.time import from_timestamp
+from utils import steamgifts_parser as parser
 from utils.steam_client import RateLimiter
+
+# Re-exported for backwards compatibility; the parsing logic (and these
+# word lists) live in utils.steamgifts_parser.
+from utils.steamgifts_parser import FORBIDDEN_WORDS, GOOD_WORDS  # noqa: F401
 
 logger = structlog.get_logger()
 
@@ -36,12 +38,6 @@ class SteamGiftsUnsafeError(SteamGiftsError):
         super().__init__(message, code="SG_005", details={"safety_score": safety_score})
         self.safety_score = safety_score
 
-
-# Safety detection word lists (from legacy code)
-# Words that indicate potential traps/scams
-FORBIDDEN_WORDS = (" ban", " fake", " bot", " not enter", " don't enter", " do not enter")
-# Words that look similar but are innocent (to avoid false positives)
-GOOD_WORDS = (" bank", " banan", " both", " band", " banner", " bang")
 
 
 class SteamGiftsClient:
@@ -272,33 +268,14 @@ class SteamGiftsClient:
                 details={"status_code": response.status_code},
             )
 
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # XSRF token is in a hidden input or data attribute
-        token_input = soup.find("input", {"name": "xsrf_token"})
-        if token_input:
-            value = token_input.get("value")
-            self.xsrf_token = str(value) if value else None
-            return
-
-        # Try to find it in data-form attribute
-        form_element = soup.find(lambda tag: tag.has_attr("data-form"))
-        if form_element:
-            # Token might be in a JSON-encoded string
-            import json
-            try:
-                form_data = json.loads(str(form_element["data-form"]))
-                if "xsrf_token" in form_data:
-                    self.xsrf_token = form_data["xsrf_token"]
-                    return
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-        raise SteamGiftsSessionExpiredError(
-            "Could not extract XSRF token - session expired or invalid",
-            code="SG_004",
-            details={"reason": "xsrf_token_not_found"},
-        )
+        token = parser.extract_xsrf_token(response.text)
+        if token is None:
+            raise SteamGiftsSessionExpiredError(
+                "Could not extract XSRF token - session expired or invalid",
+                code="SG_004",
+                details={"reason": "xsrf_token_not_found"},
+            )
+        self.xsrf_token = token
 
     async def get_user_points(self) -> int:
         """
@@ -326,28 +303,19 @@ class SteamGiftsClient:
                 details={"status_code": response.status_code},
             )
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        try:
+            points = parser.parse_user_points(response.text)
+        except ValueError as e:
+            raise SteamGiftsError(str(e), code="SG_002", details={})
 
-        # Points are in nav__points element
-        points_element = soup.find("span", class_="nav__points")
-        if not points_element:
+        if points is None:
             raise SteamGiftsSessionExpiredError(
                 "Could not find points - session expired or invalid",
                 code="SG_004",
                 details={"reason": "points_element_not_found"},
             )
 
-        # Extract number from text like "123P"
-        points_text = points_element.text.strip()
-        match = re.search(r"(\d+)", points_text)
-        if not match:
-            raise SteamGiftsError(
-                f"Could not parse points: {points_text}",
-                code="SG_002",
-                details={"points_text": points_text},
-            )
-
-        return int(match.group(1))
+        return points
 
     async def get_user_info(self) -> dict[str, Any]:
         """
@@ -375,69 +343,19 @@ class SteamGiftsClient:
                 details={"status_code": response.status_code},
             )
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        try:
+            points = parser.parse_user_points(response.text)
+        except ValueError as e:
+            raise SteamGiftsError(str(e), code="SG_002", details={})
 
-        # Points are in nav__points element
-        points_element = soup.find("span", class_="nav__points")
-        if not points_element:
+        if points is None:
             raise SteamGiftsSessionExpiredError(
                 "Could not find points - session expired or invalid",
                 code="SG_004",
                 details={"reason": "points_element_not_found"},
             )
 
-        # Extract number from text
-        points_text = points_element.text.strip()
-        match = re.search(r"(\d+)", points_text)
-        if not match:
-            raise SteamGiftsError(
-                f"Could not parse points: {points_text}",
-                code="SG_002",
-                details={"points_text": points_text},
-            )
-        points = int(match.group(1))
-
-        # Username is in a link to /user/<username>
-        # The logged-in user's profile link is typically in the nav area
-        username = None
-
-        # Method 1: Look for nav__avatar-inner-wrap (user avatar link)
-        avatar_link = soup.find("a", class_="nav__avatar-inner-wrap")
-        if avatar_link:
-            href = str(avatar_link.get("href", "") or "")
-            username_match = re.search(r"/user/([^/]+)", href)
-            if username_match:
-                username = username_match.group(1)
-
-        # Method 2: Look for the user's profile link in the nav area
-        # This is typically the first /user/ link that appears in navigation
-        if not username:
-            # Find nav__button-container which contains the user dropdown
-            nav_container = soup.find("div", class_="nav__button-container")
-            if nav_container:
-                user_link = nav_container.find("a", href=re.compile(r"^/user/"))
-                if user_link:
-                    href = str(user_link.get("href", "") or "")
-                    username_match = re.search(r"/user/([^/]+)", href)
-                    if username_match:
-                        username = username_match.group(1)
-
-        # Method 3: Look for any /user/ link in the header/nav that points to current user
-        # The logged-in user's link is usually near the top and associated with points
-        if not username:
-            # Find the nav__points element's parent and look for nearby user link
-            if points_element:
-                parent = points_element.parent
-                while parent and parent.name != "nav":
-                    user_link = parent.find("a", href=re.compile(r"^/user/"))
-                    if user_link:
-                        href = str(user_link.get("href", "") or "")
-                        username_match = re.search(r"/user/([^/]+)", href)
-                        if username_match:
-                            username = username_match.group(1)
-                            break
-                    parent = parent.parent
-
+        username = parser.parse_username(response.text)
         if not username:
             raise SteamGiftsSessionExpiredError(
                 "Could not find username - session expired or invalid",
@@ -523,119 +441,9 @@ class SteamGiftsClient:
                 details={"status_code": response.status_code},
             )
 
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        giveaways = []
-        giveaway_elements = soup.find_all("div", class_="giveaway__row-inner-wrap")
-
-        for element in giveaway_elements:
-            try:
-                # Skip pinned/advertisement giveaways ("Featured" section at the
-                # top of wishlist pages). The container class has changed over
-                # time (pinned-giveaways__inner-wrap, then pinned-giveaways),
-                # so match any pinned-giveaways* ancestor.
-                if element.find_parent("div", class_=re.compile(r"^pinned-giveaways")):
-                    continue
-
-                giveaway = self._parse_giveaway_element(element)
-                if giveaway:
-                    # Mark wishlist giveaways
-                    giveaway["is_wishlist"] = giveaway_type == "wishlist"
-                    giveaways.append(giveaway)
-            except Exception as e:
-                # Log error but continue parsing other giveaways
-                logger.warning("giveaway_parse_failed", error=str(e))
-                continue
-
-        return giveaways
-
-    def _parse_giveaway_element(self, element: Any) -> dict[str, Any] | None:
-        """
-        Parse giveaway data from HTML element.
-
-        Args:
-            element: BeautifulSoup element containing giveaway data
-
-        Returns:
-            Dictionary with giveaway data, or None if parsing fails
-        """
-        # Extract giveaway code from link
-        link = element.find("a", class_="giveaway__heading__name")
-        if not link:
-            return None
-
-        href = link.get("href", "")
-        code_match = re.search(r"/giveaway/([^/]+)/", href)
-        if not code_match:
-            return None
-
-        code = code_match.group(1)
-        game_name = link.text.strip()
-
-        # Extract points
-        points_element = element.find("span", class_="giveaway__heading__thin")
-        price = 0
-        if points_element:
-            points_text = points_element.text.strip()
-            match = re.search(r"\((\d+)P\)", points_text)
-            if match:
-                price = int(match.group(1))
-
-        # Extract copies
-        copies = 1
-        copies_element = element.find("span", class_="giveaway__heading__thin")
-        if copies_element:
-            copies_text = copies_element.text.strip()
-            match = re.search(r"(\d+)\s+Copies", copies_text)
-            if match:
-                copies = int(match.group(1))
-
-        # Extract entries count
-        entries = 0
-        entries_element = element.find("span", class_="giveaway__links")
-        if entries_element:
-            entries_text = entries_element.text.strip()
-            match = re.search(r"(\d+)\s+entries", entries_text)
-            if match:
-                entries = int(match.group(1))
-
-        # Extract end time
-        time_element = element.find("span", {"data-timestamp": True})
-        end_time = None
-        if time_element:
-            timestamp = int(time_element["data-timestamp"])
-            end_time = from_timestamp(timestamp)
-
-        # Extract thumbnail URL
-        thumbnail_url = None
-        img_element = element.find("a", class_="giveaway_image_thumbnail")
-        if img_element:
-            style = img_element.get("style", "")
-            url_match = re.search(r"url\((.*?)\)", style)
-            if url_match:
-                thumbnail_url = url_match.group(1).strip("'\"")
-
-        # Try to extract game ID from thumbnail URL
-        game_id = None
-        if thumbnail_url:
-            id_match = re.search(r"/apps/(\d+)/", thumbnail_url)
-            if id_match:
-                game_id = int(id_match.group(1))
-
-        # Check if already entered (has "is-faded" class)
-        is_entered = "is-faded" in element.get("class", [])
-
-        return {
-            "code": code,
-            "game_name": game_name,
-            "price": price,
-            "copies": copies,
-            "entries": entries,
-            "end_time": end_time,
-            "thumbnail_url": thumbnail_url,
-            "game_id": game_id,
-            "is_entered": is_entered,
-        }
+        return parser.parse_giveaway_list(
+            response.text, mark_wishlist=giveaway_type == "wishlist"
+        )
 
     async def enter_giveaway(self, giveaway_code: str) -> bool:
         """
@@ -731,18 +539,8 @@ class SteamGiftsClient:
                 details={"status_code": response.status_code},
             )
 
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Parse giveaway details from page
-        # This is a simplified version - real implementation would extract more details
-        heading = soup.find("a", class_="giveaway__heading__name")
-        game_name = heading.text.strip() if heading else "Unknown"
-
-        return {
-            "code": giveaway_code,
-            "game_name": game_name,
-            # Add more fields as needed
-        }
+        details = parser.parse_giveaway_details(response.text)
+        return {"code": giveaway_code, **details}
 
     async def check_if_entered(self, giveaway_code: str) -> bool:
         """
@@ -801,90 +599,7 @@ class SteamGiftsClient:
                 details={"status_code": response.status_code},
             )
 
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        won_giveaways = []
-
-        # Won giveaways are in table rows
-        table_rows = soup.find_all("div", class_="table__row-inner-wrap")
-
-        for row in table_rows:
-            try:
-                won = self._parse_won_giveaway_row(row)
-                if won:
-                    won_giveaways.append(won)
-            except Exception as e:
-                logger.warning("won_giveaway_parse_failed", error=str(e))
-                continue
-
-        return won_giveaways
-
-    def _parse_won_giveaway_row(self, row: Any) -> dict[str, Any] | None:
-        """
-        Parse a won giveaway row from the /giveaways/won page.
-
-        Args:
-            row: BeautifulSoup element containing won giveaway data
-
-        Returns:
-            Dictionary with won giveaway data, or None if parsing fails
-        """
-        # Find the game name and giveaway link
-        heading = row.find("a", class_="table__column__heading")
-        if not heading:
-            return None
-
-        game_name = heading.text.strip()
-        href = heading.get("href", "")
-
-        # Extract giveaway code from URL
-        code_match = re.search(r"/giveaway/([^/]+)/", href)
-        if not code_match:
-            return None
-
-        code = code_match.group(1)
-
-        # Try to extract game ID from thumbnail image URL
-        game_id = None
-        thumbnail = row.find("a", class_="table_image_thumbnail")
-        if thumbnail:
-            style = thumbnail.get("style", "")
-            id_match = re.search(r"/apps/(\d+)/", style)
-            if id_match:
-                game_id = int(id_match.group(1))
-
-        # Check if gift was received (look for icon-green class in feedback div)
-        received = False
-        feedback_divs = row.find_all("div", class_="table__column--gift-feedback")
-        for feedback in feedback_divs:
-            if feedback.find("i", class_="icon-green"):
-                received = True
-                break
-
-        # Try to get the end time from timestamp
-        won_at = None
-        time_element = row.find("span", {"data-timestamp": True})
-        if time_element:
-            try:
-                timestamp = int(time_element["data-timestamp"])
-                won_at = from_timestamp(timestamp)
-            except (ValueError, KeyError):
-                pass
-
-        # Extract Steam key if visible
-        steam_key = None
-        key_element = row.find("i", {"data-clipboard-text": True})
-        if key_element:
-            steam_key = key_element.get("data-clipboard-text")
-
-        return {
-            "code": code,
-            "game_name": game_name,
-            "game_id": game_id,
-            "won_at": won_at,
-            "received": received,
-            "steam_key": steam_key,
-        }
+        return parser.parse_won_giveaways(response.text)
 
     async def get_entered_giveaways(self, page: int = 1) -> list[dict[str, Any]]:
         """
@@ -925,180 +640,15 @@ class SteamGiftsClient:
                 details={"status_code": response.status_code},
             )
 
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        entered_giveaways = []
-
-        # Entered giveaways are in table rows
-        table_rows = soup.find_all("div", class_="table__row-inner-wrap")
-
-        for row in table_rows:
-            try:
-                entered = self._parse_entered_giveaway_row(row)
-                if entered:
-                    entered_giveaways.append(entered)
-            except Exception as e:
-                logger.warning("entered_giveaway_parse_failed", error=str(e))
-                continue
-
-        return entered_giveaways
-
-    def _parse_entered_giveaway_row(self, row: Any) -> dict[str, Any] | None:
-        """
-        Parse an entered giveaway row from the /giveaways/entered page.
-
-        Args:
-            row: BeautifulSoup element containing entered giveaway data
-
-        Returns:
-            Dictionary with entered giveaway data, or None if parsing fails
-        """
-        # Find the game name and giveaway link
-        heading = row.find("a", class_="table__column__heading")
-        if not heading:
-            return None
-
-        # Game name is the text without the price span
-        game_name_parts = []
-        for child in heading.children:
-            if isinstance(child, str):
-                game_name_parts.append(child.strip())
-            elif child.name != "span":
-                game_name_parts.append(child.text.strip())
-        game_name = " ".join(game_name_parts).strip()
-
-        href = heading.get("href", "")
-
-        # Extract giveaway code from URL
-        code_match = re.search(r"/giveaway/([^/]+)/", href)
-        if not code_match:
-            return None
-
-        code = code_match.group(1)
-
-        # Extract price from the span inside heading
-        price = 0
-        price_span = heading.find("span", class_="is-faded")
-        if price_span:
-            price_match = re.search(r"\((\d+)P\)", price_span.text)
-            if price_match:
-                price = int(price_match.group(1))
-
-        # Try to extract game ID from thumbnail image URL
-        game_id = None
-        thumbnail = row.find("a", class_="table_image_thumbnail")
-        if thumbnail:
-            style = thumbnail.get("style", "")
-            id_match = re.search(r"/apps/(\d+)/", style)
-            if id_match:
-                game_id = int(id_match.group(1))
-
-        # Get entries count (usually in a text-center column)
-        entries = 0
-        columns = row.find_all("div", class_="table__column--width-small")
-        if columns:
-            # First column is usually entries count
-            entries_text = columns[0].text.strip().replace(",", "")
-            if entries_text.isdigit():
-                entries = int(entries_text)
-
-        # Get end time from the "remaining" text
-        end_time = None
-        # Look for timestamp in the fill column
-        fill_col = row.find("div", class_="table__column--width-fill")
-        if fill_col:
-            time_element = fill_col.find("span", {"data-timestamp": True})
-            if time_element:
-                try:
-                    timestamp = int(time_element["data-timestamp"])
-                    end_time = from_timestamp(timestamp)
-                except (ValueError, KeyError):
-                    pass
-
-        # Get entered_at timestamp (second timestamp in the row)
-        entered_at = None
-        if len(columns) >= 2:
-            time_element = columns[1].find("span", {"data-timestamp": True})
-            if time_element:
-                try:
-                    timestamp = int(time_element["data-timestamp"])
-                    entered_at = from_timestamp(timestamp)
-                except (ValueError, KeyError):
-                    pass
-
-        return {
-            "code": code,
-            "game_name": game_name,
-            "game_id": game_id,
-            "price": price,
-            "entries": entries,
-            "end_time": end_time,
-            "entered_at": entered_at,
-        }
+        return parser.parse_entered_giveaways(response.text)
 
     def check_page_safety(self, html_content: str) -> dict[str, Any]:
+        """Analyze giveaway page text for trap indicators.
+
+        Thin wrapper around :func:`utils.steamgifts_parser.check_page_safety`
+        (see it for the result shape).
         """
-        Check if a giveaway page contains suspicious content.
-
-        Analyzes the page text for forbidden words that might indicate
-        a trap giveaway (e.g., "don't enter", "ban", "fake").
-
-        Args:
-            html_content: Raw HTML content of the giveaway page
-
-        Returns:
-            Dictionary with safety check results:
-                - is_safe: True if page appears safe
-                - safety_score: Score from 0-100 (higher = safer)
-                - bad_count: Number of bad words found
-                - good_count: Number of good words found (false positives)
-                - details: List of found bad words
-
-        Example:
-            >>> result = client.check_page_safety(html)
-            >>> if not result['is_safe']:
-            ...     print(f"Warning: {result['details']}")
-        """
-        text_lower = html_content.lower()
-
-        bad_count = 0
-        good_count = 0
-        found_bad_words = []
-
-        # Count forbidden words
-        for bad_word in FORBIDDEN_WORDS:
-            count = text_lower.count(bad_word.lower())
-            if count > 0:
-                bad_count += count
-                found_bad_words.append(bad_word.strip())
-
-        # Count good words (false positive indicators)
-        if bad_count > 0:
-            for good_word in GOOD_WORDS:
-                good_count += text_lower.count(good_word.lower())
-
-        # Calculate safety score
-        # Net bad = bad words minus false positives
-        net_bad = max(0, bad_count - good_count)
-
-        if net_bad == 0:
-            safety_score = 100
-            is_safe = True
-        elif net_bad <= 2:
-            safety_score = 50
-            is_safe = True  # Borderline, but allow
-        else:
-            safety_score = max(0, 100 - (net_bad * 20))
-            is_safe = False
-
-        return {
-            "is_safe": is_safe,
-            "safety_score": safety_score,
-            "bad_count": bad_count,
-            "good_count": good_count,
-            "net_bad": net_bad,
-            "details": found_bad_words,
-        }
+        return parser.check_page_safety(html_content)
 
     async def check_giveaway_safety(self, giveaway_code: str) -> dict[str, Any]:
         """
@@ -1211,16 +761,7 @@ class SteamGiftsClient:
         if response.status_code != 200:
             return None
 
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Game ID is in data-game-id attribute of the featured wrapper
-        featured = soup.find("div", class_="featured__outer-wrap")
-        if featured:
-            game_id = featured.get("data-game-id")
-            if game_id:
-                return int(str(game_id))
-
-        return None
+        return parser.parse_giveaway_game_id(response.text)
 
     async def post_comment(
         self, giveaway_code: str, comment_text: str = "Thanks!"
