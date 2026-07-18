@@ -14,6 +14,8 @@ export interface Giveaway {
   game_id: number | null;
   price: number;
   copies: number;
+  entries: number;
+  win_chance: number;
   end_time: string | null;
   discovered_at: string;
   entered_at: string | null;

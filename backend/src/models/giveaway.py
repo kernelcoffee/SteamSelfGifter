@@ -113,6 +113,11 @@ class Giveaway(Base, TimestampMixin):
         default=1,
         comment="Number of copies available",
     )
+    entries: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        comment="Entry count as of the last scan (0 = none yet or unknown)",
+    )
     end_time: Mapped[datetime | None] = mapped_column(
         DateTime,
         nullable=True,

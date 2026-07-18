@@ -7,7 +7,7 @@ API requests and responses.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, computed_field, field_serializer
 
 
 class GiveawayBase(BaseModel):
@@ -50,6 +50,12 @@ class GiveawayBase(BaseModel):
         description="Number of copies being given away",
         ge=1,
         examples=[1],
+    )
+    entries: int = Field(
+        default=0,
+        description="Entry count as of the last scan (0 = none yet or unknown)",
+        ge=0,
+        examples=[250],
     )
     end_time: datetime | None = Field(
         default=None,
@@ -112,6 +118,15 @@ class GiveawayResponse(GiveawayBase):
         description="Internal giveaway ID",
         examples=[123],
     )
+
+    @computed_field(description="Win chance in percent (copies/entries*100) as of the last scan")
+    @property
+    def win_chance(self) -> float:
+        """Chance to win in percent; 100 when nobody has entered yet."""
+        if self.entries <= 0:
+            return 100.0
+        return min(100.0, round(self.copies * 100.0 / self.entries, 2))
+
     discovered_at: datetime = Field(
         ...,
         description="When giveaway was first discovered (UTC)",

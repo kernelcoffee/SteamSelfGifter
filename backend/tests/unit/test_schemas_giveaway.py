@@ -92,6 +92,24 @@ def test_giveaway_response():
     assert giveaway.discovered_at is not None
 
 
+def test_giveaway_response_win_chance():
+    """win_chance = copies/entries*100, capped at 100, 100 when no entries."""
+    def mk(copies, entries):
+        return GiveawayResponse(
+            id=1, code="GA1", url="test", game_name="G", price=50,
+            copies=copies, entries=entries, discovered_at=utcnow(),
+        )
+
+    assert mk(1, 0).win_chance == 100.0      # nobody entered yet
+    assert mk(1, 4).win_chance == 25.0
+    assert mk(1, 10000).win_chance == 0.01
+    assert mk(5, 2).win_chance == 100.0      # more copies than entries -> capped
+    assert mk(1, 3).win_chance == 33.33      # rounded to 2 decimals
+
+    # win_chance is serialized in API payloads
+    assert mk(1, 4).model_dump()["win_chance"] == 25.0
+
+
 def test_giveaway_list():
     """Test GiveawayList."""
     giveaway1 = GiveawayResponse(

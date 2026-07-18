@@ -102,6 +102,8 @@ async def get_active_giveaways(
     giveaway_service: GiveawayServiceDep,
     min_score: int | None = Query(default=None, ge=0, le=10, description="Minimum review score (0-10)"),
     is_safe: bool | None = Query(default=None, description="Filter by safety status (true=safe, false=unsafe)"),
+    min_chance: float | None = Query(default=None, ge=0.01, le=100, description="Minimum win chance in percent"),
+    ending_within: int | None = Query(default=None, ge=1, description="Only giveaways ending within this many minutes"),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
     offset: int = Query(default=0, ge=0, description="Number of records to skip"),
 ) -> dict[str, Any]:
@@ -112,7 +114,8 @@ async def get_active_giveaways(
         Success response with list of active giveaways
     """
     giveaways = await giveaway_service.get_active_giveaways(
-        limit=limit, offset=offset, min_score=min_score, is_safe=is_safe
+        limit=limit, offset=offset, min_score=min_score, is_safe=is_safe,
+        min_chance=min_chance, ending_within_minutes=ending_within,
     )
 
     # Enrich with game data (thumbnails, reviews)
@@ -139,6 +142,8 @@ async def get_active_giveaways(
 )
 async def get_wishlist_giveaways(
     giveaway_service: GiveawayServiceDep,
+    min_chance: float | None = Query(default=None, ge=0.01, le=100, description="Minimum win chance in percent"),
+    ending_within: int | None = Query(default=None, ge=1, description="Only giveaways ending within this many minutes"),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
     offset: int = Query(default=0, ge=0, description="Number of records to skip"),
 ) -> dict[str, Any]:
@@ -148,7 +153,10 @@ async def get_wishlist_giveaways(
     Returns:
         Success response with list of wishlist giveaways
     """
-    giveaways = await giveaway_service.giveaway_repo.get_wishlist(limit=limit, offset=offset)
+    giveaways = await giveaway_service.giveaway_repo.get_wishlist(
+        limit=limit, offset=offset,
+        min_chance=min_chance, ending_within_minutes=ending_within,
+    )
 
     # Enrich with game data (thumbnails, reviews)
     giveaways = await giveaway_service.enrich_giveaways_with_game_data(giveaways)

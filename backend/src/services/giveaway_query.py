@@ -156,7 +156,8 @@ class GiveawayQueryMixin:
 
     async def get_active_giveaways(
         self, limit: int | None = None, offset: int = 0, min_score: int | None = None,
-        is_safe: bool | None = None
+        is_safe: bool | None = None, min_chance: float | None = None,
+        ending_within_minutes: int | None = None,
     ) -> list[Giveaway]:
         """
         Get all active (non-expired) giveaways.
@@ -166,6 +167,8 @@ class GiveawayQueryMixin:
             offset: Number of records to skip (for pagination)
             min_score: Minimum review score (0-10) to filter by
             is_safe: Filter by safety status (True=safe only, False=unsafe only, None=all)
+            min_chance: Minimum win chance in percent (copies/entries*100)
+            ending_within_minutes: Only giveaways ending within this many minutes
 
         Returns:
             List of active giveaways
@@ -173,7 +176,10 @@ class GiveawayQueryMixin:
         Example:
             >>> active = await service.get_active_giveaways(limit=20, offset=40, min_score=7, is_safe=True)
         """
-        return await self.giveaway_repo.get_active(limit=limit, offset=offset, min_score=min_score, is_safe=is_safe)
+        return await self.giveaway_repo.get_active(
+            limit=limit, offset=offset, min_score=min_score, is_safe=is_safe,
+            min_chance=min_chance, ending_within_minutes=ending_within_minutes,
+        )
 
     async def get_all_giveaways(
         self, limit: int | None = None, offset: int = 0

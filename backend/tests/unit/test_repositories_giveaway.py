@@ -92,6 +92,82 @@ async def test_get_active_returns_only_active(test_db):
 
 
 @pytest.mark.asyncio
+async def test_get_active_min_chance_filter(test_db):
+    """min_chance keeps giveaways with copies/entries*100 >= threshold,
+    and always keeps ones with no recorded entries."""
+    async with test_db() as session:
+        repo = GiveawayRepository(session)
+        now = utcnow()
+        future = now + timedelta(hours=24)
+
+        # 1 copy / 50 entries = 2%
+        await repo.create(code="GOOD", game_name="A", price=10,
+                          url="http://x/1", end_time=future, copies=1, entries=50)
+        # 1 copy / 10000 entries = 0.01%
+        await repo.create(code="LONGSHOT", game_name="B", price=10,
+                          url="http://x/2", end_time=future, copies=1, entries=10000)
+        # No entries recorded yet -> always passes
+        await repo.create(code="FRESH", game_name="C", price=10,
+                          url="http://x/3", end_time=future, copies=1, entries=0)
+        await session.commit()
+
+        codes = {g.code for g in await repo.get_active(min_chance=1.0)}
+        assert codes == {"GOOD", "FRESH"}
+
+        # Threshold at exactly 0.01 keeps the longshot too
+        codes = {g.code for g in await repo.get_active(min_chance=0.01)}
+        assert codes == {"GOOD", "LONGSHOT", "FRESH"}
+
+
+@pytest.mark.asyncio
+async def test_get_active_ending_within_filter(test_db):
+    """ending_within_minutes keeps only giveaways ending soon enough."""
+    async with test_db() as session:
+        repo = GiveawayRepository(session)
+        now = utcnow()
+
+        await repo.create(code="SOON", game_name="A", price=10,
+                          url="http://x/1", end_time=now + timedelta(hours=2))
+        await repo.create(code="LATER", game_name="B", price=10,
+                          url="http://x/2", end_time=now + timedelta(hours=48))
+        await session.commit()
+
+        codes = {g.code for g in await repo.get_active(ending_within_minutes=360)}
+        assert codes == {"SOON"}
+
+        codes = {g.code for g in await repo.get_active(ending_within_minutes=4320)}
+        assert codes == {"SOON", "LATER"}
+
+
+@pytest.mark.asyncio
+async def test_get_wishlist_browse_filters(test_db):
+    """The wishlist listing honors min_chance and ending_within_minutes."""
+    async with test_db() as session:
+        repo = GiveawayRepository(session)
+        now = utcnow()
+
+        await repo.create(code="WSOON", game_name="A", price=10, url="http://x/1",
+                          end_time=now + timedelta(hours=2), is_wishlist=True,
+                          copies=1, entries=10)  # 10%
+        await repo.create(code="WCROWD", game_name="B", price=10, url="http://x/2",
+                          end_time=now + timedelta(hours=2), is_wishlist=True,
+                          copies=1, entries=5000)  # 0.02%
+        await repo.create(code="WLATER", game_name="C", price=10, url="http://x/3",
+                          end_time=now + timedelta(hours=48), is_wishlist=True,
+                          copies=1, entries=10)
+        await session.commit()
+
+        codes = {g.code for g in await repo.get_wishlist(min_chance=1.0)}
+        assert codes == {"WSOON", "WLATER"}
+
+        codes = {g.code for g in await repo.get_wishlist(ending_within_minutes=360)}
+        assert codes == {"WSOON", "WCROWD"}
+
+        codes = {g.code for g in await repo.get_wishlist(min_chance=1.0, ending_within_minutes=360)}
+        assert codes == {"WSOON"}
+
+
+@pytest.mark.asyncio
 async def test_get_active_excludes_hidden(test_db):
     """Test getting active giveaways excludes hidden ones."""
     async with test_db() as session:
