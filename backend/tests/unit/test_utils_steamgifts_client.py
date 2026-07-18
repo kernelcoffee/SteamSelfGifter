@@ -12,6 +12,7 @@ from core.exceptions import (
 from core.exceptions import (
     SteamGiftsSessionExpiredError as SteamGiftsAuthError,
 )
+from utils import steamgifts_parser
 from utils.steamgifts_client import (
     SteamGiftsClient,
     SteamGiftsNotFoundError,
@@ -337,7 +338,7 @@ async def test_parse_giveaway_element_success(steamgifts_client):
     soup = BeautifulSoup(html, "html.parser")
     element = soup.find("div", class_="giveaway__row-inner-wrap")
 
-    result = steamgifts_client._parse_giveaway_element(element)
+    result = steamgifts_parser.parse_giveaway_element(element)
 
     assert result is not None
     assert result["code"] == "XyZ99"
@@ -362,7 +363,7 @@ async def test_parse_giveaway_element_missing_link(steamgifts_client):
     soup = BeautifulSoup(html, "html.parser")
     element = soup.find("div", class_="giveaway__row-inner-wrap")
 
-    result = steamgifts_client._parse_giveaway_element(element)
+    result = steamgifts_parser.parse_giveaway_element(element)
 
     assert result is None
 
