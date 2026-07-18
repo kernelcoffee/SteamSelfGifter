@@ -59,13 +59,15 @@ async def scan_giveaways() -> dict[str, Any]:
                 pages=max_pages
             )
 
-            # Also scan wishlist giveaways (single page, like the automation
-            # cycle) so the Wishlist tab is populated by manual scans too.
-            # A wishlist failure shouldn't fail the whole scan.
+            # Also scan wishlist giveaways so the Wishlist tab is populated by
+            # manual scans too. Uses the same page cap as the regular scan;
+            # the sync stops early at the end of the list, so small wishlists
+            # cost a single request. A wishlist failure shouldn't fail the
+            # whole scan.
             wishlist_new = wishlist_updated = 0
             try:
                 wishlist_new, wishlist_updated = await ctx.giveaway_service.sync_giveaways(
-                    pages=1, giveaway_type="wishlist"
+                    pages=max_pages, giveaway_type="wishlist"
                 )
             except Exception as e:
                 logger.error("scan_wishlist_failed", error=str(e))

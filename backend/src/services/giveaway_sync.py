@@ -7,11 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import SteamGiftsError
 from core.time import utcnow
 from models.giveaway import Giveaway
+from repositories.activity_log import ActivityLogRepository
 from repositories.giveaway import GiveawayRepository
 from services.game_service import GameService
-from utils.steamgifts_client import SteamGiftsClient
+from utils.steamgifts_client import SteamGiftsClient, SteamGiftsScrapeDriftError
 
 logger = structlog.get_logger()
+
+# SteamGifts renders 50 giveaways per listing page; a shorter page is the
+# last one, which tells us a multi-page scan saw the complete list.
+GIVEAWAYS_PER_PAGE = 50
 
 
 class GiveawaySyncMixin:
@@ -62,6 +67,11 @@ class GiveawaySyncMixin:
         """
         new_count = 0
         updated_count = 0
+        scraped_codes: set[str] = set()
+        # True when we saw the end of the list (an empty or short page), as
+        # opposed to stopping at the page cap or on an error. Only a complete
+        # wishlist scan is allowed to un-stick stale wishlist flags below.
+        scan_complete = False
 
         for page in range(1, pages + 1):
             try:
@@ -72,30 +82,63 @@ class GiveawaySyncMixin:
                     dlc_only=dlc_only,
                     min_copies=min_copies,
                 )
-
-                for ga_data in giveaways_data:
-                    # Check if exists
-                    existing = await self.giveaway_repo.get_by_code(ga_data["code"])
-
-                    # Cache game data if we have game_id
-                    if ga_data.get("game_id"):
-                        try:
-                            await self.game_service.get_or_fetch_game(ga_data["game_id"])
-                        except Exception as e:
-                            logger.error("game_cache_failed", game_id=ga_data["game_id"], error=str(e))
-
-                    if existing:
-                        # Update existing giveaway
-                        await self._update_giveaway(existing, ga_data)
-                        updated_count += 1
-                    else:
-                        # Create new giveaway
-                        await self._create_giveaway(ga_data)
-                        new_count += 1
-
+            except SteamGiftsScrapeDriftError as e:
+                # The page parsed to zero rows without a no-results marker:
+                # the markup likely changed. Surface it in the activity log so
+                # the UI shows it, and don't treat the scan as complete.
+                logger.error("scrape_drift_detected", page=page, error=str(e))
+                await ActivityLogRepository(self.session).create(
+                    level="warning",
+                    event_type="error",
+                    message=(
+                        "Scan parsed 0 giveaways from a non-empty page - "
+                        "SteamGifts may have changed their markup"
+                    ),
+                )
+                break
             except SteamGiftsError as e:
                 logger.error("giveaway_page_fetch_failed", page=page, error=str(e))
                 break
+
+            if not giveaways_data:
+                # Legitimate end of the list (no-results marker present).
+                scan_complete = True
+                break
+
+            for ga_data in giveaways_data:
+                scraped_codes.add(ga_data["code"])
+
+                # Check if exists
+                existing = await self.giveaway_repo.get_by_code(ga_data["code"])
+
+                # Cache game data if we have game_id
+                if ga_data.get("game_id"):
+                    try:
+                        await self.game_service.get_or_fetch_game(ga_data["game_id"])
+                    except Exception as e:
+                        logger.error("game_cache_failed", game_id=ga_data["game_id"], error=str(e))
+
+                if existing:
+                    # Update existing giveaway
+                    await self._update_giveaway(existing, ga_data)
+                    updated_count += 1
+                else:
+                    # Create new giveaway
+                    await self._create_giveaway(ga_data)
+                    new_count += 1
+
+            if len(giveaways_data) < GIVEAWAYS_PER_PAGE:
+                # Short page = last page of the list.
+                scan_complete = True
+                break
+
+        # A complete wishlist scan is the source of truth for the wishlist
+        # flag: clear it on active giveaways that no longer appear (the game
+        # was removed from the Steam wishlist). Never after partial scans.
+        if giveaway_type == "wishlist" and scan_complete:
+            cleared = await self.giveaway_repo.unset_wishlist_except(scraped_codes)
+            if cleared:
+                logger.info("wishlist_flags_cleared", count=cleared)
 
         await self.session.commit()
         return new_count, updated_count
@@ -252,6 +295,8 @@ class GiveawaySyncMixin:
         if ga_data.get("game_id") and not giveaway.game_id:
             giveaway.game_id = ga_data["game_id"]
 
-        # Update wishlist flag (can change from False to True, but not back)
+        # Set the wishlist flag when this row came from a wishlist scan.
+        # The reverse direction (un-sticking removed games) is handled by
+        # unset_wishlist_except after a complete wishlist scan.
         if ga_data.get("is_wishlist"):
             giveaway.is_wishlist = True

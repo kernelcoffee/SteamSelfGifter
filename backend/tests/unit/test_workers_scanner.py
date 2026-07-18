@@ -38,7 +38,7 @@ async def test_scan_giveaways_success():
 
         mock_giveaway_service.sync_giveaways.assert_has_calls([
             call(pages=3),
-            call(pages=1, giveaway_type="wishlist"),
+            call(pages=3, giveaway_type="wishlist"),
         ])
         mock_event_manager.broadcast_event.assert_called_once()
 
@@ -185,7 +185,7 @@ async def test_scan_uses_settings_max_pages():
         assert results["pages_scanned"] == 10
         mock_giveaway_service.sync_giveaways.assert_has_calls([
             call(pages=10),
-            call(pages=1, giveaway_type="wishlist"),
+            call(pages=10, giveaway_type="wishlist"),
         ])
 
 
@@ -213,5 +213,5 @@ async def test_scan_defaults_to_3_pages():
         assert results["pages_scanned"] == 3
         mock_giveaway_service.sync_giveaways.assert_has_calls([
             call(pages=3),
-            call(pages=1, giveaway_type="wishlist"),
+            call(pages=3, giveaway_type="wishlist"),
         ])

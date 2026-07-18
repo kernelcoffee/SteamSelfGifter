@@ -8,7 +8,7 @@ giveaway visibility.
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import utcnow
@@ -398,6 +398,39 @@ class GiveawayRepository(BaseRepository[Giveaway]):
 
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def unset_wishlist_except(self, codes: set[str]) -> int:
+        """
+        Clear the wishlist flag on active giveaways not in ``codes``.
+
+        Called after a *complete* wishlist scan: any active giveaway still
+        flagged wishlist but absent from the scan is no longer on the user's
+        Steam wishlist. Expired giveaways keep their flag as history.
+
+        Args:
+            codes: Giveaway codes seen in the completed wishlist scan
+
+        Returns:
+            Number of giveaways whose flag was cleared
+
+        Note:
+            This method does NOT commit the transaction. The caller must
+            call session.commit() to persist changes to the database.
+        """
+        now = utcnow()
+        stmt = (
+            update(self.model)
+            .where(
+                self.model.is_wishlist == True,  # noqa: E712
+                self.model.end_time.isnot(None),
+                self.model.end_time > now,
+                self.model.code.notin_(codes),
+            )
+            .values(is_wishlist=False)
+        )
+        result = await self.session.execute(stmt)
+        # execute() is typed as Result, but UPDATE always yields a CursorResult.
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def get_won(
         self, limit: int | None = None, offset: int | None = None
