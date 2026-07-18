@@ -7,6 +7,8 @@
 
 SteamSelfGifter is an automated bot for entering Steam game giveaways on SteamGifts.com. It features a modern web interface for managing your giveaway entries, tracking wins, and configuring automation settings.
 
+![SteamSelfGifter dashboard](docs/screenshots/dashboard.png)
+
 ## Features
 
 - **Web Dashboard**: Modern React-based UI for monitoring and control
@@ -21,6 +23,16 @@ SteamSelfGifter is an automated bot for entering Steam game giveaways on SteamGi
 - **Real-time Updates**: WebSocket-based live notifications
 - **Analytics Dashboard**: View entry statistics and trends
 - **Activity Logs**: View detailed logs of all bot activity
+
+## Screenshots
+
+**Browse and filter giveaways** — by review score, win chance, time remaining, and safety, with live entry counts and win odds on every card:
+
+![Giveaways page](docs/screenshots/giveaways.jpg)
+
+**Analytics** — entry statistics, giveaway coverage, and win rate at a glance:
+
+![Analytics page](docs/screenshots/analytics.png)
 
 ## Quick Start
 
