@@ -32,7 +32,8 @@ async def scan_giveaways() -> dict[str, Any]:
     """
     Scan SteamGifts for giveaways and sync to database (manual trigger).
 
-    Scans ``max_scan_pages`` pages and emits a ``scan_completed`` event.
+    Scans ``max_scan_pages`` regular pages plus one wishlist page, and emits
+    a ``scan_completed`` event.
 
     Returns:
         Dictionary with scan results (new/updated/pages_scanned/scan_time).
@@ -58,10 +59,23 @@ async def scan_giveaways() -> dict[str, Any]:
                 pages=max_pages
             )
 
+            # Also scan wishlist giveaways (single page, like the automation
+            # cycle) so the Wishlist tab is populated by manual scans too.
+            # A wishlist failure shouldn't fail the whole scan.
+            wishlist_new = wishlist_updated = 0
+            try:
+                wishlist_new, wishlist_updated = await ctx.giveaway_service.sync_giveaways(
+                    pages=1, giveaway_type="wishlist"
+                )
+            except Exception as e:
+                logger.error("scan_wishlist_failed", error=str(e))
+
             scan_time = (datetime.now(UTC) - start_time).total_seconds()
             results = {
                 "new": new_count,
                 "updated": updated_count,
+                "wishlist_new": wishlist_new,
+                "wishlist_updated": wishlist_updated,
                 "pages_scanned": max_pages,
                 "scan_time": round(scan_time, 2),
                 "skipped": False,
@@ -76,6 +90,8 @@ async def scan_giveaways() -> dict[str, Any]:
                 "giveaway_scan_completed",
                 new=new_count,
                 updated=updated_count,
+                wishlist_new=wishlist_new,
+                wishlist_updated=wishlist_updated,
                 pages=max_pages,
                 scan_time=scan_time,
             )

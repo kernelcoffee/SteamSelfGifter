@@ -1,6 +1,6 @@
 """Unit tests for giveaway scanner worker."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -30,11 +30,16 @@ async def test_scan_giveaways_success():
 
         assert results["new"] == 5
         assert results["updated"] == 2
+        assert results["wishlist_new"] == 5
+        assert results["wishlist_updated"] == 2
         assert results["pages_scanned"] == 3
         assert results["skipped"] is False
         assert "scan_time" in results
 
-        mock_giveaway_service.sync_giveaways.assert_called_once_with(pages=3)
+        mock_giveaway_service.sync_giveaways.assert_has_calls([
+            call(pages=3),
+            call(pages=1, giveaway_type="wishlist"),
+        ])
         mock_event_manager.broadcast_event.assert_called_once()
 
 
@@ -80,6 +85,37 @@ async def test_scan_giveaways_error():
 
         # Verify error event was emitted
         mock_event_manager.broadcast_event.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scan_giveaways_wishlist_failure_does_not_fail_scan():
+    """A wishlist scan error is logged but the regular scan still succeeds."""
+    from workers.scanner import scan_giveaways
+
+    mock_settings = MagicMock()
+    mock_settings.phpsessid = "test_session"
+    mock_settings.max_scan_pages = 3
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.sync_giveaways.side_effect = [
+        (5, 2),  # regular scan
+        Exception("wishlist page error"),  # wishlist scan
+    ]
+
+    patcher, ctx = patch_automation_context(
+        "workers.scanner", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, patch("workers.scanner.event_manager") as mock_event_manager:
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await scan_giveaways()
+
+        assert results["new"] == 5
+        assert results["updated"] == 2
+        assert results["wishlist_new"] == 0
+        assert results["wishlist_updated"] == 0
+        assert results["skipped"] is False
 
 
 @pytest.mark.asyncio
@@ -147,7 +183,10 @@ async def test_scan_uses_settings_max_pages():
         results = await scan_giveaways()
 
         assert results["pages_scanned"] == 10
-        mock_giveaway_service.sync_giveaways.assert_called_once_with(pages=10)
+        mock_giveaway_service.sync_giveaways.assert_has_calls([
+            call(pages=10),
+            call(pages=1, giveaway_type="wishlist"),
+        ])
 
 
 @pytest.mark.asyncio
@@ -172,4 +211,7 @@ async def test_scan_defaults_to_3_pages():
         results = await scan_giveaways()
 
         assert results["pages_scanned"] == 3
-        mock_giveaway_service.sync_giveaways.assert_called_once_with(pages=3)
+        mock_giveaway_service.sync_giveaways.assert_has_calls([
+            call(pages=3),
+            call(pages=1, giveaway_type="wishlist"),
+        ])

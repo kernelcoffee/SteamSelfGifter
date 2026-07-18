@@ -232,6 +232,58 @@ async def test_get_giveaways_success(steamgifts_client):
 
 
 @pytest.mark.asyncio
+async def test_get_giveaways_skips_pinned_featured_section(steamgifts_client):
+    """Pinned/'Featured' ad giveaways are excluded, real rows are kept.
+
+    Covers both the current SteamGifts markup (div.pinned-giveaways) and the
+    older one (div.pinned-giveaways__inner-wrap).
+    """
+    mock_html = """
+    <html>
+        <body>
+            <div class="pinned-giveaways-header">Featured</div>
+            <div class="pinned-giveaways">
+                <div class="giveaway__row-outer-wrap">
+                    <div class="giveaway__row-inner-wrap">
+                        <a href="/giveaway/AdNew/ad-game" class="giveaway__heading__name">Ad Game (new markup)</a>
+                        <span class="giveaway__heading__thin">(0P)</span>
+                    </div>
+                </div>
+            </div>
+            <div class="pinned-giveaways__inner-wrap">
+                <div class="giveaway__row-inner-wrap">
+                    <a href="/giveaway/AdOld/ad-game-old" class="giveaway__heading__name">Ad Game (old markup)</a>
+                    <span class="giveaway__heading__thin">(0P)</span>
+                </div>
+            </div>
+            <div class="giveaway__row-outer-wrap">
+                <div class="giveaway__row-inner-wrap">
+                    <a href="/giveaway/Real1/real-game" class="giveaway__heading__name">Real Game</a>
+                    <span class="giveaway__heading__thin">(30P)</span>
+                </div>
+            </div>
+        </body>
+    </html>
+    """
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = mock_html
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    steamgifts_client._client = mock_client
+
+    giveaways = await steamgifts_client.get_giveaways(giveaway_type="wishlist")
+
+    assert len(giveaways) == 1
+    assert giveaways[0]["code"] == "Real1"
+    assert giveaways[0]["game_name"] == "Real Game"
+    assert giveaways[0]["is_wishlist"] is True
+
+
+@pytest.mark.asyncio
 async def test_get_giveaways_with_search(steamgifts_client):
     """Test fetching giveaways with search query."""
     mock_response = MagicMock()
