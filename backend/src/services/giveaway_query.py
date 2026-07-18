@@ -121,7 +121,7 @@ class GiveawayQueryMixin:
             limit: maximum number of eligible giveaways to return (None = all).
 
         Returns:
-            Eligible giveaways, ordered by price descending.
+            Eligible giveaways, wishlist first, then by price descending.
         """
         now = utcnow()
         candidates = await self.giveaway_repo.get_active_unentered()
@@ -146,7 +146,9 @@ class GiveawayQueryMixin:
         counts = Counter(g.eligibility_reason or "unknown" for g in candidates)
         logger.info("eligibility_evaluated", total=len(candidates), **dict(counts))
 
-        # candidates are already ordered by price desc, so eligible is too.
+        # candidates are ordered by price desc; the stable sort moves wishlist
+        # giveaways to the front while keeping price order within each group.
+        eligible.sort(key=lambda g: not g.is_wishlist)
         return eligible[:limit] if limit else eligible
 
     async def get_active_giveaways(

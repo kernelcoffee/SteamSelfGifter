@@ -89,6 +89,11 @@ async def _process_entries(
     ``settings.safety_check_enabled`` is set, each entry is vetted inline and
     unsafe giveaways are hidden instead of entered.
 
+    Enforces the points budget: the cycle only spends once the balance has
+    accumulated past ``autojoin_start_at``, and no entry may draw it below
+    ``autojoin_stop_at``. If the balance can't be fetched it reads as 0 and
+    the cycle is skipped rather than spending blindly.
+
     Args:
         giveaway_service: GiveawayService instance
         notification_service: NotificationService instance
@@ -98,6 +103,28 @@ async def _process_entries(
         Dictionary with entry results
     """
     start_time = datetime.now(UTC)
+
+    # Points budget: spend only once the balance has accumulated past
+    # autojoin_start_at, and never draw it below autojoin_stop_at.
+    start_at = settings.autojoin_start_at or 0
+    stop_at = settings.autojoin_stop_at or 0
+    points = await giveaway_service.get_current_points()
+
+    if points < start_at:
+        logger.info(
+            "entry_processing_skipped",
+            reason="points_below_start_threshold",
+            points=points,
+            start_at=start_at,
+        )
+        await notification_service.log_activity(
+            level="info",
+            event_type="entry",
+            message=f"Accumulating points: {points}P is below the {start_at}P start threshold",
+        )
+        stats = _skipped_stats("points_below_start_threshold")
+        stats["points_available"] = points
+        return stats
 
     # Evaluate the candidate pool: this both selects the eligible giveaways and
     # records a per-giveaway eligibility reason for the ones that didn't qualify.
@@ -116,6 +143,8 @@ async def _process_entries(
         "entered": 0,
         "failed": 0,
         "points_spent": 0,
+        "points_available": points,
+        "skipped_budget": 0,
         "skipped": False,
     }
 
@@ -140,19 +169,36 @@ async def _process_entries(
     delay_min = settings.entry_delay_min or 5
     delay_max = settings.entry_delay_max or 15
 
-    for i, giveaway in enumerate(eligible):
-        # Apply delay between entries (except for first one)
-        if i > 0:
+    for giveaway in eligible:
+        # Budget floor: entering must not take the balance below stop_at.
+        # Eligible is ordered by price descending, so a cheaper giveaway
+        # later in the list may still fit — skip, don't stop.
+        if points - giveaway.price < stop_at:
+            stats["skipped_budget"] += 1
+            logger.debug(
+                "entry_skipped_budget",
+                code=giveaway.code,
+                price=giveaway.price,
+                points=points,
+                stop_at=stop_at,
+            )
+            continue
+
+        # Apply delay between entry attempts (except before the first one)
+        if stats["entered"] + stats["failed"] > 0:
             delay = random.uniform(delay_min, delay_max)
             logger.debug("entry_delay", delay=delay)
             await asyncio.sleep(delay)
 
+        entry_type = "wishlist" if giveaway.is_wishlist else "auto"
+
         try:
-            entry = await enter(giveaway.code, entry_type="auto")
+            entry = await enter(giveaway.code, entry_type=entry_type)
 
             if entry:
                 stats["entered"] += 1
                 stats["points_spent"] += entry.points_spent
+                points -= entry.points_spent
 
                 await notification_service.log_entry_success(
                     giveaway_code=giveaway.code,

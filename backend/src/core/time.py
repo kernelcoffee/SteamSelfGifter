@@ -11,3 +11,12 @@ from datetime import UTC, datetime
 def utcnow() -> datetime:
     """Current UTC time as a naive datetime (to match stored values)."""
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def from_timestamp(timestamp: int | float) -> datetime:
+    """Unix timestamp -> naive UTC datetime (to match stored values).
+
+    ``datetime.fromtimestamp()`` without a tz yields naive *local* time,
+    which silently skews comparisons against ``utcnow()`` on non-UTC hosts.
+    """
+    return datetime.fromtimestamp(timestamp, UTC).replace(tzinfo=None)

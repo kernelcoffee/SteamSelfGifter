@@ -16,6 +16,8 @@ def _autojoin_settings(**overrides):
     mock_settings.autojoin_min_score = 7
     mock_settings.autojoin_min_reviews = 100
     mock_settings.autojoin_max_game_age = None
+    mock_settings.autojoin_start_at = 0
+    mock_settings.autojoin_stop_at = 0
     mock_settings.max_entries_per_cycle = 5
     mock_settings.entry_delay_min = 0.01
     mock_settings.entry_delay_max = 0.02
@@ -25,6 +27,16 @@ def _autojoin_settings(**overrides):
     return mock_settings
 
 
+def _mock_giveaway(code="TEST123", price=50, game_name="Test Game", is_wishlist=False):
+    """Build a giveaway mock with the fields the processor touches."""
+    mock_giveaway = MagicMock()
+    mock_giveaway.code = code
+    mock_giveaway.price = price
+    mock_giveaway.game_name = game_name
+    mock_giveaway.is_wishlist = is_wishlist
+    return mock_giveaway
+
+
 @pytest.mark.asyncio
 async def test_process_giveaways_success():
     """Test successful giveaway processing."""
@@ -32,14 +44,13 @@ async def test_process_giveaways_success():
 
     mock_settings = _autojoin_settings()
 
-    mock_giveaway = MagicMock()
-    mock_giveaway.code = "TEST123"
-    mock_giveaway.game_name = "Test Game"
+    mock_giveaway = _mock_giveaway()
 
     mock_entry = MagicMock()
     mock_entry.points_spent = 50
 
     mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
     mock_giveaway_service.evaluate_and_get_eligible.return_value = [mock_giveaway]
     mock_giveaway_service.enter_giveaway.return_value = mock_entry
 
@@ -105,6 +116,7 @@ async def test_process_giveaways_no_eligible():
     mock_settings = _autojoin_settings()
 
     mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
     mock_giveaway_service.evaluate_and_get_eligible.return_value = []
 
     patcher, ctx = patch_automation_context(
@@ -128,11 +140,10 @@ async def test_process_giveaways_entry_failure():
 
     mock_settings = _autojoin_settings()
 
-    mock_giveaway = MagicMock()
-    mock_giveaway.code = "TEST123"
-    mock_giveaway.game_name = "Test Game"
+    mock_giveaway = _mock_giveaway()
 
     mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
     mock_giveaway_service.evaluate_and_get_eligible.return_value = [mock_giveaway]
     mock_giveaway_service.enter_giveaway.return_value = None  # Entry failed
 
@@ -159,11 +170,10 @@ async def test_process_giveaways_entry_error():
 
     mock_settings = _autojoin_settings()
 
-    mock_giveaway = MagicMock()
-    mock_giveaway.code = "TEST123"
-    mock_giveaway.game_name = "Test Game"
+    mock_giveaway = _mock_giveaway()
 
     mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
     mock_giveaway_service.evaluate_and_get_eligible.return_value = [mock_giveaway]
     mock_giveaway_service.enter_giveaway.side_effect = Exception("Entry error")
 
@@ -190,14 +200,13 @@ async def test_process_giveaways_safety_check_enabled():
 
     mock_settings = _autojoin_settings(safety_check_enabled=True)
 
-    mock_giveaway = MagicMock()
-    mock_giveaway.code = "TEST123"
-    mock_giveaway.game_name = "Test Game"
+    mock_giveaway = _mock_giveaway()
 
     mock_entry = MagicMock()
     mock_entry.points_spent = 50
 
     mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
     mock_giveaway_service.evaluate_and_get_eligible.return_value = [mock_giveaway]
     mock_giveaway_service.enter_giveaway_with_safety_check.return_value = mock_entry
 
@@ -217,6 +226,143 @@ async def test_process_giveaways_safety_check_enabled():
             "TEST123", entry_type="auto"
         )
         mock_giveaway_service.enter_giveaway.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_giveaways_wishlist_entry_type():
+    """Wishlist giveaways are recorded with entry_type='wishlist'."""
+    from workers.processor import process_giveaways
+
+    mock_settings = _autojoin_settings()
+
+    wishlist_ga = _mock_giveaway(code="WISH1", is_wishlist=True)
+
+    mock_entry = MagicMock()
+    mock_entry.points_spent = 50
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
+    mock_giveaway_service.evaluate_and_get_eligible.return_value = [wishlist_ga]
+    mock_giveaway_service.enter_giveaway.return_value = mock_entry
+
+    patcher, ctx = patch_automation_context(
+        "workers.processor", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, \
+         patch("workers.processor.event_manager") as mock_event_manager, \
+         patch("workers.processor.asyncio.sleep", new_callable=AsyncMock):
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await process_giveaways()
+
+        assert results["entered"] == 1
+        mock_giveaway_service.enter_giveaway.assert_awaited_once_with(
+            "WISH1", entry_type="wishlist"
+        )
+
+
+@pytest.mark.asyncio
+async def test_process_giveaways_skipped_below_start_threshold():
+    """No entries are attempted while the balance is below autojoin_start_at."""
+    from workers.processor import process_giveaways
+
+    mock_settings = _autojoin_settings(autojoin_start_at=350, autojoin_stop_at=200)
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 300  # below 350
+
+    patcher, ctx = patch_automation_context(
+        "workers.processor", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, patch("workers.processor.event_manager") as mock_event_manager:
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await process_giveaways()
+
+        assert results["skipped"] is True
+        assert results["reason"] == "points_below_start_threshold"
+        assert results["points_available"] == 300
+        assert results["entered"] == 0
+        mock_giveaway_service.evaluate_and_get_eligible.assert_not_called()
+        mock_giveaway_service.enter_giveaway.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_giveaways_budget_floor_skips_expensive():
+    """Entries that would draw the balance below autojoin_stop_at are skipped,
+    but cheaper giveaways later in the list are still entered."""
+    from workers.processor import process_giveaways
+
+    mock_settings = _autojoin_settings(autojoin_start_at=350, autojoin_stop_at=400)
+
+    expensive = _mock_giveaway(code="BIG", price=150)
+    cheap = _mock_giveaway(code="SMALL", price=50)
+
+    mock_entry = MagicMock()
+    mock_entry.points_spent = 50
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
+    mock_giveaway_service.evaluate_and_get_eligible.return_value = [expensive, cheap]
+    mock_giveaway_service.enter_giveaway.return_value = mock_entry
+
+    patcher, ctx = patch_automation_context(
+        "workers.processor", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, \
+         patch("workers.processor.event_manager") as mock_event_manager, \
+         patch("workers.processor.asyncio.sleep", new_callable=AsyncMock):
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await process_giveaways()
+
+        # 500 - 150 = 350 < 400 -> BIG skipped; 500 - 50 = 450 >= 400 -> SMALL entered
+        assert results["skipped_budget"] == 1
+        assert results["entered"] == 1
+        mock_giveaway_service.enter_giveaway.assert_awaited_once_with(
+            "SMALL", entry_type="auto"
+        )
+
+
+@pytest.mark.asyncio
+async def test_process_giveaways_budget_tracks_running_balance():
+    """The balance decreases as entries succeed, so later entries respect it."""
+    from workers.processor import process_giveaways
+
+    mock_settings = _autojoin_settings(autojoin_start_at=350, autojoin_stop_at=400)
+
+    first = _mock_giveaway(code="FIRST", price=60)
+    second = _mock_giveaway(code="SECOND", price=50)
+
+    mock_entry = MagicMock()
+    mock_entry.points_spent = 60
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
+    mock_giveaway_service.evaluate_and_get_eligible.return_value = [first, second]
+    mock_giveaway_service.enter_giveaway.return_value = mock_entry
+
+    patcher, ctx = patch_automation_context(
+        "workers.processor", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, \
+         patch("workers.processor.event_manager") as mock_event_manager, \
+         patch("workers.processor.asyncio.sleep", new_callable=AsyncMock):
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await process_giveaways()
+
+        # FIRST: 500 - 60 = 440 >= 400 -> entered, balance now 440.
+        # SECOND: 440 - 50 = 390 < 400 -> skipped by budget.
+        assert results["entered"] == 1
+        assert results["skipped_budget"] == 1
+        mock_giveaway_service.enter_giveaway.assert_awaited_once_with(
+            "FIRST", entry_type="auto"
+        )
 
 
 @pytest.mark.asyncio
