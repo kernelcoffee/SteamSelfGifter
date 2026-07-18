@@ -1,0 +1,33 @@
+# VCS / CI
+.git
+.github
+
+# Runtime data — config/ holds the live database (PHPSESSID session
+# credential); it must never enter the build context
+config
+backend/data
+
+# Local environments and caches
+env
+backend/.venv
+**/__pycache__
+backend/htmlcov
+backend/.pytest_cache
+backend/.ruff_cache
+backend/steamselfgifter_backend.egg-info
+backend/tests/scripts/output
+
+# Frontend build artifacts — node_modules from the host must not
+# overwrite the container's npm ci output (different libc/binaries)
+frontend/node_modules
+frontend/dist
+frontend/playwright-report
+frontend/test-results
+frontend/coverage
+
+# Editor / misc
+.claude
+.idea
+.vscode
+docker-compose.yml
+Dockerfile

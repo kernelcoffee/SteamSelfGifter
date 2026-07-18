@@ -29,10 +29,12 @@ WORKDIR /app
 COPY backend/src/ ./src/
 COPY backend/pyproject.toml backend/README.md ./
 
-# Install dependencies into a virtual environment
+# Install dependencies into a virtual environment, then remove the project
+# itself: the app runs from /app/src in the runtime image, and a second copy
+# in site-packages would shadow-fight with it.
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . && pip uninstall -y steamselfgifter-backend
 
 # -----------------------------------------------------------------------------
 # Stage 3: Final Runtime Image

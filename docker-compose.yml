@@ -1,7 +1,8 @@
-version: '3.8'
-
 services:
   steamselfgifter:
+    # `docker compose up` pulls the published image; use
+    # `docker compose up -d --build` to build from source instead.
+    image: ghcr.io/kernelcoffee/steamselfgifter:latest
     build:
       context: .
       dockerfile: Dockerfile
