@@ -37,6 +37,18 @@ docker run -d \
 # Access the web interface at http://localhost:8080
 ```
 
+#### Image tags
+
+| Tag | Meaning |
+|-----|---------|
+| `latest` | Last tagged release (stable channel) |
+| `X.Y.Z`, `X.Y`, `X` | Specific release versions |
+| `nightly` | Latest master build, also rebuilt daily for base-image updates |
+| `<sha>` | Exact commit builds |
+
+Releases are cut by pushing a git tag: `git tag v2.0.0 && git push origin v2.0.0`.
+Images are only published after the full test suite passes.
+
 Or with Docker Compose:
 
 ```bash
