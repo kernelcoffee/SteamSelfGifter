@@ -4,6 +4,10 @@ on:
   push:
     branches: [master]
     tags: ['v*.*.*']
+  # Nightly rebuild of master: picks up base-image (security) updates even
+  # when no code changed. Publishes the same nightly tag.
+  schedule:
+    - cron: '0 4 * * *'
 
 env:
   REGISTRY: ghcr.io
@@ -41,13 +45,21 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Tagging scheme:
+          #   release tag vX.Y.Z -> X.Y.Z, X.Y, X and latest (stable channel)
+          #   master push        -> nightly, master and the commit sha
+          # `latest` therefore always points at the last tagged release,
+          # never at an arbitrary master build (flavor latest=auto only
+          # applies it on semver tag events).
+          flavor: |
+            latest=auto
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            type=raw,value=nightly,enable={{is_default_branch}}
+            type=ref,event=branch
             type=sha,prefix=
-            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
