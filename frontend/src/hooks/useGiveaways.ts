@@ -48,60 +48,72 @@ interface GiveawaysApiResponse {
 }
 
 /**
+ * Build the endpoint URL (path + query string) for a giveaways request.
+ * Shared by useGiveaways and useInfiniteGiveaways so the filter mapping
+ * stays in one place.
+ */
+function buildGiveawaysEndpoint(
+  filters: Omit<GiveawayFilters, 'page'>,
+  limit: number,
+  offset: number
+): string {
+  const params = new URLSearchParams();
+
+  // Determine which endpoint to use based on status filter
+  let endpointPath = '/api/v1/giveaways';
+  if (filters.status === 'active') {
+    endpointPath = '/api/v1/giveaways/active';
+  } else if (filters.status === 'wishlist') {
+    endpointPath = '/api/v1/giveaways/wishlist';
+  } else if (filters.status === 'won') {
+    endpointPath = '/api/v1/giveaways/won';
+  }
+
+  // Add filter parameters
+  if (filters.status === 'entered') {
+    params.set('is_entered', 'true');
+    params.set('active_only', 'true'); // Only show active entered giveaways
+  }
+  if (filters.type && filters.type !== 'all') {
+    params.set('type', filters.type);
+  }
+  if (filters.search) {
+    params.set('search', filters.search);
+  }
+  if (filters.sort) {
+    params.set('sort', filters.sort);
+  }
+  if (filters.order) {
+    params.set('order', filters.order);
+  }
+  if (filters.minScore !== undefined && filters.minScore > 0) {
+    params.set('min_score', String(filters.minScore));
+  }
+  if (filters.safetyFilter && filters.safetyFilter !== 'all') {
+    params.set('is_safe', filters.safetyFilter === 'safe' ? 'true' : 'false');
+  }
+
+  params.set('limit', String(limit));
+  if (offset > 0) {
+    params.set('offset', String(offset));
+  }
+
+  const queryString = params.toString();
+  return `${endpointPath}${queryString ? `?${queryString}` : ''}`;
+}
+
+/**
  * Fetch giveaways with optional filters
  */
 export function useGiveaways(filters: GiveawayFilters = {}) {
   return useQuery({
     queryKey: giveawayKeys.list(filters),
     queryFn: async () => {
-      const params = new URLSearchParams();
-
-      // Determine which endpoint to use based on status filter
-      let endpointPath = '/api/v1/giveaways';
-      if (filters.status === 'active') {
-        endpointPath = '/api/v1/giveaways/active';
-      } else if (filters.status === 'wishlist') {
-        endpointPath = '/api/v1/giveaways/wishlist';
-      } else if (filters.status === 'won') {
-        endpointPath = '/api/v1/giveaways/won';
-      }
-
-      // Add filter parameters
-      if (filters.status === 'entered') {
-        params.set('is_entered', 'true');
-        params.set('active_only', 'true'); // Only show active entered giveaways
-      }
-      if (filters.type && filters.type !== 'all') {
-        params.set('type', filters.type);
-      }
-      if (filters.search) {
-        params.set('search', filters.search);
-      }
-      if (filters.sort) {
-        params.set('sort', filters.sort);
-      }
-      if (filters.order) {
-        params.set('order', filters.order);
-      }
-      if (filters.minScore !== undefined && filters.minScore > 0) {
-        params.set('min_score', String(filters.minScore));
-      }
-      if (filters.safetyFilter && filters.safetyFilter !== 'all') {
-        params.set('is_safe', filters.safetyFilter === 'safe' ? 'true' : 'false');
-      }
-
-      // Pagination
       const limit = filters.limit || 20;
       const page = filters.page || 1;
       const offset = (page - 1) * limit;
 
-      params.set('limit', String(limit));
-      if (offset > 0) {
-        params.set('offset', String(offset));
-      }
-
-      const queryString = params.toString();
-      const endpoint = `${endpointPath}${queryString ? `?${queryString}` : ''}`;
+      const endpoint = buildGiveawaysEndpoint(filters, limit, offset);
 
       const response = await api.get<GiveawaysApiResponse>(endpoint);
       if (!response.success) {
@@ -129,51 +141,9 @@ export function useInfiniteGiveaways(filters: Omit<GiveawayFilters, 'page'> = {}
   return useInfiniteQuery({
     queryKey: [...giveawayKeys.lists(), 'infinite', filters],
     queryFn: async ({ pageParam = 0 }) => {
-      const params = new URLSearchParams();
-
-      // Determine which endpoint to use based on status filter
-      let endpointPath = '/api/v1/giveaways';
-      if (filters.status === 'active') {
-        endpointPath = '/api/v1/giveaways/active';
-      } else if (filters.status === 'wishlist') {
-        endpointPath = '/api/v1/giveaways/wishlist';
-      } else if (filters.status === 'won') {
-        endpointPath = '/api/v1/giveaways/won';
-      }
-
-      // Add filter parameters
-      if (filters.status === 'entered') {
-        params.set('is_entered', 'true');
-        params.set('active_only', 'true'); // Only show active entered giveaways
-      }
-      if (filters.type && filters.type !== 'all') {
-        params.set('type', filters.type);
-      }
-      if (filters.search) {
-        params.set('search', filters.search);
-      }
-      if (filters.sort) {
-        params.set('sort', filters.sort);
-      }
-      if (filters.order) {
-        params.set('order', filters.order);
-      }
-      if (filters.minScore !== undefined && filters.minScore > 0) {
-        params.set('min_score', String(filters.minScore));
-      }
-      if (filters.safetyFilter && filters.safetyFilter !== 'all') {
-        params.set('is_safe', filters.safetyFilter === 'safe' ? 'true' : 'false');
-      }
-
-      // Pagination
       const limit = filters.limit || 20;
-      params.set('limit', String(limit));
-      if (pageParam > 0) {
-        params.set('offset', String(pageParam));
-      }
 
-      const queryString = params.toString();
-      const endpoint = `${endpointPath}${queryString ? `?${queryString}` : ''}`;
+      const endpoint = buildGiveawaysEndpoint(filters, limit, pageParam);
 
       const response = await api.get<GiveawaysApiResponse>(endpoint);
       if (!response.success) {
