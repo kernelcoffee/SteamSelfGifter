@@ -56,8 +56,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 COPY backend/src/ ./src/
 
-# Create config directory for persistent data (database + logs)
-RUN mkdir -p /config
+# Create config directory for persistent data (database + logs), and the
+# unprivileged user the backend runs as when PUID/PGID are set
+RUN mkdir -p /config \
+    && useradd --system --no-create-home --shell /usr/sbin/nologin app
 
 # Copy frontend build to nginx html directory
 COPY --from=frontend-build /frontend/dist /usr/share/nginx/html
@@ -133,6 +135,7 @@ stderr_logfile_maxbytes=0
 [program:backend]
 command=/opt/venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 directory=/app/src
+user=%(ENV_BACKEND_USER)s
 autostart=true
 autorestart=true
 stdout_logfile=/dev/stdout
@@ -141,6 +144,30 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 SUPERVISOR_CONF
 
+# Entrypoint: optionally drop the backend to an unprivileged user.
+# Set PUID (and optionally PGID) to run the backend as that uid/gid and
+# chown /config accordingly — useful for Docker where container-root is
+# real root. Leave unset for the default root mode (the right choice for
+# rootless podman, where container-root already maps to the host user).
+COPY <<'ENTRYPOINT_SH' /usr/local/bin/docker-entrypoint.sh
+#!/bin/sh
+set -e
+
+if [ -n "$PUID" ]; then
+    PGID="${PGID:-$PUID}"
+    groupmod -o -g "$PGID" app
+    usermod -o -u "$PUID" -g "$PGID" app
+    chown -R "$PUID:$PGID" /config
+    export BACKEND_USER=app
+    echo "entrypoint: backend will run as uid=$PUID gid=$PGID"
+else
+    export BACKEND_USER=root
+fi
+
+exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
+ENTRYPOINT_SH
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Expose port 80 (nginx serves both frontend and proxies to backend)
 EXPOSE 80
 
@@ -148,5 +175,6 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost/api/v1/system/health || exit 1
 
-# Start supervisor (manages nginx + uvicorn)
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]
+# Start via the entrypoint (handles optional PUID/PGID, then runs
+# supervisord which manages nginx + uvicorn)
+CMD ["/usr/local/bin/docker-entrypoint.sh"]
