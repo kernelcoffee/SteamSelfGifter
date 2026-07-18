@@ -97,6 +97,7 @@ export interface Settings {
   autojoin_min_score: number;
   autojoin_min_reviews: number;
   autojoin_max_game_age: number | null;
+  wishlist_priority_enabled: boolean;
   scan_interval_minutes: number;
   max_entries_per_cycle: number;
   automation_enabled: boolean;

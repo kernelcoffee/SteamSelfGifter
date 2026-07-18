@@ -61,6 +61,7 @@ class GiveawayQueryMixin:
         min_reviews: int | None = None,
         max_game_age: int | None = None,
         limit: int = 50,
+        wishlist_priority: bool = True,
     ) -> list[Giveaway]:
         """
         Get eligible giveaways based on criteria.
@@ -99,6 +100,7 @@ class GiveawayQueryMixin:
             min_reviews=min_reviews,
             max_game_age=max_game_age,
             limit=limit,
+            wishlist_priority=wishlist_priority,
         )
 
         return giveaways
@@ -148,7 +150,8 @@ class GiveawayQueryMixin:
 
         # candidates are ordered by price desc; the stable sort moves wishlist
         # giveaways to the front while keeping price order within each group.
-        eligible.sort(key=lambda g: not g.is_wishlist)
+        if criteria.wishlist_priority:
+            eligible.sort(key=lambda g: not g.is_wishlist)
         return eligible[:limit] if limit else eligible
 
     async def get_active_giveaways(

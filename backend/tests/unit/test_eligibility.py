@@ -133,6 +133,13 @@ def test_wishlist_bypasses_price_and_game_filters():
     assert evaluate_eligibility(_gw(is_wishlist=True, price=1), None, crit, NOW) == ELIGIBLE
 
 
+def test_wishlist_no_bypass_when_priority_disabled():
+    # With the toggle off, wishlist giveaways pass the same filters as
+    # everything else.
+    crit = EligibilityCriteria(min_price=100, wishlist_priority=False)
+    assert evaluate_eligibility(_gw(is_wishlist=True, price=1), None, crit, NOW) == PRICE_BELOW_MIN
+
+
 def test_wishlist_still_respects_expired_hidden_entered():
     crit = EligibilityCriteria(min_price=10)
     assert evaluate_eligibility(
@@ -227,6 +234,7 @@ def _service(session):
     dict(min_price=10),                                                # no game criteria
     dict(min_price=10, max_price=70, min_score=7, min_reviews=1000),   # + max price
     dict(min_price=0, min_score=0, min_reviews=0),                     # zero thresholds
+    dict(min_price=10, min_score=7, min_reviews=1000, wishlist_priority=False),  # toggle off
 ])
 @pytest.mark.asyncio
 async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
@@ -246,17 +254,25 @@ async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
             "min_score": crit_kwargs.get("min_score"),
             "min_reviews": crit_kwargs.get("min_reviews"),
             "max_game_age": crit_kwargs.get("max_game_age"),
+            "wishlist_priority": crit_kwargs.get("wishlist_priority", True),
         })
         evaluated = await service.evaluate_and_get_eligible(criteria)
         eval_codes = {g.code for g in evaluated}
 
         assert eval_codes == sql_codes, f"mismatch for {crit_kwargs}"
-        # Wishlist rows bypass the filters, so they are always in the set.
-        assert {"wishbad", "wishnogame"} <= eval_codes
         assert "wishhidden" not in eval_codes
-        # Ordering: wishlist first, then price descending within each group.
-        keys = [(not g.is_wishlist, -g.price) for g in evaluated]
-        assert keys == sorted(keys)
+        if criteria.wishlist_priority:
+            # Wishlist rows bypass the filters, so they are always in the set.
+            assert {"wishbad", "wishnogame"} <= eval_codes
+            # Ordering: wishlist first, then price descending within each group.
+            keys = [(not g.is_wishlist, -g.price) for g in evaluated]
+            assert keys == sorted(keys)
+        else:
+            # Toggle off: wishlist rows get no exemption from the filters.
+            assert "wishbad" not in eval_codes      # fails price + score filters
+            assert "wishnogame" not in eval_codes   # no game data
+            prices = [g.price for g in evaluated]
+            assert prices == sorted(prices, reverse=True)
 
 
 # ----------------------------------------------------------------------------

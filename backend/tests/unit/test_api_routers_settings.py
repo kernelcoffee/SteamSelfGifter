@@ -33,6 +33,7 @@ def create_mock_settings():
     settings.autojoin_min_price = 10
     settings.autojoin_min_score = 7
     settings.autojoin_min_reviews = 1000
+    settings.wishlist_priority_enabled = True
     settings.scan_interval_minutes = 30
     settings.max_entries_per_cycle = 10
     settings.automation_enabled = True

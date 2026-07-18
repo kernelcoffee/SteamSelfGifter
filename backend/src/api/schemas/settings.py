@@ -95,6 +95,11 @@ class SettingsBase(BaseModel):
         ge=1,
         examples=[5],
     )
+    wishlist_priority_enabled: bool = Field(
+        default=True,
+        description="Wishlist giveaways bypass autojoin filters and are entered first",
+        examples=[True],
+    )
 
     # Scheduler Settings
     scan_interval_minutes: int = Field(
@@ -298,6 +303,10 @@ class SettingsUpdate(BaseModel):
         default=None,
         description="Maximum game age in years (None = no limit)",
         ge=1,
+    )
+    wishlist_priority_enabled: bool | None = Field(
+        default=None,
+        description="Wishlist giveaways bypass autojoin filters and are entered first",
     )
 
     # Scheduler Settings

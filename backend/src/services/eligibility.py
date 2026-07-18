@@ -56,6 +56,9 @@ class EligibilityCriteria:
 
     ``min_score``/``min_reviews``/``max_game_age`` are optional: when set, they
     require cached game data (mirroring the JOIN in the SQL query).
+    ``wishlist_priority`` controls the wishlist exception described in the
+    module docstring; when off, wishlist giveaways pass the same filters as
+    everything else.
     """
 
     min_price: int = 0
@@ -63,6 +66,7 @@ class EligibilityCriteria:
     min_score: int | None = None
     min_reviews: int | None = None
     max_game_age: int | None = None
+    wishlist_priority: bool = True
 
     @property
     def needs_game_data(self) -> bool:
@@ -98,8 +102,9 @@ def evaluate_eligibility(giveaway: Any, game: Any, criteria: EligibilityCriteria
         return ENTERED
 
     # Wishlist games are wanted by definition: they bypass the price and
-    # game-quality filters (matches the `is_wishlist OR (...)` in the SQL).
-    if giveaway.is_wishlist:
+    # game-quality filters (matches the `is_wishlist OR (...)` in the SQL),
+    # unless the user turned wishlist priority off.
+    if criteria.wishlist_priority and giveaway.is_wishlist:
         return ELIGIBLE
 
     # Price range — matches `price >= min_price [AND price <= max_price]`.

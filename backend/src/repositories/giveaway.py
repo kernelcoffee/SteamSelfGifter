@@ -171,6 +171,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         max_price: int | None = None,
         max_game_age: int | None = None,
         limit: int | None = None,
+        wishlist_priority: bool = True,
     ) -> list[Giveaway]:
         """
         Get eligible giveaways based on autojoin criteria.
@@ -182,8 +183,10 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         - Optionally: minimum review score and count (requires game data)
         - Optionally: maximum game age in years
 
-        Wishlist giveaways bypass the price and game-quality filters (the
-        user explicitly wants those games) and sort before everything else.
+        When ``wishlist_priority`` is on (default), wishlist giveaways bypass
+        the price and game-quality filters (the user explicitly wants those
+        games) and sort before everything else. When off, they pass the same
+        filters as everything else.
 
         Args:
             min_price: Minimum giveaway price in points
@@ -250,10 +253,15 @@ class GiveawayRepository(BaseRepository[Giveaway]):
                 min_release_date = f"{now.year - max_game_age}-01-01"
                 filter_conditions.append(Game.release_date >= min_release_date)
 
-        query = query.where(
-            and_(*base_conditions),
-            or_(self.model.is_wishlist == True, and_(*filter_conditions)),  # noqa: E712
-        ).order_by(self.model.is_wishlist.desc(), self.model.price.desc())
+        if wishlist_priority:
+            query = query.where(
+                and_(*base_conditions),
+                or_(self.model.is_wishlist == True, and_(*filter_conditions)),  # noqa: E712
+            ).order_by(self.model.is_wishlist.desc(), self.model.price.desc())
+        else:
+            query = query.where(
+                and_(*base_conditions), and_(*filter_conditions)
+            ).order_by(self.model.price.desc())
 
         if limit:
             query = query.limit(limit)

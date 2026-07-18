@@ -135,6 +135,7 @@ async def _process_entries(
         min_score=settings.autojoin_min_score,
         min_reviews=settings.autojoin_min_reviews,
         max_game_age=settings.autojoin_max_game_age,
+        wishlist_priority=bool(settings.wishlist_priority_enabled),
     )
     eligible = await giveaway_service.evaluate_and_get_eligible(criteria, limit=max_entries)
 

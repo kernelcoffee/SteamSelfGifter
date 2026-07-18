@@ -258,6 +258,7 @@ class SettingsService:
             autojoin_min_price=10,  # Integer default
             autojoin_min_score=7,   # Integer default
             autojoin_min_reviews=1000,  # Integer default
+            wishlist_priority_enabled=True,
             # Reset scheduler settings
             scan_interval_minutes=30,
             max_entries_per_cycle=None,  # None = unlimited

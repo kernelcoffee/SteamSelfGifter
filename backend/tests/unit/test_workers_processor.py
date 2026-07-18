@@ -18,6 +18,7 @@ def _autojoin_settings(**overrides):
     mock_settings.autojoin_max_game_age = None
     mock_settings.autojoin_start_at = 0
     mock_settings.autojoin_stop_at = 0
+    mock_settings.wishlist_priority_enabled = True
     mock_settings.max_entries_per_cycle = 5
     mock_settings.entry_delay_min = 0.01
     mock_settings.entry_delay_max = 0.02
