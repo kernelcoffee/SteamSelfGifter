@@ -105,6 +105,10 @@ def test_giveaway_response_win_chance():
     assert mk(1, 10000).win_chance == 0.01
     assert mk(5, 2).win_chance == 100.0      # more copies than entries -> capped
     assert mk(1, 3).win_chance == 33.33      # rounded to 2 decimals
+    # Long shots keep meaningful precision instead of collapsing to 0%
+    assert mk(1, 25000).win_chance == 0.004
+    assert mk(1, 80000).win_chance == 0.0013
+    assert mk(1, 10_000_000).win_chance == 0.0001  # display floor
 
     # win_chance is serialized in API payloads
     assert mk(1, 4).model_dump()["win_chance"] == 25.0

@@ -122,10 +122,19 @@ class GiveawayResponse(GiveawayBase):
     @computed_field(description="Win chance in percent (copies/entries*100) as of the last scan")
     @property
     def win_chance(self) -> float:
-        """Chance to win in percent; 100 when nobody has entered yet."""
+        """Chance to win in percent; 100 when nobody has entered yet.
+
+        Adaptive precision: two decimals for ordinary odds, four for
+        long shots so huge giveaways don't all collapse to 0%.
+        """
         if self.entries <= 0:
             return 100.0
-        return min(100.0, round(self.copies * 100.0 / self.entries, 2))
+        raw = self.copies * 100.0 / self.entries
+        if raw >= 100.0:
+            return 100.0
+        if raw >= 1.0:
+            return round(raw, 2)
+        return max(round(raw, 4), 0.0001)
 
     discovered_at: datetime = Field(
         ...,

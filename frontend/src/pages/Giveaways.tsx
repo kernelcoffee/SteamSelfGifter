@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users } from 'lucide-react';
 import { SiSteam } from 'react-icons/si';
 import { Card, Button, Badge, Input, CardSkeleton } from '@/components/common';
 import { useInfiniteGiveaways, useEnterGiveaway, useHideGiveaway, useUnhideGiveaway, useRemoveEntry, useCheckGiveawaySafety, useHideOnSteamGifts, usePostComment, type GiveawayFilters } from '@/hooks';
@@ -519,16 +519,35 @@ function GiveawayCard({ giveaway, onEnter, onHide, onUnhide, onRemoveEntry, onCh
               {timeLeft}
             </span>
           )}
-          {giveaway.entries > 0 && !isExpired && (
+          {!isExpired && (
             <span
               className="flex items-center gap-1"
-              title={`${giveaway.entries} entries for ${giveaway.copies} ${giveaway.copies > 1 ? 'copies' : 'copy'} (as of last scan)`}
+              title={
+                giveaway.entries > 0
+                  ? `${giveaway.entries} entries for ${giveaway.copies} ${giveaway.copies > 1 ? 'copies' : 'copy'} (as of last scan)`
+                  : 'No entries recorded yet'
+              }
             >
               <Percent size={14} />
               {giveaway.win_chance}%
             </span>
           )}
         </div>
+
+        {/* Entries */}
+        {!isExpired && (
+          <div className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+            <Users size={14} />
+            {giveaway.entries > 0 ? (
+              <span>
+                {giveaway.entries.toLocaleString()} {giveaway.entries === 1 ? 'entry' : 'entries'}
+                {giveaway.copies > 1 && ` · ${giveaway.copies} copies`}
+              </span>
+            ) : (
+              <span>No entries recorded yet</span>
+            )}
+          </div>
+        )}
 
         {/* Steam Reviews */}
         {giveaway.game_review_summary && (
