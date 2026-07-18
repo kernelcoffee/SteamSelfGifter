@@ -29,6 +29,17 @@ FORBIDDEN_WORDS = (" ban", " fake", " bot", " not enter", " don't enter", " do n
 GOOD_WORDS = (" bank", " banan", " both", " band", " banner", " bang")
 
 
+def has_no_results_marker(html: str) -> bool:
+    """True when the page explicitly says the search matched nothing.
+
+    SteamGifts renders ``<div class="pagination pagination--no-results">``
+    ("No results were found.") on legitimately empty result pages. Zero parsed
+    giveaways WITHOUT this marker means the markup has likely changed and the
+    scraper is broken (scrape drift), not that the list is empty.
+    """
+    return "pagination--no-results" in html
+
+
 def extract_xsrf_token(html: str) -> str | None:
     """Extract the XSRF token embedded in any authenticated page, or None."""
     soup = BeautifulSoup(html, "html.parser")

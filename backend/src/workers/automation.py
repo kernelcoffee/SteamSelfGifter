@@ -93,8 +93,10 @@ async def automation_cycle() -> dict[str, Any]:
             logger.info("automation_step", step="scan_wishlist")
 
             try:
+                # Same page cap as the regular scan; the sync stops early at
+                # the end of the list, so small wishlists cost one request.
                 wishlist_new, wishlist_updated = await giveaway_service.sync_giveaways(
-                    pages=1,
+                    pages=max_pages,
                     giveaway_type="wishlist"
                 )
                 results["wishlist"] = {

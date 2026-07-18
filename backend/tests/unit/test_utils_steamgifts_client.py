@@ -285,11 +285,49 @@ async def test_get_giveaways_skips_pinned_featured_section(steamgifts_client):
 
 
 @pytest.mark.asyncio
+async def test_get_giveaways_raises_on_scrape_drift(steamgifts_client):
+    """Zero parsed rows without the no-results marker raises instead of
+    silently returning an empty list."""
+    from utils.steamgifts_client import SteamGiftsScrapeDriftError
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = "<html><body><div>some unrecognizable page</div></body></html>"
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    steamgifts_client._client = mock_client
+
+    with pytest.raises(SteamGiftsScrapeDriftError):
+        await steamgifts_client.get_giveaways(page=1)
+
+
+@pytest.mark.asyncio
+async def test_get_giveaways_empty_with_marker_is_fine(steamgifts_client):
+    """A legitimately empty result page returns [] without raising."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.text = (
+        '<html><body><div class="pagination pagination--no-results">'
+        "No results were found.</div></body></html>"
+    )
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+
+    steamgifts_client._client = mock_client
+
+    giveaways = await steamgifts_client.get_giveaways(giveaway_type="wishlist")
+    assert giveaways == []
+
+
+@pytest.mark.asyncio
 async def test_get_giveaways_with_search(steamgifts_client):
     """Test fetching giveaways with search query."""
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.text = "<html><body></body></html>"
+    mock_response.text = '<html><body><div class="pagination pagination--no-results">No results were found.</div></body></html>'
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)
@@ -772,7 +810,7 @@ class TestDLCScanning:
         """Test get_giveaways with dlc_only parameter."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = "<html><body></body></html>"
+        mock_response.text = '<html><body><div class="pagination pagination--no-results">No results were found.</div></body></html>'
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
@@ -791,7 +829,7 @@ class TestDLCScanning:
         """Test get_giveaways with min_copies parameter."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = "<html><body></body></html>"
+        mock_response.text = '<html><body><div class="pagination pagination--no-results">No results were found.</div></body></html>'
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)
@@ -810,7 +848,7 @@ class TestDLCScanning:
         """Test get_giveaways with both dlc_only and min_copies."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = "<html><body></body></html>"
+        mock_response.text = '<html><body><div class="pagination pagination--no-results">No results were found.</div></body></html>'
 
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(return_value=mock_response)

@@ -63,6 +63,16 @@ class TestWishlistPageFixture:
         assert parser.extract_xsrf_token(wishlist_html) == "deadbeefdeadbeefdeadbeefdeadbeef"
 
 
+class TestNoResultsMarker:
+    def test_marker_present_on_empty_search_fixture(self):
+        html = (FIXTURES / "empty_search_page.html").read_text(encoding="utf-8")
+        assert parser.has_no_results_marker(html) is True
+        assert parser.parse_giveaway_list(html) == []
+
+    def test_marker_absent_on_populated_page(self, wishlist_html):
+        assert parser.has_no_results_marker(wishlist_html) is False
+
+
 class TestParserEdgeCases:
     def test_empty_page(self):
         assert parser.parse_giveaway_list("<html><body></body></html>") == []

@@ -39,6 +39,15 @@ class SteamGiftsUnsafeError(SteamGiftsError):
         self.safety_score = safety_score
 
 
+class SteamGiftsScrapeDriftError(SteamGiftsError):
+    """Raised when a listing page yields zero giveaways but lacks the
+    'no results' marker — the site markup has likely changed and the
+    scraper needs updating. Never raised for legitimately empty lists."""
+
+    def __init__(self, message: str, page: int = 0):
+        super().__init__(message, code="SG_006", details={"page": page})
+
+
 
 class SteamGiftsClient:
     """
@@ -441,9 +450,27 @@ class SteamGiftsClient:
                 details={"status_code": response.status_code},
             )
 
-        return parser.parse_giveaway_list(
+        giveaways = parser.parse_giveaway_list(
             response.text, mark_wishlist=giveaway_type == "wishlist"
         )
+
+        # Zero rows without the explicit "No results were found." marker means
+        # the page is unrecognizable — fail loudly instead of silently
+        # returning an empty list (see the Featured-section regression).
+        if not giveaways and not parser.has_no_results_marker(response.text):
+            logger.warning(
+                "scrape_drift_suspected",
+                page=page,
+                giveaway_type=giveaway_type,
+                html_size=len(response.text),
+            )
+            raise SteamGiftsScrapeDriftError(
+                "Giveaway page parsed to zero rows without a no-results marker "
+                "- SteamGifts markup may have changed",
+                page=page,
+            )
+
+        return giveaways
 
     async def enter_giveaway(self, giveaway_code: str) -> bool:
         """

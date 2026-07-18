@@ -10,7 +10,11 @@ from core.time import utcnow
 from models.base import Base
 from services.game_service import GameService
 from services.giveaway_service import GiveawayService
-from utils.steamgifts_client import SteamGiftsClient, SteamGiftsError
+from utils.steamgifts_client import (
+    SteamGiftsClient,
+    SteamGiftsError,
+    SteamGiftsScrapeDriftError,
+)
 
 
 # Test database setup
@@ -177,6 +181,115 @@ async def test_sync_giveaways_handles_errors(test_db, mock_sg_client, mock_game_
         # Should have synced first page only
         assert new == 1
         assert updated == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_giveaways_stops_early_on_empty_page(test_db, mock_sg_client, mock_game_service):
+    """An empty page ends the scan without fetching the remaining pages."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        # Page 1 is full (list may continue), page 2 is empty (end of list),
+        # so pages 3-5 must never be fetched. A short page also ends the
+        # scan; that path is covered by the unstick tests below.
+        full_page = [
+            {"code": f"GA{i:03d}", "game_name": "Test", "price": 50} for i in range(50)
+        ]
+        mock_sg_client.get_giveaways = AsyncMock(side_effect=[full_page, []])
+
+        new, updated = await service.sync_giveaways(pages=5)
+
+        assert new == 50
+        assert mock_sg_client.get_giveaways.await_count == 2  # not 5
+
+
+def _wishlist_ga(code, game_name="Wanted Game"):
+    """Scraped wishlist giveaway dict as the client returns it."""
+    return {
+        "code": code,
+        "game_name": game_name,
+        "price": 25,
+        "end_time": utcnow() + timedelta(days=1),
+        "is_wishlist": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_wishlist_unsticks_removed_games(test_db, mock_sg_client, mock_game_service):
+    """After a complete wishlist scan, active giveaways that no longer appear
+    lose the wishlist flag; expired ones keep it as history."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        await service.giveaway_repo.create(
+            code="GONE1", url="http://x/GONE1", game_name="Removed Game",
+            price=10, end_time=utcnow() + timedelta(days=1), is_wishlist=True,
+        )
+        await service.giveaway_repo.create(
+            code="EXPIR", url="http://x/EXPIR", game_name="Old Win",
+            price=10, end_time=utcnow() - timedelta(days=1), is_wishlist=True,
+        )
+        await session.commit()
+
+        # A short page (< 50 rows) means the complete list was seen.
+        mock_sg_client.get_giveaways = AsyncMock(return_value=[_wishlist_ga("STILL")])
+
+        await service.sync_giveaways(pages=3, giveaway_type="wishlist")
+
+        assert (await service.giveaway_repo.get_by_code("GONE1")).is_wishlist is False
+        assert (await service.giveaway_repo.get_by_code("EXPIR")).is_wishlist is True
+        assert (await service.giveaway_repo.get_by_code("STILL")).is_wishlist is True
+
+
+@pytest.mark.asyncio
+async def test_sync_wishlist_no_unstick_after_partial_scan(test_db, mock_sg_client, mock_game_service):
+    """A scan that hits the page cap mid-list (full last page) must not
+    un-stick anything — the absent giveaways may be on unscanned pages."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        await service.giveaway_repo.create(
+            code="GONE1", url="http://x/GONE1", game_name="Maybe Removed",
+            price=10, end_time=utcnow() + timedelta(days=1), is_wishlist=True,
+        )
+        await session.commit()
+
+        # A full page of 50: the list continues past the page cap.
+        full_page = [_wishlist_ga(f"GA{i:03d}") for i in range(50)]
+        mock_sg_client.get_giveaways = AsyncMock(return_value=full_page)
+
+        await service.sync_giveaways(pages=1, giveaway_type="wishlist")
+
+        assert (await service.giveaway_repo.get_by_code("GONE1")).is_wishlist is True
+
+
+@pytest.mark.asyncio
+async def test_sync_drift_logs_activity_and_skips_unstick(test_db, mock_sg_client, mock_game_service):
+    """Scrape drift aborts the scan, writes a warning to the activity log and
+    never un-sticks wishlist flags."""
+    from repositories.activity_log import ActivityLogRepository
+
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        await service.giveaway_repo.create(
+            code="KEEP1", url="http://x/KEEP1", game_name="Wanted",
+            price=10, end_time=utcnow() + timedelta(days=1), is_wishlist=True,
+        )
+        await session.commit()
+
+        mock_sg_client.get_giveaways = AsyncMock(
+            side_effect=SteamGiftsScrapeDriftError("markup changed", page=1)
+        )
+
+        new, updated = await service.sync_giveaways(pages=3, giveaway_type="wishlist")
+
+        assert (new, updated) == (0, 0)
+        assert (await service.giveaway_repo.get_by_code("KEEP1")).is_wishlist is True
+
+        logs = await ActivityLogRepository(session).get_all()
+        assert any("markup" in log.message for log in logs)
+        assert any(log.level == "warning" for log in logs)
 
 
 @pytest.mark.asyncio
