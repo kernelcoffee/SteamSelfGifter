@@ -44,11 +44,27 @@ Or with Docker Compose:
 git clone https://github.com/kernelcoffee/SteamSelfGifter.git
 cd SteamSelfGifter
 
-# Start with Docker Compose
-docker-compose up -d
+# Pulls the published image and starts it
+docker compose up -d
+
+# ...or build from source instead of pulling
+docker compose up -d --build
 
 # Access the web interface at http://localhost:8080
 ```
+
+> **Note:** after pulling a new image or rebuilding, use
+> `docker compose up -d --force-recreate` so the running container is
+> actually replaced (some engines, e.g. podman-compose, keep the old
+> container otherwise).
+
+#### Running the backend as a non-root user (Docker)
+
+By default everything in the container runs as root, which is fine for
+rootless podman (container-root maps to your own host user). On real Docker,
+set `PUID`/`PGID` (see the commented lines in `docker-compose.yml`) to run
+the backend as that uid/gid — `/config` is chown'd accordingly on startup so
+the database and logs end up owned by your host user instead of root.
 
 ### Manual Installation
 
@@ -92,6 +108,21 @@ npm run dev  # Development server at http://localhost:5173
 4. Find **Cookies** → `www.steamgifts.com`
 5. Copy the `PHPSESSID` value
 6. Paste it in the Settings page
+
+## Security
+
+**The web interface and API have no authentication** — anyone who can reach
+the port controls the bot and can read your SteamGifts session. The app is
+designed to run on a trusted home network (LAN) only:
+
+- Don't expose the port to the internet. If you need remote access, put it
+  behind a reverse proxy with authentication (Authelia, basic auth, ...) or
+  access it over a VPN/tunnel (WireGuard, Tailscale, ...).
+- Your `PHPSESSID` is stored in plain text in the SQLite database inside
+  `/config` (or `./config` with the provided compose file). Treat that
+  directory as a secret: don't commit it, don't share it.
+- The `PHPSESSID` cookie is your logged-in SteamGifts session. Anyone who
+  obtains it can act as you on SteamGifts until it expires.
 
 ## Architecture
 
