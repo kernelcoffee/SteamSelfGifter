@@ -367,7 +367,7 @@ async def test_parse_giveaway_element_success(steamgifts_client):
     <div class="giveaway__row-inner-wrap">
         <a href="/giveaway/XyZ99/awesome-game" class="giveaway__heading__name">Awesome Game</a>
         <span class="giveaway__heading__thin">(75P)</span>
-        <span class="giveaway__links">250 entries</span>
+        <div class="giveaway__links"><span>250 entries</span></div>
         <span data-timestamp="1640000000"></span>
         <a class="giveaway_image_thumbnail" style="background-image:url('https://cdn.akamai.steamstatic.com/steam/apps/123456/header.jpg')"></a>
     </div>

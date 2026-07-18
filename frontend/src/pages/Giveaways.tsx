@@ -1,20 +1,35 @@
 import { useState, useEffect, useRef } from 'react';
-import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users } from 'lucide-react';
 import { SiSteam } from 'react-icons/si';
 import { Card, Button, Badge, Input, CardSkeleton } from '@/components/common';
 import { useInfiniteGiveaways, useEnterGiveaway, useHideGiveaway, useUnhideGiveaway, useRemoveEntry, useCheckGiveawaySafety, useHideOnSteamGifts, usePostComment, type GiveawayFilters } from '@/hooks';
 import { showSuccess, showError } from '@/stores/uiStore';
+import { useGiveawayFiltersStore } from '@/stores/giveawayFiltersStore';
 import type { Giveaway } from '@/types';
+
+// Stepped slider stops. Chance: first notch = Any, then 0.01% up to 100%.
+const CHANCE_STOPS = [0, 0.01, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100];
+// Time remaining (minutes): 5min up to 24h, last notch = Any.
+const ENDING_STOPS = [5, 15, 30, 60, 120, 180, 360, 720, 1440, 0];
+
+const formatChanceStop = (v: number) => (v === 0 ? 'Any' : `≥${v}%`);
+const formatEndingStop = (v: number) =>
+  v === 0 ? 'Any' : v < 60 ? `${v}min` : `${v / 60}h`;
+
+// Map a stored filter value back to its slider notch (fallback: Any).
+const stopIndex = (stops: number[], value: number | undefined, fallback: number) => {
+  const idx = stops.indexOf(value ?? 0);
+  return idx === -1 ? fallback : idx;
+};
 
 /**
  * Giveaways page
  * Browse, filter, and enter giveaways
  */
 export function Giveaways() {
-  const [filters, setFilters] = useState<Omit<GiveawayFilters, 'page'>>({
-    status: 'active',
-    limit: 20,
-  });
+  // Filters persist across visits (localStorage-backed store)
+  const filters = useGiveawayFiltersStore((s) => s.filters);
+  const setFilters = useGiveawayFiltersStore((s) => s.setFilters);
   const [searchInput, setSearchInput] = useState('');
 
   const {
@@ -66,15 +81,23 @@ export function Giveaways() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    setFilters(prev => ({ ...prev, search: searchInput }));
+    setFilters({ search: searchInput });
   };
 
   const handleStatusFilter = (status: GiveawayFilters['status']) => {
-    setFilters(prev => ({ ...prev, status }));
+    setFilters({ status });
   };
 
   const handleScoreFilter = (score: number) => {
-    setFilters(prev => ({ ...prev, minScore: score }));
+    setFilters({ minScore: score });
+  };
+
+  const handleChanceFilter = (minChance: number) => {
+    setFilters({ minChance });
+  };
+
+  const handleEndingWithinFilter = (endingWithin: number) => {
+    setFilters({ endingWithin });
   };
 
   const handleEnter = async (giveaway: Giveaway) => {
@@ -145,7 +168,7 @@ export function Giveaways() {
   };
 
   const handleSafetyFilter = (safetyFilter: 'all' | 'safe' | 'unsafe') => {
-    setFilters(prev => ({ ...prev, safetyFilter }));
+    setFilters({ safetyFilter });
   };
 
   if (error) {
@@ -231,6 +254,68 @@ export function Giveaways() {
             {(filters.minScore ?? 0) > 0 && (
               <button
                 onClick={() => handleScoreFilter(0)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                title="Clear filter"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Win Chance Filter (slider: Any, then 0.01% .. 100%) */}
+        {(filters.status === 'active' || filters.status === 'wishlist') && (
+          <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
+            <Percent size={16} className="text-blue-500" />
+            <span className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
+              Min Chance:
+            </span>
+            <input
+              type="range"
+              min="0"
+              max={CHANCE_STOPS.length - 1}
+              step="1"
+              value={stopIndex(CHANCE_STOPS, filters.minChance, 0)}
+              onChange={(e) => handleChanceFilter(CHANCE_STOPS[Number(e.target.value)])}
+              className="w-24 h-2 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-light"
+            />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 w-14 text-center">
+              {formatChanceStop(filters.minChance ?? 0)}
+            </span>
+            {(filters.minChance ?? 0) > 0 && (
+              <button
+                onClick={() => handleChanceFilter(0)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                title="Clear filter"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Time Remaining Filter (slider: 5min .. 24h, last notch = Any) */}
+        {(filters.status === 'active' || filters.status === 'wishlist') && (
+          <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
+            <Clock size={16} className="text-orange-500" />
+            <span className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
+              Ending in:
+            </span>
+            <input
+              type="range"
+              min="0"
+              max={ENDING_STOPS.length - 1}
+              step="1"
+              value={stopIndex(ENDING_STOPS, filters.endingWithin, ENDING_STOPS.length - 1)}
+              onChange={(e) => handleEndingWithinFilter(ENDING_STOPS[Number(e.target.value)])}
+              className="w-24 h-2 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-light"
+            />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 w-12 text-center">
+              {formatEndingStop(filters.endingWithin ?? 0)}
+            </span>
+            {(filters.endingWithin ?? 0) > 0 && (
+              <button
+                onClick={() => handleEndingWithinFilter(0)}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
                 title="Clear filter"
               >
@@ -434,7 +519,35 @@ function GiveawayCard({ giveaway, onEnter, onHide, onUnhide, onRemoveEntry, onCh
               {timeLeft}
             </span>
           )}
+          {!isExpired && (
+            <span
+              className="flex items-center gap-1"
+              title={
+                giveaway.entries > 0
+                  ? `${giveaway.entries} entries for ${giveaway.copies} ${giveaway.copies > 1 ? 'copies' : 'copy'} (as of last scan)`
+                  : 'No entries recorded yet'
+              }
+            >
+              <Percent size={14} />
+              {giveaway.win_chance}%
+            </span>
+          )}
         </div>
+
+        {/* Entries */}
+        {!isExpired && (
+          <div className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+            <Users size={14} />
+            {giveaway.entries > 0 ? (
+              <span>
+                {giveaway.entries.toLocaleString()} {giveaway.entries === 1 ? 'entry' : 'entries'}
+                {giveaway.copies > 1 && ` · ${giveaway.copies} copies`}
+              </span>
+            ) : (
+              <span>No entries recorded yet</span>
+            )}
+          </div>
+        )}
 
         {/* Steam Reviews */}
         {giveaway.game_review_summary && (

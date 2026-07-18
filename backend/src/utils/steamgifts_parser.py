@@ -183,14 +183,15 @@ def parse_giveaway_element(element: Any) -> dict[str, Any] | None:
         if match:
             copies = int(match.group(1))
 
-    # Extract entries count
+    # Extract entries count. The links row is a div (not a span) containing
+    # e.g. "1,234 entries 5 comments" — match digits with thousands commas.
     entries = 0
-    entries_element = element.find("span", class_="giveaway__links")
+    entries_element = element.find("div", class_="giveaway__links")
     if entries_element:
-        entries_text = entries_element.text.strip()
-        match = re.search(r"(\d+)\s+entries", entries_text)
+        entries_text = entries_element.get_text(" ", strip=True)
+        match = re.search(r"([\d,]+)\s+entr", entries_text)
         if match:
-            entries = int(match.group(1))
+            entries = int(match.group(1).replace(",", ""))
 
     # Extract end time
     time_element = element.find("span", {"data-timestamp": True})

@@ -41,6 +41,8 @@ class TestWishlistPageFixture:
         assert ga["is_wishlist"] is True
         assert ga["game_id"] == 2525380
         assert ga["end_time"] is not None
+        # The links row is a div: "455 entries 2 comments" on this capture.
+        assert ga["entries"] == 455
 
     def test_mark_wishlist_false(self, wishlist_html):
         giveaways = parser.parse_giveaway_list(wishlist_html, mark_wishlist=False)
@@ -82,6 +84,30 @@ class TestParserEdgeCases:
         assert parser.parse_username("<html><body></body></html>") is None
         assert parser.extract_xsrf_token("<html><body></body></html>") is None
         assert parser.parse_giveaway_game_id("<html><body></body></html>") is None
+
+    def test_entries_with_thousands_separator(self):
+        html = """
+        <div class="giveaway__row-inner-wrap">
+            <a href="/giveaway/AbCd1/x" class="giveaway__heading__name">Game</a>
+            <span class="giveaway__heading__thin">(50P)</span>
+            <div class="giveaway__links">
+                <a href="/giveaway/AbCd1/x/entries"><span>1,234 entries</span></a>
+                <a href="/giveaway/AbCd1/x/comments"><span>56 comments</span></a>
+            </div>
+        </div>
+        """
+        [ga] = parser.parse_giveaway_list(html)
+        assert ga["entries"] == 1234
+
+    def test_single_entry_singular(self):
+        html = """
+        <div class="giveaway__row-inner-wrap">
+            <a href="/giveaway/AbCd1/x" class="giveaway__heading__name">Game</a>
+            <div class="giveaway__links"><span>1 entry</span></div>
+        </div>
+        """
+        [ga] = parser.parse_giveaway_list(html)
+        assert ga["entries"] == 1
 
     def test_malformed_points_raises(self):
         html = '<span class="nav__points">no digits</span>'

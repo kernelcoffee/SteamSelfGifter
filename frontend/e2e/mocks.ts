@@ -66,6 +66,8 @@ function giveaway(id: number, over: Record<string, unknown> = {}) {
     game_id: 400 + id,
     price: 25 + id,
     copies: 1,
+    entries: 100,
+    win_chance: 1.0,
     end_time: inHours(24 + id),
     discovered_at: inHours(-2),
     entered_at: null,

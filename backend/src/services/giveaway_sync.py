@@ -240,6 +240,7 @@ class GiveawaySyncMixin:
                             url=url,
                             game_name=entry["game_name"],
                             price=entry.get("price", 0),
+                            entries=entry.get("entries", 0),
                             game_id=entry.get("game_id"),
                             end_time=entry.get("end_time"),
                             is_entered=True,
@@ -273,6 +274,7 @@ class GiveawaySyncMixin:
             game_name=ga_data["game_name"],
             price=ga_data["price"],
             copies=ga_data.get("copies", 1),
+            entries=ga_data.get("entries", 0),
             end_time=ga_data.get("end_time"),
             game_id=ga_data.get("game_id"),
             is_wishlist=ga_data.get("is_wishlist", False),
@@ -290,6 +292,10 @@ class GiveawaySyncMixin:
         """
         # Update mutable fields
         giveaway.end_time = ga_data.get("end_time", giveaway.end_time)
+
+        # Entry counts move constantly; keep the latest scan's value.
+        if ga_data.get("entries") is not None:
+            giveaway.entries = ga_data["entries"]
 
         # Update game_id if we found it and didn't have it before
         if ga_data.get("game_id") and not giveaway.game_id:
