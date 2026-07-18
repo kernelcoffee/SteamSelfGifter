@@ -6,7 +6,6 @@ including authentication, scraping giveaways, and entering giveaways.
 
 import asyncio
 import re
-from datetime import datetime
 from typing import Any
 
 import httpx
@@ -17,6 +16,7 @@ from core.exceptions import (
     SteamGiftsError,
     SteamGiftsSessionExpiredError,
 )
+from core.time import from_timestamp
 from utils.steam_client import RateLimiter
 
 logger = structlog.get_logger()
@@ -530,9 +530,11 @@ class SteamGiftsClient:
 
         for element in giveaway_elements:
             try:
-                # Skip pinned/advertisement giveaways (they appear at the top of
-                # wishlist pages inside a pinned-giveaways__inner-wrap container)
-                if element.find_parent("div", class_="pinned-giveaways__inner-wrap"):
+                # Skip pinned/advertisement giveaways ("Featured" section at the
+                # top of wishlist pages). The container class has changed over
+                # time (pinned-giveaways__inner-wrap, then pinned-giveaways),
+                # so match any pinned-giveaways* ancestor.
+                if element.find_parent("div", class_=re.compile(r"^pinned-giveaways")):
                     continue
 
                 giveaway = self._parse_giveaway_element(element)
@@ -602,7 +604,7 @@ class SteamGiftsClient:
         end_time = None
         if time_element:
             timestamp = int(time_element["data-timestamp"])
-            end_time = datetime.fromtimestamp(timestamp)
+            end_time = from_timestamp(timestamp)
 
         # Extract thumbnail URL
         thumbnail_url = None
@@ -865,7 +867,7 @@ class SteamGiftsClient:
         if time_element:
             try:
                 timestamp = int(time_element["data-timestamp"])
-                won_at = datetime.fromtimestamp(timestamp)
+                won_at = from_timestamp(timestamp)
             except (ValueError, KeyError):
                 pass
 
@@ -1009,7 +1011,7 @@ class SteamGiftsClient:
             if time_element:
                 try:
                     timestamp = int(time_element["data-timestamp"])
-                    end_time = datetime.fromtimestamp(timestamp)
+                    end_time = from_timestamp(timestamp)
                 except (ValueError, KeyError):
                     pass
 
@@ -1020,7 +1022,7 @@ class SteamGiftsClient:
             if time_element:
                 try:
                     timestamp = int(time_element["data-timestamp"])
-                    entered_at = datetime.fromtimestamp(timestamp)
+                    entered_at = from_timestamp(timestamp)
                 except (ValueError, KeyError):
                     pass
 

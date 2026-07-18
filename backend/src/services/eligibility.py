@@ -12,6 +12,11 @@ the existing behaviour. A giveaway with no cached game row is rejected as
 ``NO_GAME_DATA`` whenever any game-based criterion is active; a game with an
 unknown review score (stored as 0) fails ``min_score``; an unparseable/missing
 release date fails ``max_game_age``.
+
+Wishlist exception: giveaways flagged ``is_wishlist`` bypass the price and
+game-quality criteria entirely — being on the user's Steam wishlist already
+answers the question those filters approximate. They still respect the
+active/hidden/entered checks.
 """
 
 from dataclasses import dataclass
@@ -51,6 +56,9 @@ class EligibilityCriteria:
 
     ``min_score``/``min_reviews``/``max_game_age`` are optional: when set, they
     require cached game data (mirroring the JOIN in the SQL query).
+    ``wishlist_priority`` controls the wishlist exception described in the
+    module docstring; when off, wishlist giveaways pass the same filters as
+    everything else.
     """
 
     min_price: int = 0
@@ -58,6 +66,7 @@ class EligibilityCriteria:
     min_score: int | None = None
     min_reviews: int | None = None
     max_game_age: int | None = None
+    wishlist_priority: bool = True
 
     @property
     def needs_game_data(self) -> bool:
@@ -91,6 +100,12 @@ def evaluate_eligibility(giveaway: Any, game: Any, criteria: EligibilityCriteria
 
     if giveaway.is_entered:
         return ENTERED
+
+    # Wishlist games are wanted by definition: they bypass the price and
+    # game-quality filters (matches the `is_wishlist OR (...)` in the SQL),
+    # unless the user turned wishlist priority off.
+    if criteria.wishlist_priority and giveaway.is_wishlist:
+        return ELIGIBLE
 
     # Price range — matches `price >= min_price [AND price <= max_price]`.
     if giveaway.price < criteria.min_price:

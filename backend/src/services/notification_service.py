@@ -374,7 +374,9 @@ class NotificationService:
             >>> deleted = await service.clear_all_logs()
             >>> print(f"Deleted {deleted} logs")
         """
-        return await self.repo.delete_all()
+        deleted = await self.repo.delete_all()
+        await self.session.commit()
+        return deleted
 
     async def get_all_logs(self) -> list[ActivityLog]:
         """

@@ -197,12 +197,16 @@ class ActivityLogRepository:
         Returns:
             Number of logs deleted
 
+        Note:
+            This method does NOT commit the transaction. The caller must
+            call session.commit() to persist changes to the database.
+
         Example:
             >>> deleted_count = await repo.delete_all()
+            >>> await session.commit()
         """
         from sqlalchemy import delete
         result = await self.session.execute(delete(ActivityLog))
-        await self.session.commit()
         # execute() is typed as Result, but DELETE always yields a CursorResult.
         return int(result.rowcount or 0)  # type: ignore[attr-defined]
 

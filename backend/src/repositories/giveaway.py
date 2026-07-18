@@ -8,7 +8,7 @@ giveaway visibility.
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import utcnow
@@ -171,6 +171,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         max_price: int | None = None,
         max_game_age: int | None = None,
         limit: int | None = None,
+        wishlist_priority: bool = True,
     ) -> list[Giveaway]:
         """
         Get eligible giveaways based on autojoin criteria.
@@ -182,6 +183,11 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         - Optionally: minimum review score and count (requires game data)
         - Optionally: maximum game age in years
 
+        When ``wishlist_priority`` is on (default), wishlist giveaways bypass
+        the price and game-quality filters (the user explicitly wants those
+        games) and sort before everything else. When off, they pass the same
+        filters as everything else.
+
         Args:
             min_price: Minimum giveaway price in points
             min_score: Minimum game review score (0-10), optional
@@ -191,7 +197,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             limit: Maximum number to return
 
         Returns:
-            List of eligible giveaways, ordered by price (highest first)
+            List of eligible giveaways, wishlist first, then price (highest first)
 
         Example:
             >>> # Get high-value, well-reviewed giveaways not older than 5 years
@@ -205,57 +211,57 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         """
         now = utcnow()
 
-        # Base filters: active, not hidden, not entered, price range
-        conditions = [
+        # Base filters: active, not hidden, not entered
+        base_conditions = [
             self.model.end_time.isnot(None),
             self.model.end_time > now,
             self.model.is_hidden == False,  # noqa: E712
             self.model.is_entered == False,  # noqa: E712
-            self.model.price >= min_price,
         ]
 
-        if max_price is not None:
-            conditions.append(self.model.price <= max_price)
+        # Wishlist giveaways bypass the price and game-quality filters;
+        # everything else must pass the full criteria (mirrors
+        # services.eligibility.evaluate_eligibility).
+        filter_conditions = [self.model.price >= min_price]
 
-        # Determine if we need to JOIN with Game table
+        if max_price is not None:
+            filter_conditions.append(self.model.price <= max_price)
+
         needs_game_join = (
             min_score is not None or
             min_reviews is not None or
             max_game_age is not None
         )
 
-        # If review/age filtering is requested, JOIN with Game table
+        query = select(self.model)
+
         if needs_game_join:
-            from models.game import Game
+            # Outer join: wishlist rows without cached game data must survive.
+            # Non-wishlist rows without game data fail the NULL comparisons
+            # below, matching the previous inner-join semantics.
+            query = query.outerjoin(Game, self.model.game_id == Game.id)
 
-            query = (
-                select(self.model)
-                .join(Game, self.model.game_id == Game.id)
-                .where(and_(*conditions))
-            )
-
-            # Add game review filters (games default to score=0 when unknown)
+            # Game review filters (games default to score=0 when unknown)
             if min_score is not None:
-                query = query.where(Game.review_score >= min_score)
+                filter_conditions.append(Game.review_score >= min_score)
 
             if min_reviews is not None:
-                query = query.where(Game.total_reviews >= min_reviews)
+                filter_conditions.append(Game.total_reviews >= min_reviews)
 
-            # Add game age filter (release_date is stored as ISO format YYYY-MM-DD)
+            # Game age filter (release_date is stored as ISO format YYYY-MM-DD)
             if max_game_age is not None:
-                min_release_year = now.year - max_game_age
-                # Filter where release_date starts with a year >= min_release_year
-                # release_date is stored as "YYYY-MM-DD" ISO format
-                min_release_date = f"{min_release_year}-01-01"
-                query = query.where(Game.release_date >= min_release_date)
+                min_release_date = f"{now.year - max_game_age}-01-01"
+                filter_conditions.append(Game.release_date >= min_release_date)
 
-            query = query.order_by(self.model.price.desc())
+        if wishlist_priority:
+            query = query.where(
+                and_(*base_conditions),
+                or_(self.model.is_wishlist == True, and_(*filter_conditions)),  # noqa: E712
+            ).order_by(self.model.is_wishlist.desc(), self.model.price.desc())
         else:
-            query = (
-                select(self.model)
-                .where(and_(*conditions))
-                .order_by(self.model.price.desc())
-            )
+            query = query.where(
+                and_(*base_conditions), and_(*filter_conditions)
+            ).order_by(self.model.price.desc())
 
         if limit:
             query = query.limit(limit)

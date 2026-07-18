@@ -144,6 +144,11 @@ class Settings(Base, TimestampMixin):
         default=None,
         comment="Maximum game age in years (None = no limit)",
     )
+    wishlist_priority_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        comment="Wishlist giveaways bypass autojoin filters and are entered first",
+    )
 
     # ==================== Scheduler Settings ====================
     scan_interval_minutes: Mapped[int] = mapped_column(

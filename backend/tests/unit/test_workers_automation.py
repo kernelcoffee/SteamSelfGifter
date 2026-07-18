@@ -18,6 +18,9 @@ def _cycle_settings(**overrides):
     s.autojoin_min_score = 7
     s.autojoin_min_reviews = 100
     s.autojoin_max_game_age = None
+    s.autojoin_start_at = 0
+    s.autojoin_stop_at = 0
+    s.wishlist_priority_enabled = True
     s.max_entries_per_cycle = 5
     s.entry_delay_min = 0.01
     s.entry_delay_max = 0.02
@@ -52,12 +55,15 @@ async def test_automation_cycle_runs_all_steps_and_schedules_win_check():
 
     mock_giveaway = MagicMock()
     mock_giveaway.code = "GA1"
+    mock_giveaway.price = 50
     mock_giveaway.game_name = "Test Game"
+    mock_giveaway.is_wishlist = False
 
     mock_entry = MagicMock()
     mock_entry.points_spent = 50
 
     gs = AsyncMock()
+    gs.get_current_points.return_value = 500
     gs.sync_giveaways.return_value = (5, 2)   # regular + wishlist both use this
     gs.sync_wins.return_value = 1
     gs.sync_entered_giveaways.return_value = 0

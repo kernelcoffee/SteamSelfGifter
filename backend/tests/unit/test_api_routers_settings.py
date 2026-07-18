@@ -33,6 +33,7 @@ def create_mock_settings():
     settings.autojoin_min_price = 10
     settings.autojoin_min_score = 7
     settings.autojoin_min_reviews = 1000
+    settings.wishlist_priority_enabled = True
     settings.scan_interval_minutes = 30
     settings.max_entries_per_cycle = 10
     settings.automation_enabled = True
@@ -78,6 +79,50 @@ async def test_update_settings():
     assert result["success"] is True
     assert "data" in result
     mock_service.update_settings.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_update_settings_reschedules_running_automation_job():
+    """Changing scan_interval_minutes reschedules the live automation job."""
+    from unittest.mock import patch
+
+    mock_service = AsyncMock()
+    mock_settings = create_mock_settings()
+    mock_settings.scan_interval_minutes = 15
+    mock_service.update_settings.return_value = mock_settings
+
+    update_data = SettingsUpdate(scan_interval_minutes=15)
+
+    with patch("api.routers.settings.scheduler_manager") as mock_scheduler:
+        mock_scheduler.is_running = True
+        mock_scheduler.get_job.return_value = MagicMock()
+
+        result = await update_settings(update_data, mock_service)
+
+        assert result["success"] is True
+        mock_scheduler.reschedule_job.assert_called_once_with(
+            "automation_cycle", minutes=15
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_settings_no_reschedule_when_scheduler_stopped():
+    """No reschedule happens when the scheduler isn't running."""
+    from unittest.mock import patch
+
+    mock_service = AsyncMock()
+    mock_settings = create_mock_settings()
+    mock_service.update_settings.return_value = mock_settings
+
+    update_data = SettingsUpdate(scan_interval_minutes=15)
+
+    with patch("api.routers.settings.scheduler_manager") as mock_scheduler:
+        mock_scheduler.is_running = False
+
+        result = await update_settings(update_data, mock_service)
+
+        assert result["success"] is True
+        mock_scheduler.reschedule_job.assert_not_called()
 
 
 @pytest.mark.asyncio

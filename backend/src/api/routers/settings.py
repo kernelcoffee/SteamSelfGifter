@@ -18,6 +18,7 @@ from api.schemas.settings import (
     SettingsUpdate,
     SteamGiftsCredentials,
 )
+from workers.scheduler import scheduler_manager
 
 router = APIRouter()
 
@@ -98,6 +99,19 @@ async def update_settings(
 
         # Update settings
         settings = await settings_service.update_settings(**update_dict)
+
+        # Apply a new cadence immediately: if the automation job is running
+        # on the old interval, reschedule it in place instead of waiting for
+        # a scheduler restart.
+        if (
+            "scan_interval_minutes" in update_dict
+            and scheduler_manager.is_running
+            and scheduler_manager.get_job("automation_cycle")
+        ):
+            scheduler_manager.reschedule_job(
+                "automation_cycle",
+                minutes=settings.scan_interval_minutes or 30,
+            )
 
         # Convert to schema
         settings_data = SettingsResponse.model_validate(settings)
