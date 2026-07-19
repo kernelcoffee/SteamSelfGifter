@@ -264,6 +264,30 @@ async def test_sync_wishlist_no_unstick_after_partial_scan(test_db, mock_sg_clie
 
 
 @pytest.mark.asyncio
+async def test_sync_dlc_flags_and_unsticks(test_db, mock_sg_client, mock_game_service):
+    """A complete DLC scan sets is_dlc on scraped rows and clears it on
+    active giveaways that no longer appear in the DLC listing."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        await service.giveaway_repo.create(
+            code="OLDLC", url="http://x/OLDLC", game_name="Formerly DLC",
+            price=10, end_time=utcnow() + timedelta(days=1), is_dlc=True,
+        )
+        await session.commit()
+
+        mock_sg_client.get_giveaways = AsyncMock(return_value=[{
+            "code": "NEWDL", "game_name": "Fresh DLC", "price": 5,
+            "end_time": utcnow() + timedelta(days=1), "is_dlc": True,
+        }])
+
+        await service.sync_giveaways(pages=3, dlc_only=True)
+
+        assert (await service.giveaway_repo.get_by_code("NEWDL")).is_dlc is True
+        assert (await service.giveaway_repo.get_by_code("OLDLC")).is_dlc is False
+
+
+@pytest.mark.asyncio
 async def test_sync_drift_logs_activity_and_skips_unstick(test_db, mock_sg_client, mock_game_service):
     """Scrape drift aborts the scan, writes a warning to the activity log and
     never un-sticks wishlist flags."""

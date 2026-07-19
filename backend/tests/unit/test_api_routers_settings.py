@@ -26,7 +26,7 @@ def create_mock_settings():
     settings.phpsessid = "test_session"
     settings.user_agent = "Mozilla/5.0"
     settings.xsrf_token = None
-    settings.dlc_enabled = False
+    settings.dlc_priority_enabled = False
     settings.autojoin_enabled = True
     settings.autojoin_start_at = 350
     settings.autojoin_stop_at = 200

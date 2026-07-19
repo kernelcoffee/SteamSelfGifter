@@ -132,13 +132,19 @@ class GiveawaySyncMixin:
                 scan_complete = True
                 break
 
-        # A complete wishlist scan is the source of truth for the wishlist
-        # flag: clear it on active giveaways that no longer appear (the game
-        # was removed from the Steam wishlist). Never after partial scans.
-        if giveaway_type == "wishlist" and scan_complete:
-            cleared = await self.giveaway_repo.unset_wishlist_except(scraped_codes)
-            if cleared:
-                logger.info("wishlist_flags_cleared", count=cleared)
+        # A complete wishlist/DLC scan is the source of truth for its flag:
+        # clear it on active giveaways that no longer appear (the game was
+        # removed from the wishlist / is no longer listed as owned-game DLC).
+        # Never after partial scans.
+        if scan_complete:
+            if giveaway_type == "wishlist":
+                cleared = await self.giveaway_repo.unset_flag_except("is_wishlist", scraped_codes)
+                if cleared:
+                    logger.info("wishlist_flags_cleared", count=cleared)
+            elif dlc_only:
+                cleared = await self.giveaway_repo.unset_flag_except("is_dlc", scraped_codes)
+                if cleared:
+                    logger.info("dlc_flags_cleared", count=cleared)
 
         await self.session.commit()
         return new_count, updated_count
@@ -278,6 +284,7 @@ class GiveawaySyncMixin:
             end_time=ga_data.get("end_time"),
             game_id=ga_data.get("game_id"),
             is_wishlist=ga_data.get("is_wishlist", False),
+            is_dlc=ga_data.get("is_dlc", False),
             is_entered=ga_data.get("is_entered", False),
         )
         return giveaway
@@ -301,8 +308,10 @@ class GiveawaySyncMixin:
         if ga_data.get("game_id") and not giveaway.game_id:
             giveaway.game_id = ga_data["game_id"]
 
-        # Set the wishlist flag when this row came from a wishlist scan.
+        # Set the wishlist/DLC flags when this row came from those scans.
         # The reverse direction (un-sticking removed games) is handled by
-        # unset_wishlist_except after a complete wishlist scan.
+        # unset_flag_except after a complete scan of the same type.
         if ga_data.get("is_wishlist"):
             giveaway.is_wishlist = True
+        if ga_data.get("is_dlc"):
+            giveaway.is_dlc = True

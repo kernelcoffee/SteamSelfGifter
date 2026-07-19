@@ -274,6 +274,7 @@ function EntryCard({ entry }: EntryCardProps) {
     auto: 'Automatic',
     manual: 'Manual',
     wishlist: 'Wishlist',
+    dlc: 'DLC',
   };
 
   const config = statusConfig[entry.status];

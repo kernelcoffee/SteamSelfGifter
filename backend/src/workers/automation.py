@@ -3,7 +3,7 @@
 Single unified job that performs all automated tasks in sequence:
 1. Scan regular giveaways
 2. Scan wishlist giveaways
-3. Scan DLC giveaways (if enabled)
+3. Scan DLC giveaways
 4. Sync wins
 5. Sync entered giveaways
 6. Process eligible giveaways (enter them)
@@ -30,7 +30,7 @@ async def automation_cycle() -> dict[str, Any]:
     """
     Run a complete automation cycle.
 
-    Runs all tasks in sequence: scan regular + wishlist (+ DLC) giveaways,
+    Runs all tasks in sequence: scan regular + wishlist + DLC giveaways,
     sync wins, sync entered giveaways, then enter eligible giveaways.
 
     Returns:
@@ -108,28 +108,26 @@ async def automation_cycle() -> dict[str, Any]:
                 logger.error("scan_wishlist_failed", error=str(e))
                 results["wishlist"]["error"] = str(e)
 
-            # === STEP 2.5: Scan DLC giveaways (if enabled) ===
-            dlc_enabled = getattr(settings, 'dlc_enabled', False)
-            if dlc_enabled:
-                logger.info("automation_step", step="scan_dlc")
-                results["dlc"] = {"new": 0, "updated": 0, "skipped": False}
+            # === STEP 2.5: Scan DLC giveaways ===
+            # Always scanned, like the wishlist: the is_dlc flags it maintains
+            # feed both the DLC badge and the optional autojoin priority.
+            logger.info("automation_step", step="scan_dlc")
+            results["dlc"] = {"new": 0, "updated": 0, "skipped": False}
 
-                try:
-                    dlc_new, dlc_updated = await giveaway_service.sync_giveaways(
-                        pages=1,
-                        dlc_only=True
-                    )
-                    results["dlc"] = {
-                        "new": dlc_new,
-                        "updated": dlc_updated,
-                        "skipped": False,
-                    }
-                    logger.info("scan_dlc_completed", new=dlc_new, updated=dlc_updated)
-                except Exception as e:
-                    logger.error("scan_dlc_failed", error=str(e))
-                    results["dlc"]["error"] = str(e)
-            else:
-                results["dlc"] = {"skipped": True, "reason": "dlc_disabled"}
+            try:
+                dlc_new, dlc_updated = await giveaway_service.sync_giveaways(
+                    pages=max_pages,
+                    dlc_only=True
+                )
+                results["dlc"] = {
+                    "new": dlc_new,
+                    "updated": dlc_updated,
+                    "skipped": False,
+                }
+                logger.info("scan_dlc_completed", new=dlc_new, updated=dlc_updated)
+            except Exception as e:
+                logger.error("scan_dlc_failed", error=str(e))
+                results["dlc"]["error"] = str(e)
 
             # === STEP 3: Sync wins ===
             logger.info("automation_step", step="sync_wins")

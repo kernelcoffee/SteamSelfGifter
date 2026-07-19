@@ -8,7 +8,7 @@ giveaway visibility.
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import ColumnElement, and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import utcnow
@@ -205,6 +205,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         max_game_age: int | None = None,
         limit: int | None = None,
         wishlist_priority: bool = True,
+        dlc_priority: bool = False,
     ) -> list[Giveaway]:
         """
         Get eligible giveaways based on autojoin criteria.
@@ -219,7 +220,8 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         When ``wishlist_priority`` is on (default), wishlist giveaways bypass
         the price and game-quality filters (the user explicitly wants those
         games) and sort before everything else. When off, they pass the same
-        filters as everything else.
+        filters as everything else. ``dlc_priority`` grants DLC giveaways the
+        same bypass (DLC listings are for owned games), sorted after wishlist.
 
         Args:
             min_price: Minimum giveaway price in points
@@ -286,15 +288,21 @@ class GiveawayRepository(BaseRepository[Giveaway]):
                 min_release_date = f"{now.year - max_game_age}-01-01"
                 filter_conditions.append(Game.release_date >= min_release_date)
 
+        # Bypass branches: a giveaway qualifies by passing the full filter
+        # set, or via an active priority flag (mirrors evaluate_eligibility).
+        qualifying: list[ColumnElement[bool]] = [and_(*filter_conditions)]
+        order_by: list[ColumnElement[Any]] = []
         if wishlist_priority:
-            query = query.where(
-                and_(*base_conditions),
-                or_(self.model.is_wishlist == True, and_(*filter_conditions)),  # noqa: E712
-            ).order_by(self.model.is_wishlist.desc(), self.model.price.desc())
-        else:
-            query = query.where(
-                and_(*base_conditions), and_(*filter_conditions)
-            ).order_by(self.model.price.desc())
+            qualifying.append(self.model.is_wishlist == True)  # noqa: E712
+            order_by.append(self.model.is_wishlist.desc())
+        if dlc_priority:
+            qualifying.append(self.model.is_dlc == True)  # noqa: E712
+            order_by.append(self.model.is_dlc.desc())
+        order_by.append(self.model.price.desc())
+
+        query = query.where(
+            and_(*base_conditions), or_(*qualifying)
+        ).order_by(*order_by)
 
         if limit:
             query = query.limit(limit)
@@ -436,16 +444,19 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def unset_wishlist_except(self, codes: set[str]) -> int:
+    async def unset_flag_except(self, flag: str, codes: set[str]) -> int:
         """
-        Clear the wishlist flag on active giveaways not in ``codes``.
+        Clear a scan-derived flag on active giveaways not in ``codes``.
 
-        Called after a *complete* wishlist scan: any active giveaway still
-        flagged wishlist but absent from the scan is no longer on the user's
-        Steam wishlist. Expired giveaways keep their flag as history.
+        Called after a *complete* scan of the matching type: any active
+        giveaway still flagged but absent from the scan no longer belongs to
+        that listing (e.g. game removed from the Steam wishlist, or no longer
+        shown as owned-game DLC). Expired giveaways keep their flag as
+        history.
 
         Args:
-            codes: Giveaway codes seen in the completed wishlist scan
+            flag: Column name, "is_wishlist" or "is_dlc"
+            codes: Giveaway codes seen in the completed scan
 
         Returns:
             Number of giveaways whose flag was cleared
@@ -454,16 +465,20 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             This method does NOT commit the transaction. The caller must
             call session.commit() to persist changes to the database.
         """
+        if flag not in ("is_wishlist", "is_dlc"):
+            raise ValueError(f"Unsupported scan flag: {flag}")
+        column = getattr(self.model, flag)
+
         now = utcnow()
         stmt = (
             update(self.model)
             .where(
-                self.model.is_wishlist == True,  # noqa: E712
+                column == True,  # noqa: E712
                 self.model.end_time.isnot(None),
                 self.model.end_time > now,
                 self.model.code.notin_(codes),
             )
-            .values(is_wishlist=False)
+            .values(**{flag: False})
         )
         result = await self.session.execute(stmt)
         # execute() is typed as Result, but UPDATE always yields a CursorResult.

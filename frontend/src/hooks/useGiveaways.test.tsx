@@ -66,6 +66,7 @@ const mockGiveaway: Giveaway = {
   is_hidden: false,
   is_entered: false,
   is_wishlist: false,
+  is_dlc: false,
   is_won: false,
   won_at: null,
   is_safe: true,

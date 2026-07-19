@@ -12,7 +12,7 @@ def _cycle_settings(**overrides):
     s = MagicMock()
     s.phpsessid = "test_session"
     s.max_scan_pages = 3
-    s.dlc_enabled = False
+    s.dlc_priority_enabled = False
     s.autojoin_enabled = True
     s.autojoin_min_price = 50
     s.autojoin_min_score = 7
@@ -58,6 +58,7 @@ async def test_automation_cycle_runs_all_steps_and_schedules_win_check():
     mock_giveaway.price = 50
     mock_giveaway.game_name = "Test Game"
     mock_giveaway.is_wishlist = False
+    mock_giveaway.is_dlc = False
 
     mock_entry = MagicMock()
     mock_entry.points_spent = 50

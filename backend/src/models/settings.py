@@ -24,7 +24,8 @@ class Settings(Base, TimestampMixin):
             xsrf_token: Anti-CSRF token from SteamGifts (extracted from pages)
 
         DLC Settings:
-            dlc_enabled: Whether to enter DLC giveaways (default: False)
+            dlc_priority_enabled: DLC giveaways bypass autojoin filters and are
+                entered after wishlist ones (default: False)
 
         Auto-join Settings:
             autojoin_enabled: Enable automatic giveaway entry (default: False)
@@ -89,10 +90,10 @@ class Settings(Base, TimestampMixin):
     # NOTE: current_points is fetched dynamically from SteamGifts, not stored here
 
     # ==================== DLC Settings ====================
-    dlc_enabled: Mapped[bool] = mapped_column(
+    dlc_priority_enabled: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
-        comment="Whether to enter DLC giveaways",
+        comment="DLC giveaways bypass autojoin filters and are entered after wishlist ones",
     )
 
     # ==================== Safety Settings ====================

@@ -21,7 +21,7 @@ def test_settings_base_defaults():
     )
 
     assert settings.phpsessid is None
-    assert settings.dlc_enabled is False
+    assert settings.dlc_priority_enabled is False
     assert settings.autojoin_enabled is False
     assert settings.autojoin_start_at == 350
     assert settings.autojoin_stop_at == 200
@@ -106,7 +106,7 @@ def test_settings_response_from_dict():
         "id": 1,
         "user_agent": "Mozilla/5.0",
         "phpsessid": "abc123",
-        "dlc_enabled": True,
+        "dlc_priority_enabled": True,
         "autojoin_enabled": True,
         "autojoin_start_at": 350,
         "autojoin_stop_at": 200,

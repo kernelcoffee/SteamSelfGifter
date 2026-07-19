@@ -46,6 +46,7 @@ def _gw(**kw):
         is_hidden=False,
         is_entered=False,
         is_wishlist=False,
+        is_dlc=False,
         price=50,
         game_id=620,
     )
@@ -133,6 +134,19 @@ def test_wishlist_bypasses_price_and_game_filters():
     assert evaluate_eligibility(_gw(is_wishlist=True, price=1), None, crit, NOW) == ELIGIBLE
 
 
+def test_dlc_bypasses_filters_when_priority_enabled():
+    # DLC listings are for owned games: with dlc_priority on, quality and
+    # price filters don't apply.
+    crit = EligibilityCriteria(min_price=100, min_score=9, min_reviews=10000, dlc_priority=True)
+    assert evaluate_eligibility(_gw(is_dlc=True, price=1), None, crit, NOW) == ELIGIBLE
+
+
+def test_dlc_no_bypass_by_default():
+    # dlc_priority defaults to off (dlc_priority_enabled setting drives it).
+    crit = EligibilityCriteria(min_price=100)
+    assert evaluate_eligibility(_gw(is_dlc=True, price=1), None, crit, NOW) == PRICE_BELOW_MIN
+
+
 def test_wishlist_no_bypass_when_priority_disabled():
     # With the toggle off, wishlist giveaways pass the same filters as
     # everything else.
@@ -191,11 +205,12 @@ async def _seed(session):
         Game(id=5, name="Unknown", type="dlc", review_score=0, total_reviews=0, release_date=None),
     ])
 
-    def gw(code, price=50, game_id=1, end=future, hidden=False, entered=False, wishlist=False):
+    def gw(code, price=50, game_id=1, end=future, hidden=False, entered=False,
+           wishlist=False, dlc=False):
         return Giveaway(
             code=code, url=f"http://x/{code}", game_name=code, price=price,
             end_time=end, game_id=game_id, is_hidden=hidden, is_entered=entered,
-            is_wishlist=wishlist,
+            is_wishlist=wishlist, is_dlc=dlc,
         )
 
     session.add_all([
@@ -215,6 +230,8 @@ async def _seed(session):
         gw("wishbad", price=1, game_id=2, wishlist=True),      # low price + low score → still eligible
         gw("wishnogame", game_id=None, wishlist=True),         # no game data → still eligible
         gw("wishhidden", game_id=1, hidden=True, wishlist=True),  # hidden beats wishlist
+        # DLC row: bypasses filters only when dlc_priority is on
+        gw("dlcbad", price=1, game_id=2, dlc=True),            # fails price + score filters
     ])
     await session.commit()
 
@@ -235,6 +252,7 @@ def _service(session):
     dict(min_price=10, max_price=70, min_score=7, min_reviews=1000),   # + max price
     dict(min_price=0, min_score=0, min_reviews=0),                     # zero thresholds
     dict(min_price=10, min_score=7, min_reviews=1000, wishlist_priority=False),  # toggle off
+    dict(min_price=10, min_score=7, min_reviews=1000, dlc_priority=True),  # DLC priority on
 ])
 @pytest.mark.asyncio
 async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
@@ -255,6 +273,7 @@ async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
             "min_reviews": crit_kwargs.get("min_reviews"),
             "max_game_age": crit_kwargs.get("max_game_age"),
             "wishlist_priority": crit_kwargs.get("wishlist_priority", True),
+            "dlc_priority": crit_kwargs.get("dlc_priority", False),
         })
         evaluated = await service.evaluate_and_get_eligible(criteria)
         eval_codes = {g.code for g in evaluated}
@@ -264,15 +283,27 @@ async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
         if criteria.wishlist_priority:
             # Wishlist rows bypass the filters, so they are always in the set.
             assert {"wishbad", "wishnogame"} <= eval_codes
-            # Ordering: wishlist first, then price descending within each group.
-            keys = [(not g.is_wishlist, -g.price) for g in evaluated]
-            assert keys == sorted(keys)
         else:
             # Toggle off: wishlist rows get no exemption from the filters.
             assert "wishbad" not in eval_codes      # fails price + score filters
             assert "wishnogame" not in eval_codes   # no game data
-            prices = [g.price for g in evaluated]
-            assert prices == sorted(prices, reverse=True)
+        if criteria.dlc_priority:
+            assert "dlcbad" in eval_codes
+        elif (crit_kwargs.get("min_score") or 0) > 0:
+            # Without the priority, strict criteria reject it (price + score).
+            assert "dlcbad" not in eval_codes
+
+        # Ordering: wishlist first, then DLC, then price desc (active
+        # priorities only) — mirror the sort key and require sortedness.
+        keys = [
+            (
+                not (criteria.wishlist_priority and g.is_wishlist),
+                not (criteria.dlc_priority and g.is_dlc),
+                -g.price,
+            )
+            for g in evaluated
+        ]
+        assert keys == sorted(keys)
 
 
 # ----------------------------------------------------------------------------

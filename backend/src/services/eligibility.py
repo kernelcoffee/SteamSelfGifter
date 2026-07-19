@@ -17,6 +17,10 @@ Wishlist exception: giveaways flagged ``is_wishlist`` bypass the price and
 game-quality criteria entirely — being on the user's Steam wishlist already
 answers the question those filters approximate. They still respect the
 active/hidden/entered checks.
+
+DLC exception (same reasoning): SteamGifts' DLC listing only shows DLC for
+games the user owns, so ``is_dlc`` giveaways bypass the same filters when
+``dlc_priority`` is on (driven by the dlc_priority_enabled setting).
 """
 
 from dataclasses import dataclass
@@ -67,6 +71,7 @@ class EligibilityCriteria:
     min_reviews: int | None = None
     max_game_age: int | None = None
     wishlist_priority: bool = True
+    dlc_priority: bool = False
 
     @property
     def needs_game_data(self) -> bool:
@@ -105,6 +110,11 @@ def evaluate_eligibility(giveaway: Any, game: Any, criteria: EligibilityCriteria
     # game-quality filters (matches the `is_wishlist OR (...)` in the SQL),
     # unless the user turned wishlist priority off.
     if criteria.wishlist_priority and giveaway.is_wishlist:
+        return ELIGIBLE
+
+    # DLC listings are for games the user owns — same bypass, gated by the
+    # dlc_priority_enabled setting.
+    if criteria.dlc_priority and giveaway.is_dlc:
         return ELIGIBLE
 
     # Price range — matches `price >= min_price [AND price <= max_price]`.

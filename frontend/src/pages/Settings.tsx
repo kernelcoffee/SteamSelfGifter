@@ -47,7 +47,7 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
   const [formData, setFormData] = useState<Partial<SettingsType>>(() => ({
     phpsessid: settings.phpsessid ?? '',
     user_agent: settings.user_agent,
-    dlc_enabled: settings.dlc_enabled,
+    dlc_priority_enabled: settings.dlc_priority_enabled,
     safety_check_enabled: settings.safety_check_enabled,
     auto_hide_unsafe: settings.auto_hide_unsafe,
     autojoin_enabled: settings.autojoin_enabled,
@@ -199,12 +199,6 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
             checked={formData.autojoin_enabled ?? false}
             onChange={(checked) => handleChange('autojoin_enabled', checked)}
           />
-          <Toggle
-            label="Include DLC"
-            description="Scan and enter giveaways for DLC content"
-            checked={formData.dlc_enabled ?? false}
-            onChange={(checked) => handleChange('dlc_enabled', checked)}
-          />
         </div>
       </Card>
 
@@ -238,6 +232,14 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
             description="Wishlist giveaways skip the filters below and are entered before everything else (the points budget still applies)"
             checked={formData.wishlist_priority_enabled ?? true}
             onChange={(checked) => handleChange('wishlist_priority_enabled', checked)}
+          />
+        </div>
+        <div className="mb-4">
+          <Toggle
+            label="Prioritize DLC"
+            description="DLC giveaways skip the filters below and are entered after wishlist ones — the DLC listing only shows content for games you own"
+            checked={formData.dlc_priority_enabled ?? false}
+            onChange={(checked) => handleChange('dlc_priority_enabled', checked)}
           />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

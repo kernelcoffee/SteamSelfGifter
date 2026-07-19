@@ -57,7 +57,7 @@ def test_settings_creation_with_defaults(session):
     assert settings.phpsessid is None
     assert settings.user_agent.startswith("Mozilla/5.0")
     assert settings.xsrf_token is None
-    assert settings.dlc_enabled is False
+    assert settings.dlc_priority_enabled is False
     assert settings.autojoin_enabled is False
     assert settings.autojoin_start_at == 350
     assert settings.autojoin_stop_at == 200
@@ -80,7 +80,7 @@ def test_settings_with_custom_values(session):
     settings = Settings(
         id=1,
         phpsessid="test_session_id",
-        dlc_enabled=True,
+        dlc_priority_enabled=True,
         autojoin_enabled=True,
         autojoin_start_at=400,
     )
@@ -88,7 +88,7 @@ def test_settings_with_custom_values(session):
     session.commit()
 
     assert settings.phpsessid == "test_session_id"
-    assert settings.dlc_enabled is True
+    assert settings.dlc_priority_enabled is True
     assert settings.autojoin_enabled is True
     assert settings.autojoin_start_at == 400
 

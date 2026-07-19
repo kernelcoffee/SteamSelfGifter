@@ -141,6 +141,11 @@ class Giveaway(Base, TimestampMixin):
         default=False,
         comment="Game is on user's Steam wishlist",
     )
+    is_dlc: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        comment="DLC giveaway (DLC listings are for games the user owns)",
+    )
     is_won: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
