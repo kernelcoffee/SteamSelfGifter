@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = "SteamSelfGifter"
-    version: str = "2.1.0"
+    version: str = "2.2.0"
     environment: Literal["development", "production"] = "development"
     debug: bool = True
 
