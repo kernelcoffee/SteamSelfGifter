@@ -8,6 +8,9 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
     expect(screen.getByText('Giveaways')).toBeInTheDocument();
+    expect(screen.getByText('Wishlist')).toBeInTheDocument();
+    expect(screen.getByText('DLC')).toBeInTheDocument();
+    expect(screen.getByText('Entered')).toBeInTheDocument();
     expect(screen.getByText('Wins')).toBeInTheDocument();
     expect(screen.getByText('History')).toBeInTheDocument();
     expect(screen.getByText('Analytics')).toBeInTheDocument();
@@ -20,6 +23,9 @@ describe('Sidebar', () => {
 
     expect(screen.getByText('Dashboard').closest('a')).toHaveAttribute('href', '/dashboard');
     expect(screen.getByText('Giveaways').closest('a')).toHaveAttribute('href', '/giveaways');
+    expect(screen.getByText('Wishlist').closest('a')).toHaveAttribute('href', '/giveaways/wishlist');
+    expect(screen.getByText('DLC').closest('a')).toHaveAttribute('href', '/giveaways/dlc');
+    expect(screen.getByText('Entered').closest('a')).toHaveAttribute('href', '/giveaways/entered');
     expect(screen.getByText('Wins').closest('a')).toHaveAttribute('href', '/wins');
     expect(screen.getByText('History').closest('a')).toHaveAttribute('href', '/history');
     expect(screen.getByText('Analytics').closest('a')).toHaveAttribute('href', '/analytics');
@@ -34,6 +40,6 @@ describe('Sidebar', () => {
     expect(nav).toBeInTheDocument();
 
     const listItems = screen.getAllByRole('listitem');
-    expect(listItems).toHaveLength(7);
+    expect(listItems).toHaveLength(10);
   });
 });

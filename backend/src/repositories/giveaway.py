@@ -405,30 +405,35 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def get_wishlist(
-        self, limit: int | None = None, offset: int | None = None,
+    async def get_flagged(
+        self, flag: str, limit: int | None = None, offset: int | None = None,
         min_chance: float | None = None, ending_within_minutes: int | None = None,
     ) -> list[Giveaway]:
         """
-        Get active wishlist giveaways.
+        Get active giveaways carrying a scan-derived flag.
 
         Args:
+            flag: Column name, "is_wishlist" or "is_dlc"
             limit: Maximum number to return
             offset: Number of records to skip
             min_chance: Minimum win chance in percent (copies/entries*100)
             ending_within_minutes: Only giveaways ending within this many minutes
 
         Returns:
-            List of wishlist giveaways that are still active (not expired)
+            List of flagged giveaways that are still active (not expired)
 
         Example:
-            >>> wishlist = await repo.get_wishlist(limit=20)
+            >>> wishlist = await repo.get_flagged("is_wishlist", limit=20)
         """
+        if flag not in ("is_wishlist", "is_dlc"):
+            raise ValueError(f"Unsupported scan flag: {flag}")
+        column = getattr(self.model, flag)
+
         now = utcnow()
         query = (
             select(self.model)
             .where(
-                self.model.is_wishlist == True,  # noqa: E712
+                column == True,  # noqa: E712
                 self.model.is_hidden == False,  # noqa: E712
                 (self.model.end_time == None) | (self.model.end_time > now),  # noqa: E711
                 *self._browse_filter_conditions(now, min_chance, ending_within_minutes),

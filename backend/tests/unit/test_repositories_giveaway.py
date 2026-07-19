@@ -139,32 +139,41 @@ async def test_get_active_ending_within_filter(test_db):
         assert codes == {"SOON", "LATER"}
 
 
+@pytest.mark.parametrize("flag", ["is_wishlist", "is_dlc"])
 @pytest.mark.asyncio
-async def test_get_wishlist_browse_filters(test_db):
-    """The wishlist listing honors min_chance and ending_within_minutes."""
+async def test_get_flagged_browse_filters(test_db, flag):
+    """The flagged listings honor min_chance and ending_within_minutes."""
     async with test_db() as session:
         repo = GiveawayRepository(session)
         now = utcnow()
 
         await repo.create(code="WSOON", game_name="A", price=10, url="http://x/1",
-                          end_time=now + timedelta(hours=2), is_wishlist=True,
+                          end_time=now + timedelta(hours=2), **{flag: True},
                           copies=1, entries=10)  # 10%
         await repo.create(code="WCROWD", game_name="B", price=10, url="http://x/2",
-                          end_time=now + timedelta(hours=2), is_wishlist=True,
+                          end_time=now + timedelta(hours=2), **{flag: True},
                           copies=1, entries=5000)  # 0.02%
         await repo.create(code="WLATER", game_name="C", price=10, url="http://x/3",
-                          end_time=now + timedelta(hours=48), is_wishlist=True,
+                          end_time=now + timedelta(hours=48), **{flag: True},
+                          copies=1, entries=10)
+        # Flagged with the other flag only: must never show up.
+        other = "is_dlc" if flag == "is_wishlist" else "is_wishlist"
+        await repo.create(code="OTHER", game_name="D", price=10, url="http://x/4",
+                          end_time=now + timedelta(hours=2), **{other: True},
                           copies=1, entries=10)
         await session.commit()
 
-        codes = {g.code for g in await repo.get_wishlist(min_chance=1.0)}
+        codes = {g.code for g in await repo.get_flagged(flag, min_chance=1.0)}
         assert codes == {"WSOON", "WLATER"}
 
-        codes = {g.code for g in await repo.get_wishlist(ending_within_minutes=360)}
+        codes = {g.code for g in await repo.get_flagged(flag, ending_within_minutes=360)}
         assert codes == {"WSOON", "WCROWD"}
 
-        codes = {g.code for g in await repo.get_wishlist(min_chance=1.0, ending_within_minutes=360)}
+        codes = {g.code for g in await repo.get_flagged(flag, min_chance=1.0, ending_within_minutes=360)}
         assert codes == {"WSOON"}
+
+        with pytest.raises(ValueError):
+            await repo.get_flagged("is_hidden")
 
 
 @pytest.mark.asyncio

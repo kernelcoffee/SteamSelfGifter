@@ -153,8 +153,48 @@ async def get_wishlist_giveaways(
     Returns:
         Success response with list of wishlist giveaways
     """
-    giveaways = await giveaway_service.giveaway_repo.get_wishlist(
-        limit=limit, offset=offset,
+    giveaways = await giveaway_service.giveaway_repo.get_flagged(
+        "is_wishlist", limit=limit, offset=offset,
+        min_chance=min_chance, ending_within_minutes=ending_within,
+    )
+
+    # Enrich with game data (thumbnails, reviews)
+    giveaways = await giveaway_service.enrich_giveaways_with_game_data(giveaways)
+
+    giveaway_list = [
+        GiveawayResponse.model_validate(g).model_dump()
+        for g in giveaways
+    ]
+
+    return create_success_response(
+        data={
+            "giveaways": giveaway_list,
+            "count": len(giveaway_list),
+        }
+    )
+
+
+@router.get(
+    "/dlc",
+    response_model=dict[str, Any],
+    summary="Get DLC giveaways",
+    description="Get active giveaways from the DLC listing (DLC for games the user owns).",
+)
+async def get_dlc_giveaways(
+    giveaway_service: GiveawayServiceDep,
+    min_chance: float | None = Query(default=None, ge=0.01, le=100, description="Minimum win chance in percent"),
+    ending_within: int | None = Query(default=None, ge=1, description="Only giveaways ending within this many minutes"),
+    limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
+    offset: int = Query(default=0, ge=0, description="Number of records to skip"),
+) -> dict[str, Any]:
+    """
+    Get DLC giveaways.
+
+    Returns:
+        Success response with list of DLC giveaways
+    """
+    giveaways = await giveaway_service.giveaway_repo.get_flagged(
+        "is_dlc", limit=limit, offset=offset,
         min_chance=min_chance, ending_within_minutes=ending_within,
     )
 
