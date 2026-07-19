@@ -20,7 +20,7 @@ package-dir = {"" = "src"}
 
 [project]
 name = "steamselfgifter-backend"
-version = "2.1.0"
+version = "2.2.0"
 description = "Automated SteamGifts bot backend with REST API"
 readme = "README.md"
 requires-python = ">=3.14"
