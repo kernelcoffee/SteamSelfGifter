@@ -17,7 +17,7 @@ export const giveawayKeys = {
  * Filter options for giveaways
  */
 export interface GiveawayFilters {
-  status?: 'active' | 'entered' | 'wishlist' | 'won';
+  status?: 'active' | 'entered' | 'wishlist' | 'dlc' | 'won';
   type?: 'game' | 'dlc' | 'bundle' | 'all';
   search?: string;
   sort?: 'end_time' | 'price' | 'discovered_at';
@@ -67,6 +67,8 @@ function buildGiveawaysEndpoint(
     endpointPath = '/api/v1/giveaways/active';
   } else if (filters.status === 'wishlist') {
     endpointPath = '/api/v1/giveaways/wishlist';
+  } else if (filters.status === 'dlc') {
+    endpointPath = '/api/v1/giveaways/dlc';
   } else if (filters.status === 'won') {
     endpointPath = '/api/v1/giveaways/won';
   }

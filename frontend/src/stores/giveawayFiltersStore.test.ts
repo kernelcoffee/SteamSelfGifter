@@ -19,7 +19,7 @@ describe('giveawayFiltersStore', () => {
 
   it('starts with default filters', () => {
     const { filters } = useGiveawayFiltersStore.getState();
-    expect(filters).toEqual({ status: 'active', limit: 20 });
+    expect(filters).toEqual({ limit: 20 });
   });
 
   it('merges partial updates', () => {
@@ -27,18 +27,18 @@ describe('giveawayFiltersStore', () => {
     useGiveawayFiltersStore.getState().setFilters({ minChance: 0.5, endingWithin: 6 });
 
     const { filters } = useGiveawayFiltersStore.getState();
-    expect(filters.status).toBe('active');
+    expect(filters.limit).toBe(20);
     expect(filters.minScore).toBe(7);
     expect(filters.minChance).toBe(0.5);
     expect(filters.endingWithin).toBe(6);
   });
 
   it('persists filters to localStorage', () => {
-    useGiveawayFiltersStore.getState().setFilters({ minScore: 8, status: 'wishlist' });
+    useGiveawayFiltersStore.getState().setFilters({ minScore: 8, safetyFilter: 'safe' });
 
     const persisted = lastPersistedState();
     expect(persisted.filters.minScore).toBe(8);
-    expect(persisted.filters.status).toBe('wishlist');
+    expect(persisted.filters.safetyFilter).toBe('safe');
   });
 
   it('does not persist the search query', () => {
@@ -56,7 +56,6 @@ describe('giveawayFiltersStore', () => {
     useGiveawayFiltersStore.getState().resetFilters();
 
     expect(useGiveawayFiltersStore.getState().filters).toEqual({
-      status: 'active',
       limit: 20,
     });
   });

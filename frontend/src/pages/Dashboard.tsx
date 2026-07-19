@@ -349,7 +349,7 @@ export function Dashboard() {
             ))}
             {(enteredData.total ?? 0) > 10 && (
               <p className="text-sm text-gray-500 dark:text-gray-400 text-center pt-2">
-                <a href="/giveaways?status=entered" className="text-primary-light hover:underline">
+                <a href="/giveaways/entered" className="text-primary-light hover:underline">
                   View all {enteredData.total} entered giveaways →
                 </a>
               </p>

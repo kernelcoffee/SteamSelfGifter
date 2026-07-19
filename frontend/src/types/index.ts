@@ -222,6 +222,10 @@ export interface HealthCheck {
 export interface ScanResult {
   new: number;
   updated: number;
+  wishlist_new?: number;
+  wishlist_updated?: number;
+  dlc_new?: number;
+  dlc_updated?: number;
   pages_scanned: number;
   scan_time: number;
   skipped?: boolean;

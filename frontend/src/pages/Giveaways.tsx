@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users, Package } from 'lucide-react';
 import { SiSteam } from 'react-icons/si';
 import { Card, Button, Badge, Input, CardSkeleton } from '@/components/common';
-import { useInfiniteGiveaways, useEnterGiveaway, useHideGiveaway, useUnhideGiveaway, useRemoveEntry, useCheckGiveawaySafety, useHideOnSteamGifts, usePostComment, type GiveawayFilters } from '@/hooks';
+import { useInfiniteGiveaways, useEnterGiveaway, useHideGiveaway, useUnhideGiveaway, useRemoveEntry, useCheckGiveawaySafety, useHideOnSteamGifts, usePostComment } from '@/hooks';
 import { showSuccess, showError } from '@/stores/uiStore';
 import { useGiveawayFiltersStore } from '@/stores/giveawayFiltersStore';
 import type { Giveaway } from '@/types';
@@ -22,11 +22,23 @@ const stopIndex = (stops: number[], value: number | undefined, fallback: number)
   return idx === -1 ? fallback : idx;
 };
 
+export type GiveawayPageStatus = 'active' | 'wishlist' | 'dlc' | 'entered';
+
+const PAGE_TITLES: Record<GiveawayPageStatus, string> = {
+  active: 'Giveaways',
+  wishlist: 'Wishlist',
+  dlc: 'DLC',
+  entered: 'Entered',
+};
+
 /**
  * Giveaways page
- * Browse, filter, and enter giveaways
+ * Browse, filter, and enter giveaways. The status (active/wishlist/entered)
+ * comes from the route — each has its own sidebar entry; won giveaways live
+ * on the dedicated Wins page.
  */
-export function Giveaways() {
+export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }) {
+  const title = PAGE_TITLES[status];
   // Filters persist across visits (localStorage-backed store)
   const filters = useGiveawayFiltersStore((s) => s.filters);
   const setFilters = useGiveawayFiltersStore((s) => s.setFilters);
@@ -39,7 +51,7 @@ export function Giveaways() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage
-  } = useInfiniteGiveaways(filters);
+  } = useInfiniteGiveaways({ ...filters, status });
   const enterGiveaway = useEnterGiveaway();
   const hideGiveaway = useHideGiveaway();
   const unhideGiveaway = useUnhideGiveaway();
@@ -82,10 +94,6 @@ export function Giveaways() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setFilters({ search: searchInput });
-  };
-
-  const handleStatusFilter = (status: GiveawayFilters['status']) => {
-    setFilters({ status });
   };
 
   const handleScoreFilter = (score: number) => {
@@ -174,7 +182,7 @@ export function Giveaways() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Giveaways</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h1>
         <Card>
           <div className="flex items-center gap-3 text-red-500">
             <AlertCircle size={24} />
@@ -188,7 +196,7 @@ export function Giveaways() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Giveaways</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h1>
 
         {/* Search */}
         <form onSubmit={handleSearch} className="flex gap-2">
@@ -204,37 +212,8 @@ export function Giveaways() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-4">
-        <div className="flex flex-wrap gap-2">
-          <FilterButton
-            active={filters.status === 'active'}
-            onClick={() => handleStatusFilter('active')}
-          >
-            Active
-          </FilterButton>
-          <FilterButton
-            active={filters.status === 'wishlist'}
-            onClick={() => handleStatusFilter('wishlist')}
-          >
-            <Heart size={12} className="mr-1 fill-current text-pink-500" />
-            Wishlist
-          </FilterButton>
-          <FilterButton
-            active={filters.status === 'entered'}
-            onClick={() => handleStatusFilter('entered')}
-          >
-            Entered
-          </FilterButton>
-          <FilterButton
-            active={filters.status === 'won'}
-            onClick={() => handleStatusFilter('won')}
-          >
-            <Trophy size={12} className="mr-1 text-yellow-500" />
-            Won
-          </FilterButton>
-        </div>
-
         {/* Score Filter - only show for active status */}
-        {filters.status === 'active' && (
+        {status === 'active' && (
           <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
             <Star size={16} className="text-yellow-500" />
             <span className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
@@ -264,7 +243,7 @@ export function Giveaways() {
         )}
 
         {/* Win Chance Filter (slider: Any, then 0.01% .. 100%) */}
-        {(filters.status === 'active' || filters.status === 'wishlist') && (
+        {(status === 'active' || status === 'wishlist' || status === 'dlc') && (
           <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
             <Percent size={16} className="text-blue-500" />
             <span className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
@@ -295,7 +274,7 @@ export function Giveaways() {
         )}
 
         {/* Time Remaining Filter (slider: 5min .. 24h, last notch = Any) */}
-        {(filters.status === 'active' || filters.status === 'wishlist') && (
+        {(status === 'active' || status === 'wishlist' || status === 'dlc') && (
           <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
             <Clock size={16} className="text-orange-500" />
             <span className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
@@ -326,7 +305,7 @@ export function Giveaways() {
         )}
 
         {/* Safety Filter */}
-        {filters.status === 'active' && (
+        {status === 'active' && (
           <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
             <Shield size={16} className="text-green-500" />
             <span className="text-sm text-gray-600 dark:text-gray-400">Safety:</span>
@@ -410,27 +389,6 @@ export function Giveaways() {
       )}
 
     </div>
-  );
-}
-
-interface FilterButtonProps {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}
-
-function FilterButton({ active, onClick, children }: FilterButtonProps) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-        active
-          ? 'bg-primary-light text-white'
-          : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 

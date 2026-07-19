@@ -32,8 +32,8 @@ async def scan_giveaways() -> dict[str, Any]:
     """
     Scan SteamGifts for giveaways and sync to database (manual trigger).
 
-    Scans ``max_scan_pages`` regular pages plus one wishlist page, and emits
-    a ``scan_completed`` event.
+    Scans ``max_scan_pages`` regular pages plus the wishlist and DLC
+    listings, and emits a ``scan_completed`` event.
 
     Returns:
         Dictionary with scan results (new/updated/pages_scanned/scan_time).
@@ -59,11 +59,11 @@ async def scan_giveaways() -> dict[str, Any]:
                 pages=max_pages
             )
 
-            # Also scan wishlist giveaways so the Wishlist tab is populated by
-            # manual scans too. Uses the same page cap as the regular scan;
-            # the sync stops early at the end of the list, so small wishlists
-            # cost a single request. A wishlist failure shouldn't fail the
-            # whole scan.
+            # Also scan the wishlist and DLC listings so their pages are
+            # populated by manual scans too. Both use the same page cap as
+            # the regular scan; the sync stops early at the end of the list,
+            # so small listings cost a single request. A failure in either
+            # shouldn't fail the whole scan.
             wishlist_new = wishlist_updated = 0
             try:
                 wishlist_new, wishlist_updated = await ctx.giveaway_service.sync_giveaways(
@@ -72,12 +72,22 @@ async def scan_giveaways() -> dict[str, Any]:
             except Exception as e:
                 logger.error("scan_wishlist_failed", error=str(e))
 
+            dlc_new = dlc_updated = 0
+            try:
+                dlc_new, dlc_updated = await ctx.giveaway_service.sync_giveaways(
+                    pages=max_pages, dlc_only=True
+                )
+            except Exception as e:
+                logger.error("scan_dlc_failed", error=str(e))
+
             scan_time = (datetime.now(UTC) - start_time).total_seconds()
             results = {
                 "new": new_count,
                 "updated": updated_count,
                 "wishlist_new": wishlist_new,
                 "wishlist_updated": wishlist_updated,
+                "dlc_new": dlc_new,
+                "dlc_updated": dlc_updated,
                 "pages_scanned": max_pages,
                 "scan_time": round(scan_time, 2),
                 "skipped": False,
@@ -94,6 +104,8 @@ async def scan_giveaways() -> dict[str, Any]:
                 updated=updated_count,
                 wishlist_new=wishlist_new,
                 wishlist_updated=wishlist_updated,
+                dlc_new=dlc_new,
+                dlc_updated=dlc_updated,
                 pages=max_pages,
                 scan_time=scan_time,
             )

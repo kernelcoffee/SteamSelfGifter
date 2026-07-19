@@ -10,6 +10,9 @@ test.describe('Navigation', () => {
   test('sidebar links reach every page', async ({ page }) => {
     const pages: Array<[RegExp | string, RegExp]> = [
       ['Giveaways', /\/giveaways$/],
+      ['Wishlist', /\/giveaways\/wishlist$/],
+      ['DLC', /\/giveaways\/dlc$/],
+      ['Entered', /\/giveaways\/entered$/],
       ['Wins', /\/wins$/],
       ['History', /\/history$/],
       ['Analytics', /\/analytics$/],

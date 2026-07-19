@@ -45,7 +45,10 @@ function AppContent() {
 
           {/* Main pages */}
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/giveaways" element={<Giveaways />} />
+          <Route path="/giveaways" element={<Giveaways status="active" />} />
+          <Route path="/giveaways/wishlist" element={<Giveaways status="wishlist" />} />
+          <Route path="/giveaways/dlc" element={<Giveaways status="dlc" />} />
+          <Route path="/giveaways/entered" element={<Giveaways status="entered" />} />
           <Route path="/wins" element={<Wins />} />
           <Route path="/history" element={<History />} />
           <Route path="/analytics" element={<Analytics />} />

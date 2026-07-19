@@ -32,6 +32,8 @@ async def test_scan_giveaways_success():
         assert results["updated"] == 2
         assert results["wishlist_new"] == 5
         assert results["wishlist_updated"] == 2
+        assert results["dlc_new"] == 5
+        assert results["dlc_updated"] == 2
         assert results["pages_scanned"] == 3
         assert results["skipped"] is False
         assert "scan_time" in results
@@ -39,6 +41,7 @@ async def test_scan_giveaways_success():
         mock_giveaway_service.sync_giveaways.assert_has_calls([
             call(pages=3),
             call(pages=3, giveaway_type="wishlist"),
+            call(pages=3, dlc_only=True),
         ])
         mock_event_manager.broadcast_event.assert_called_once()
 
@@ -100,6 +103,7 @@ async def test_scan_giveaways_wishlist_failure_does_not_fail_scan():
     mock_giveaway_service.sync_giveaways.side_effect = [
         (5, 2),  # regular scan
         Exception("wishlist page error"),  # wishlist scan
+        (3, 1),  # DLC scan
     ]
 
     patcher, ctx = patch_automation_context(
@@ -115,6 +119,42 @@ async def test_scan_giveaways_wishlist_failure_does_not_fail_scan():
         assert results["updated"] == 2
         assert results["wishlist_new"] == 0
         assert results["wishlist_updated"] == 0
+        # The DLC scan still runs after a wishlist failure.
+        assert results["dlc_new"] == 3
+        assert results["dlc_updated"] == 1
+        assert results["skipped"] is False
+
+
+@pytest.mark.asyncio
+async def test_scan_giveaways_dlc_failure_does_not_fail_scan():
+    """A DLC scan error is logged but the rest of the scan still succeeds."""
+    from workers.scanner import scan_giveaways
+
+    mock_settings = MagicMock()
+    mock_settings.phpsessid = "test_session"
+    mock_settings.max_scan_pages = 3
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.sync_giveaways.side_effect = [
+        (5, 2),  # regular scan
+        (1, 0),  # wishlist scan
+        Exception("dlc page error"),  # DLC scan
+    ]
+
+    patcher, ctx = patch_automation_context(
+        "workers.scanner", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, patch("workers.scanner.event_manager") as mock_event_manager:
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await scan_giveaways()
+
+        assert results["new"] == 5
+        assert results["updated"] == 2
+        assert results["wishlist_new"] == 1
+        assert results["dlc_new"] == 0
+        assert results["dlc_updated"] == 0
         assert results["skipped"] is False
 
 
