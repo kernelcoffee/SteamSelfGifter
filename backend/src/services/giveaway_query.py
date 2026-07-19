@@ -62,6 +62,7 @@ class GiveawayQueryMixin:
         max_game_age: int | None = None,
         limit: int = 50,
         wishlist_priority: bool = True,
+        dlc_priority: bool = False,
     ) -> list[Giveaway]:
         """
         Get eligible giveaways based on criteria.
@@ -101,6 +102,7 @@ class GiveawayQueryMixin:
             max_game_age=max_game_age,
             limit=limit,
             wishlist_priority=wishlist_priority,
+            dlc_priority=dlc_priority,
         )
 
         return giveaways
@@ -149,9 +151,12 @@ class GiveawayQueryMixin:
         logger.info("eligibility_evaluated", total=len(candidates), **dict(counts))
 
         # candidates are ordered by price desc; the stable sort moves wishlist
-        # giveaways to the front while keeping price order within each group.
-        if criteria.wishlist_priority:
-            eligible.sort(key=lambda g: not g.is_wishlist)
+        # (then DLC) giveaways to the front while keeping price order within
+        # each group.
+        eligible.sort(key=lambda g: (
+            not (criteria.wishlist_priority and g.is_wishlist),
+            not (criteria.dlc_priority and g.is_dlc),
+        ))
         return eligible[:limit] if limit else eligible
 
     async def get_active_giveaways(

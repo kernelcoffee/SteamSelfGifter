@@ -118,11 +118,15 @@ def parse_username(html: str) -> str | None:
     return None
 
 
-def parse_giveaway_list(html: str, mark_wishlist: bool = False) -> list[dict[str, Any]]:
+def parse_giveaway_list(
+    html: str, mark_wishlist: bool = False, mark_dlc: bool = False
+) -> list[dict[str, Any]]:
     """Parse a giveaway search/listing page into giveaway dicts.
 
     Skips pinned/"Featured" advertisement giveaways. Rows that fail to parse
     are logged and dropped rather than failing the whole page.
+    ``mark_wishlist``/``mark_dlc`` tag every parsed row with the scan type
+    it came from (wishlist page, DLC page).
     """
     soup = BeautifulSoup(html, "html.parser")
 
@@ -141,6 +145,7 @@ def parse_giveaway_list(html: str, mark_wishlist: bool = False) -> list[dict[str
             giveaway = parse_giveaway_element(element)
             if giveaway:
                 giveaway["is_wishlist"] = mark_wishlist
+                giveaway["is_dlc"] = mark_dlc
                 giveaways.append(giveaway)
         except Exception as e:
             # Log error but continue parsing other giveaways

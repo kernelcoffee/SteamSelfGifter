@@ -250,7 +250,7 @@ class SettingsService:
             user_agent=user_agent,
             xsrf_token=xsrf_token,
             # Reset DLC settings
-            dlc_enabled=False,
+            dlc_priority_enabled=False,
             # Reset autojoin settings
             autojoin_enabled=False,
             autojoin_start_at=350,  # Integer default (point threshold)

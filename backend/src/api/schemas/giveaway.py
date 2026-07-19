@@ -77,6 +77,11 @@ class GiveawayBase(BaseModel):
         description="Whether game is on user's Steam wishlist",
         examples=[False],
     )
+    is_dlc: bool = Field(
+        default=False,
+        description="DLC giveaway (DLC listings are for games the user owns)",
+        examples=[False],
+    )
     is_won: bool = Field(
         default=False,
         description="Whether user has won this giveaway",

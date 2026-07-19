@@ -49,7 +49,7 @@ const mockSettings: Settings = {
   phpsessid: 'test-session-id',
   user_agent: 'test-user-agent',
   xsrf_token: 'test-token',
-  dlc_enabled: true,
+  dlc_priority_enabled: true,
   safety_check_enabled: true,
   auto_hide_unsafe: true,
   autojoin_enabled: true,
@@ -116,7 +116,7 @@ describe('useSettings', () => {
 
   describe('useUpdateSettings hook', () => {
     it('should update settings successfully', async () => {
-      const updatedSettings = { ...mockSettings, dlc_enabled: false };
+      const updatedSettings = { ...mockSettings, dlc_priority_enabled: false };
 
       mockApi.put.mockResolvedValueOnce({
         success: true,
@@ -127,14 +127,14 @@ describe('useSettings', () => {
         wrapper: createWrapper(),
       });
 
-      result.current.mutate({ dlc_enabled: false });
+      result.current.mutate({ dlc_priority_enabled: false });
 
       await waitFor(() => {
         expect(result.current.isSuccess).toBe(true);
       });
 
       expect(result.current.data).toEqual(updatedSettings);
-      expect(mockApi.put).toHaveBeenCalledWith('/api/v1/settings', { dlc_enabled: false });
+      expect(mockApi.put).toHaveBeenCalledWith('/api/v1/settings', { dlc_priority_enabled: false });
     });
 
     it('should handle update error', async () => {
@@ -148,7 +148,7 @@ describe('useSettings', () => {
         wrapper: createWrapper(),
       });
 
-      result.current.mutate({ dlc_enabled: false });
+      result.current.mutate({ dlc_priority_enabled: false });
 
       await waitFor(() => {
         expect(result.current.isError).toBe(true);

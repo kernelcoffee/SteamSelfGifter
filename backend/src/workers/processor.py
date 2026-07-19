@@ -136,6 +136,7 @@ async def _process_entries(
         min_reviews=settings.autojoin_min_reviews,
         max_game_age=settings.autojoin_max_game_age,
         wishlist_priority=bool(settings.wishlist_priority_enabled),
+        dlc_priority=bool(settings.dlc_priority_enabled),
     )
     eligible = await giveaway_service.evaluate_and_get_eligible(criteria, limit=max_entries)
 
@@ -191,7 +192,12 @@ async def _process_entries(
             logger.debug("entry_delay", delay=delay)
             await asyncio.sleep(delay)
 
-        entry_type = "wishlist" if giveaway.is_wishlist else "auto"
+        if giveaway.is_wishlist:
+            entry_type = "wishlist"
+        elif giveaway.is_dlc:
+            entry_type = "dlc"
+        else:
+            entry_type = "auto"
 
         try:
             entry = await enter(giveaway.code, entry_type=entry_type)

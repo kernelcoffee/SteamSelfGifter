@@ -22,6 +22,7 @@ export interface Giveaway {
   is_hidden: boolean;
   is_entered: boolean;
   is_wishlist: boolean;
+  is_dlc: boolean;
   is_won: boolean;
   won_at: string | null;
   is_safe: boolean | null;
@@ -40,7 +41,7 @@ export interface Entry {
   id: number;
   giveaway_id: number;
   points_spent: number;
-  entry_type: 'manual' | 'auto' | 'wishlist';
+  entry_type: 'manual' | 'auto' | 'wishlist' | 'dlc';
   status: 'success' | 'failed' | 'pending';
   entered_at: string;
   error_message: string | null;
@@ -89,7 +90,7 @@ export interface Settings {
   phpsessid: string | null;
   user_agent: string;
   xsrf_token: string | null;
-  dlc_enabled: boolean;
+  dlc_priority_enabled: boolean;
   safety_check_enabled: boolean;
   auto_hide_unsafe: boolean;
   autojoin_enabled: boolean;

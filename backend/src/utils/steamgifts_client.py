@@ -451,7 +451,9 @@ class SteamGiftsClient:
             )
 
         giveaways = parser.parse_giveaway_list(
-            response.text, mark_wishlist=giveaway_type == "wishlist"
+            response.text,
+            mark_wishlist=giveaway_type == "wishlist",
+            mark_dlc=dlc_only,
         )
 
         # Zero rows without the explicit "No results were found." marker means

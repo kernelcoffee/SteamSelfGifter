@@ -19,6 +19,7 @@ def _autojoin_settings(**overrides):
     mock_settings.autojoin_start_at = 0
     mock_settings.autojoin_stop_at = 0
     mock_settings.wishlist_priority_enabled = True
+    mock_settings.dlc_priority_enabled = False
     mock_settings.max_entries_per_cycle = 5
     mock_settings.entry_delay_min = 0.01
     mock_settings.entry_delay_max = 0.02
@@ -28,13 +29,15 @@ def _autojoin_settings(**overrides):
     return mock_settings
 
 
-def _mock_giveaway(code="TEST123", price=50, game_name="Test Game", is_wishlist=False):
+def _mock_giveaway(code="TEST123", price=50, game_name="Test Game",
+                   is_wishlist=False, is_dlc=False):
     """Build a giveaway mock with the fields the processor touches."""
     mock_giveaway = MagicMock()
     mock_giveaway.code = code
     mock_giveaway.price = price
     mock_giveaway.game_name = game_name
     mock_giveaway.is_wishlist = is_wishlist
+    mock_giveaway.is_dlc = is_dlc
     return mock_giveaway
 
 
@@ -261,6 +264,40 @@ async def test_process_giveaways_wishlist_entry_type():
         mock_giveaway_service.enter_giveaway.assert_awaited_once_with(
             "WISH1", entry_type="wishlist"
         )
+
+
+@pytest.mark.asyncio
+async def test_process_giveaways_dlc_entry_type():
+    """DLC giveaways are recorded with entry_type='dlc' (wishlist wins ties)."""
+    from workers.processor import process_giveaways
+
+    mock_settings = _autojoin_settings(dlc_priority_enabled=True)
+
+    dlc_ga = _mock_giveaway(code="DLC01", is_dlc=True)
+    both_ga = _mock_giveaway(code="BOTH1", is_wishlist=True, is_dlc=True)
+
+    mock_entry = MagicMock()
+    mock_entry.points_spent = 50
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
+    mock_giveaway_service.evaluate_and_get_eligible.return_value = [both_ga, dlc_ga]
+    mock_giveaway_service.enter_giveaway.return_value = mock_entry
+
+    patcher, ctx = patch_automation_context(
+        "workers.processor", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, \
+         patch("workers.processor.event_manager") as mock_event_manager, \
+         patch("workers.processor.asyncio.sleep", new_callable=AsyncMock):
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await process_giveaways()
+
+        assert results["entered"] == 2
+        mock_giveaway_service.enter_giveaway.assert_any_await("BOTH1", entry_type="wishlist")
+        mock_giveaway_service.enter_giveaway.assert_any_await("DLC01", entry_type="dlc")
 
 
 @pytest.mark.asyncio

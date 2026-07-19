@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users, Package } from 'lucide-react';
 import { SiSteam } from 'react-icons/si';
 import { Card, Button, Badge, Input, CardSkeleton } from '@/components/common';
 import { useInfiniteGiveaways, useEnterGiveaway, useHideGiveaway, useUnhideGiveaway, useRemoveEntry, useCheckGiveawaySafety, useHideOnSteamGifts, usePostComment, type GiveawayFilters } from '@/hooks';
@@ -496,6 +496,12 @@ function GiveawayCard({ giveaway, onEnter, onHide, onUnhide, onRemoveEntry, onCh
               <Badge variant="default" size="sm" className="bg-pink-100 text-pink-600 dark:bg-pink-900/30 dark:text-pink-400">
                 <Heart size={10} className="mr-1 fill-current" />
                 Wishlist
+              </Badge>
+            )}
+            {giveaway.is_dlc && (
+              <Badge variant="default" size="sm" className="bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400">
+                <Package size={10} className="mr-1" />
+                DLC
               </Badge>
             )}
             {giveaway.is_entered && !giveaway.is_won && <Badge variant="success" size="sm">Entered</Badge>}

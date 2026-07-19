@@ -34,9 +34,9 @@ class SettingsBase(BaseModel):
     )
 
     # DLC Settings
-    dlc_enabled: bool = Field(
+    dlc_priority_enabled: bool = Field(
         default=False,
-        description="Whether to enter DLC giveaways",
+        description="DLC giveaways bypass autojoin filters and are entered after wishlist ones",
         examples=[False],
     )
 
@@ -203,7 +203,7 @@ class SettingsResponse(SettingsBase):
                     "phpsessid": "abc123...",
                     "user_agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/82.0",
                     "xsrf_token": None,
-                    "dlc_enabled": False,
+                    "dlc_priority_enabled": False,
                     "autojoin_enabled": True,
                     "autojoin_start_at": 350,
                     "autojoin_stop_at": 200,
@@ -253,9 +253,9 @@ class SettingsUpdate(BaseModel):
     )
 
     # DLC Settings
-    dlc_enabled: bool | None = Field(
+    dlc_priority_enabled: bool | None = Field(
         default=None,
-        description="Whether to enter DLC giveaways",
+        description="DLC giveaways bypass autojoin filters and are entered after wishlist ones",
     )
 
     # Safety Settings
