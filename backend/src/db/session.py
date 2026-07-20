@@ -56,6 +56,12 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
             await session.close()
 
 
+# Revision id of the initial schema migration (93fe35470006_initial_schema.py).
+# Untracked databases predating Alembic are stamped here so later migrations
+# still apply.
+_INITIAL_REVISION = "93fe35470006"
+
+
 async def init_db() -> None:
     """
     Initialize the database by running Alembic migrations.
@@ -64,12 +70,12 @@ async def init_db() -> None:
     Uses Alembic's upgrade command to apply any pending migrations.
 
     For existing databases without alembic_version table, it will first
-    stamp the database at the initial migration to avoid recreating tables.
+    stamp the database at the initial migration to avoid recreating tables,
+    then upgrade to head.
     """
     import asyncio
     import os
     import sqlite3
-    from concurrent.futures import ThreadPoolExecutor
 
     from alembic.config import Config
 
@@ -115,17 +121,16 @@ async def init_db() -> None:
                 conn.close()
 
                 if has_tables and not alembic_has_entries:
-                    # Existing database without alembic tracking (or empty alembic_version) - stamp it
-                    command.stamp(alembic_cfg, "head")
-                    return  # No upgrade needed, already at head
+                    # Existing database without alembic tracking (or empty alembic_version):
+                    # its schema matches the initial revision, so stamp it there and let
+                    # the upgrade below apply every later migration.
+                    command.stamp(alembic_cfg, _INITIAL_REVISION)
 
         # Run migrations
         command.upgrade(alembic_cfg, "head")
 
-    # Run migrations in a thread pool to avoid blocking the event loop
-    loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor() as executor:
-        await loop.run_in_executor(executor, run_migrations)
+    # Run migrations in a thread to avoid blocking the event loop
+    await asyncio.to_thread(run_migrations)
 
 
 async def close_db() -> None:
