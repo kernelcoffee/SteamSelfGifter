@@ -17,10 +17,6 @@ from core.exceptions import (
 from utils import steamgifts_parser as parser
 from utils.steam_client import RateLimiter
 
-# Re-exported for backwards compatibility; the parsing logic (and these
-# word lists) live in utils.steamgifts_parser.
-from utils.steamgifts_parser import FORBIDDEN_WORDS, GOOD_WORDS  # noqa: F401
-
 logger = structlog.get_logger()
 
 

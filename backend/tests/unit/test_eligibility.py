@@ -30,6 +30,7 @@ from services.eligibility import (
     PRICE_BELOW_MIN,
     REVIEWS_BELOW_MIN,
     SCORE_BELOW_MIN,
+    UNSAFE,
     EligibilityCriteria,
     evaluate_eligibility,
 )
@@ -45,6 +46,7 @@ def _gw(**kw):
         end_time=NOW + timedelta(days=1),
         is_hidden=False,
         is_entered=False,
+        is_safe=None,
         is_wishlist=False,
         is_dlc=False,
         price=50,
@@ -83,6 +85,17 @@ def test_hidden():
 def test_entered():
     crit = EligibilityCriteria(min_price=10)
     assert evaluate_eligibility(_gw(is_entered=True), _game(), crit, NOW) == ENTERED
+
+
+def test_unsafe_and_borderline_excluded_unchecked_passes():
+    crit = EligibilityCriteria(min_price=10)
+    # is_safe False covers both unsafe and borderline verdicts
+    assert evaluate_eligibility(_gw(is_safe=False), _game(), crit, NOW) == UNSAFE
+    # Never-checked (NULL) and safe giveaways pass
+    assert evaluate_eligibility(_gw(is_safe=None), _game(), crit, NOW) == ELIGIBLE
+    assert evaluate_eligibility(_gw(is_safe=True), _game(), crit, NOW) == ELIGIBLE
+    # Safety exclusion also applies to wishlist/DLC bypass giveaways
+    assert evaluate_eligibility(_gw(is_wishlist=True, is_safe=False), None, crit, NOW) == UNSAFE
 
 
 def test_price_below_min():
@@ -206,11 +219,11 @@ async def _seed(session):
     ])
 
     def gw(code, price=50, game_id=1, end=future, hidden=False, entered=False,
-           wishlist=False, dlc=False):
+           wishlist=False, dlc=False, safe=None):
         return Giveaway(
             code=code, url=f"http://x/{code}", game_name=code, price=price,
             end_time=end, game_id=game_id, is_hidden=hidden, is_entered=entered,
-            is_wishlist=wishlist, is_dlc=dlc,
+            is_wishlist=wishlist, is_dlc=dlc, is_safe=safe,
         )
 
     session.add_all([
@@ -232,6 +245,11 @@ async def _seed(session):
         gw("wishhidden", game_id=1, hidden=True, wishlist=True),  # hidden beats wishlist
         # DLC row: bypasses filters only when dlc_priority is on
         gw("dlcbad", price=1, game_id=2, dlc=True),            # fails price + score filters
+        # Safety rows: is_safe False (unsafe or borderline) is excluded even
+        # for wishlist; explicit True and NULL (unchecked) pass
+        gw("unsafegw", price=80, game_id=1, safe=False),
+        gw("wishunsafe", price=80, game_id=1, wishlist=True, safe=False),
+        gw("safegw", price=80, game_id=1, safe=True),          # eligible
     ])
     await session.commit()
 

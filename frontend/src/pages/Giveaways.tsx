@@ -541,6 +541,11 @@ function GiveawayCard({ giveaway, onEnter, onHide, onUnhide, onRemoveEntry, onCh
                 <Shield size={10} className="mr-1" />
                 Safe
               </Badge>
+            ) : (giveaway.safety_score ?? 0) >= 50 ? (
+              <Badge variant="warning" size="sm">
+                <ShieldAlert size={10} className="mr-1" />
+                Borderline
+              </Badge>
             ) : (
               <Badge variant="error" size="sm">
                 <ShieldAlert size={10} className="mr-1" />

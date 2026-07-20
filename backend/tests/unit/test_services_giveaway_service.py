@@ -693,12 +693,11 @@ async def test_check_giveaway_safety_safe(test_db, mock_sg_client, mock_game_ser
         # Mock safety check response
         mock_sg_client.check_giveaway_safety = AsyncMock(
             return_value={
+                "verdict": "safe",
                 "is_safe": True,
                 "safety_score": 100,
-                "bad_count": 0,
-                "good_count": 0,
-                "net_bad": 0,
                 "details": [],
+                "warning_comments": 0,
             }
         )
 
@@ -707,10 +706,11 @@ async def test_check_giveaway_safety_safe(test_db, mock_sg_client, mock_game_ser
         assert result["is_safe"] is True
         assert result["safety_score"] == 100
 
-        # Verify giveaway was updated
+        # Verify giveaway was updated, including the freshness timestamp
         giveaway = await service.giveaway_repo.get_by_code("AbCd1")
         assert giveaway.is_safe is True
         assert giveaway.safety_score == 100
+        assert giveaway.safety_checked_at is not None
 
 
 @pytest.mark.asyncio
@@ -731,12 +731,11 @@ async def test_check_giveaway_safety_unsafe(test_db, mock_sg_client, mock_game_s
         # Mock unsafe response
         mock_sg_client.check_giveaway_safety = AsyncMock(
             return_value={
+                "verdict": "unsafe",
                 "is_safe": False,
                 "safety_score": 20,
-                "bad_count": 4,
-                "good_count": 0,
-                "net_bad": 4,
                 "details": ["ban", "fake", "don't enter"],
+                "warning_comments": 0,
             }
         )
 
@@ -860,12 +859,11 @@ async def test_enter_giveaway_with_safety_check_safe(test_db, mock_sg_client, mo
         # Mock safety check - safe
         mock_sg_client.check_giveaway_safety = AsyncMock(
             return_value={
+                "verdict": "safe",
                 "is_safe": True,
                 "safety_score": 100,
-                "bad_count": 0,
-                "good_count": 0,
-                "net_bad": 0,
                 "details": [],
+                "warning_comments": 0,
             }
         )
         # Mock successful entry
@@ -900,12 +898,11 @@ async def test_enter_giveaway_with_safety_check_unsafe(test_db, mock_sg_client, 
         # Mock safety check - unsafe
         mock_sg_client.check_giveaway_safety = AsyncMock(
             return_value={
+                "verdict": "unsafe",
                 "is_safe": False,
                 "safety_score": 20,
-                "bad_count": 4,
-                "good_count": 0,
-                "net_bad": 4,
                 "details": ["ban", "fake"],
+                "warning_comments": 0,
             }
         )
         # Mock game ID for hiding
@@ -927,6 +924,203 @@ async def test_enter_giveaway_with_safety_check_unsafe(test_db, mock_sg_client, 
         entries = await service.entry_repo.get_by_status("failed")
         assert len(entries) == 1
         assert "Unsafe giveaway" in entries[0].error_message
+
+
+@pytest.mark.asyncio
+async def test_enter_giveaway_with_safety_check_borderline_skips_without_hiding(
+    test_db, mock_sg_client, mock_game_service
+):
+    """Borderline verdicts skip the entry but never hide the giveaway."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        await service.giveaway_repo.create(
+            code="Bord1",
+            url="https://www.steamgifts.com/giveaway/Bord1/",
+            game_name="Suspicious Game",
+            price=50,
+        )
+        await session.commit()
+
+        mock_sg_client.check_giveaway_safety = AsyncMock(
+            return_value={
+                "verdict": "borderline",
+                "is_safe": False,
+                "safety_score": 80,
+                "details": ["\\bfake\\b"],
+                "warning_comments": 0,
+            }
+        )
+
+        entry = await service.enter_giveaway_with_safety_check("Bord1", "auto")
+
+        assert entry is None
+        mock_sg_client.enter_giveaway.assert_not_called()
+        mock_sg_client.hide_giveaway.assert_not_called()
+
+        # Giveaway stays visible (not hidden) but excluded from eligibility
+        giveaway = await service.giveaway_repo.get_by_code("Bord1")
+        assert giveaway.is_hidden is False
+        assert giveaway.is_safe is False
+
+        entries = await service.entry_repo.get_by_status("failed")
+        assert len(entries) == 1
+        assert "Borderline" in entries[0].error_message
+
+
+@pytest.mark.asyncio
+async def test_enter_giveaway_with_safety_check_fails_closed(
+    test_db, mock_sg_client, mock_game_service
+):
+    """A safety check error skips the giveaway instead of entering unchecked."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        await service.giveaway_repo.create(
+            code="Err01",
+            url="https://www.steamgifts.com/giveaway/Err01/",
+            game_name="Unreachable Game",
+            price=50,
+        )
+        await session.commit()
+
+        mock_sg_client.check_giveaway_safety = AsyncMock(side_effect=Exception("network down"))
+
+        entry = await service.enter_giveaway_with_safety_check("Err01", "auto")
+
+        assert entry is None
+        mock_sg_client.enter_giveaway.assert_not_called()
+
+        # Nothing recorded or flagged: the giveaway is retried next cycle
+        giveaway = await service.giveaway_repo.get_by_code("Err01")
+        assert giveaway.is_safe is None
+        entries = await service.entry_repo.get_by_status("failed")
+        assert len(entries) == 0
+
+
+@pytest.mark.asyncio
+async def test_enter_giveaway_with_safety_check_reuses_fresh_verdict(
+    test_db, mock_sg_client, mock_game_service
+):
+    """A fresh stored verdict is trusted without refetching the page."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        await service.giveaway_repo.create(
+            code="Fresh",
+            url="https://www.steamgifts.com/giveaway/Fresh/",
+            game_name="Recently Checked Game",
+            price=50,
+            is_safe=True,
+            safety_score=100,
+            safety_checked_at=utcnow(),
+        )
+        await session.commit()
+
+        mock_sg_client.check_giveaway_safety = AsyncMock()
+        mock_sg_client.enter_giveaway = AsyncMock(return_value=True)
+
+        entry = await service.enter_giveaway_with_safety_check("Fresh", "auto")
+
+        assert entry is not None
+        mock_sg_client.check_giveaway_safety.assert_not_called()
+        mock_sg_client.enter_giveaway.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_enter_giveaway_with_safety_check_rechecks_stale_verdict(
+    test_db, mock_sg_client, mock_game_service
+):
+    """A stale stored verdict triggers a fresh page check."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        await service.giveaway_repo.create(
+            code="Stale",
+            url="https://www.steamgifts.com/giveaway/Stale/",
+            game_name="Stale Verdict Game",
+            price=50,
+            is_safe=True,
+            safety_score=100,
+            safety_checked_at=utcnow() - timedelta(hours=48),
+        )
+        await session.commit()
+
+        mock_sg_client.check_giveaway_safety = AsyncMock(
+            return_value={
+                "verdict": "safe",
+                "is_safe": True,
+                "safety_score": 100,
+                "details": [],
+                "warning_comments": 0,
+            }
+        )
+        mock_sg_client.enter_giveaway = AsyncMock(return_value=True)
+
+        entry = await service.enter_giveaway_with_safety_check("Stale", "auto")
+
+        assert entry is not None
+        mock_sg_client.check_giveaway_safety.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_sweep_unchecked_safety(test_db, mock_sg_client, mock_game_service):
+    """The sweep scores unchecked giveaways and hides outright traps."""
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+
+        future = utcnow() + timedelta(days=1)
+        for code, name in (("Swp01", "Fine Game"), ("Swp02", "Trap Game")):
+            await service.giveaway_repo.create(
+                code=code,
+                url=f"https://www.steamgifts.com/giveaway/{code}/",
+                game_name=name,
+                price=50,
+                end_time=future,
+            )
+        # Already-checked giveaway must not be re-swept
+        await service.giveaway_repo.create(
+            code="Swp03",
+            url="https://www.steamgifts.com/giveaway/Swp03/",
+            game_name="Checked Game",
+            price=50,
+            end_time=future,
+            is_safe=True,
+            safety_score=100,
+            safety_checked_at=utcnow(),
+        )
+        await session.commit()
+
+        verdicts = {
+            "Swp01": {
+                "verdict": "safe",
+                "is_safe": True,
+                "safety_score": 100,
+                "details": [],
+                "warning_comments": 0,
+            },
+            "Swp02": {
+                "verdict": "unsafe",
+                "is_safe": False,
+                "safety_score": 0,
+                "details": ["\\btrap\\b"],
+                "warning_comments": 0,
+            },
+        }
+        mock_sg_client.check_giveaway_safety = AsyncMock(side_effect=lambda c: verdicts[c])
+        mock_sg_client.get_giveaway_game_id = AsyncMock(return_value=12345)
+        mock_sg_client.hide_giveaway = AsyncMock(return_value=True)
+
+        counts = await service.sweep_unchecked_safety(limit=10, delay_min=0, delay_max=0)
+
+        assert counts == {"checked": 2, "safe": 1, "borderline": 0, "unsafe": 1, "errors": 0}
+        # The trap was hidden, the fine one wasn't
+        trap = await service.giveaway_repo.get_by_code("Swp02")
+        assert trap.is_hidden is True
+        fine = await service.giveaway_repo.get_by_code("Swp01")
+        assert fine.is_hidden is False
+        # All swept rows carry verdicts now
+        assert fine.is_safe is True and fine.safety_checked_at is not None
 
 
 # ==================== DLC Scanning Service Tests ====================

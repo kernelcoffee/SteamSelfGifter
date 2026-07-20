@@ -542,93 +542,97 @@ async def test_client_without_session_raises_error(steamgifts_client):
 
 # ==================== Safety Detection Tests ====================
 
+def _giveaway_page(description: str = "", comments: tuple[str, ...] = ()) -> str:
+    """Minimal giveaway page in real SteamGifts structure."""
+    comment_html = "".join(
+        '<div class="comment__display-state">'
+        f'<div class="comment__description markdown"><p>{c}</p></div></div>'
+        for c in comments
+    )
+    description_html = (
+        '<div class="page__description"><div class="page__description__display-state">'
+        f'<div class="markdown markdown--resize-body"><p>{description}</p></div></div></div>'
+        if description
+        else ""
+    )
+    return (
+        "<html><body>"
+        '<nav class="nav">ban fake bot do not enter</nav>'  # chrome must be ignored
+        f"{description_html}{comment_html}"
+        "</body></html>"
+    )
+
+
 class TestSafetyDetection:
     """Tests for trap/scam detection functionality."""
 
-    def test_check_page_safety_clean_page(self, steamgifts_client):
-        """Test check_page_safety returns safe for clean pages."""
-        clean_html = """
-        <html>
-            <body>
-                <div class="giveaway">
-                    <h2>Portal 2 Giveaway</h2>
-                    <p>Enjoy this great game!</p>
-                </div>
-            </body>
-        </html>
-        """
+    def test_clean_page_is_safe(self, steamgifts_client):
+        result = steamgifts_client.check_page_safety(
+            _giveaway_page("Enjoy this great game, good luck everyone!")
+        )
 
-        result = steamgifts_client.check_page_safety(clean_html)
-
+        assert result["verdict"] == "safe"
         assert result["is_safe"] is True
         assert result["safety_score"] == 100
-        assert result["bad_count"] == 0
-        assert result["good_count"] == 0
         assert result["details"] == []
 
-    def test_check_page_safety_with_forbidden_words(self, steamgifts_client):
-        """Test check_page_safety detects forbidden words."""
-        unsafe_html = """
-        <html>
-            <body>
-                <div class="giveaway">
-                    <h2>Test Giveaway</h2>
-                    <p>Warning: don't enter this giveaway, it's fake!</p>
-                    <p>You will get a ban if you enter.</p>
-                </div>
-            </body>
-        </html>
-        """
+    def test_trap_description_is_unsafe(self, steamgifts_client):
+        result = steamgifts_client.check_page_safety(
+            _giveaway_page("Do not enter! This is a bot trap and you will get banned.")
+        )
 
-        result = steamgifts_client.check_page_safety(unsafe_html)
-
+        assert result["verdict"] == "unsafe"
         assert result["is_safe"] is False
-        assert result["safety_score"] < 100
-        assert result["bad_count"] >= 3  # "don't enter", "fake", "ban"
+        assert result["safety_score"] < 50
         assert len(result["details"]) > 0
-        assert any("ban" in word for word in result["details"])
 
-    def test_check_page_safety_with_false_positives(self, steamgifts_client):
-        """Test check_page_safety handles false positives correctly."""
-        # Contains "ban" but in context of "bank" or "banner"
-        tricky_html = """
-        <html>
-            <body>
-                <div class="giveaway">
-                    <h2>Bank Heist Simulator</h2>
-                    <p>Rob the bank and escape!</p>
-                    <p>See the banner above for details.</p>
-                </div>
-            </body>
-        </html>
-        """
+    def test_page_chrome_never_matches(self, steamgifts_client):
+        # The nav in the helper is full of trap words; without description or
+        # comments the page must still score 100.
+        result = steamgifts_client.check_page_safety(_giveaway_page())
 
-        result = steamgifts_client.check_page_safety(tricky_html)
+        assert result["verdict"] == "safe"
+        assert result["safety_score"] == 100
 
-        # Should be safe because "bank" and "banner" are in good words list
-        assert result["is_safe"] is True
-        assert result["good_count"] >= result["bad_count"]  # Good words cancel out
+    def test_word_boundaries_prevent_false_positives(self, steamgifts_client):
+        result = steamgifts_client.check_page_safety(
+            _giveaway_page("Bank Heist Simulator: rob the urban bank, dodge robots, see the banner!")
+        )
 
-    def test_check_page_safety_borderline(self, steamgifts_client):
-        """Test check_page_safety with borderline content."""
-        # Only one suspicious word - might be false positive
-        borderline_html = """
-        <html>
-            <body>
-                <div class="giveaway">
-                    <h2>Cool Game</h2>
-                    <p>This is totally not a bot giveaway!</p>
-                </div>
-            </body>
-        </html>
-        """
+        assert result["verdict"] == "safe"
+        assert result["safety_score"] == 100
 
-        result = steamgifts_client.check_page_safety(borderline_html)
+    def test_single_weak_word_is_borderline(self, steamgifts_client):
+        result = steamgifts_client.check_page_safety(
+            _giveaway_page("The screenshots on the store page are fake by the way")
+        )
 
-        # Should have detected "bot" and possibly "not" context
-        assert result["bad_count"] >= 1
-        # With only 1-2 bad words, should still be allowed (borderline)
-        assert result["safety_score"] >= 50
+        assert result["verdict"] == "borderline"
+        assert result["is_safe"] is False
+        assert 50 <= result["safety_score"] < 85
+
+    def test_warning_comments_lower_score(self, steamgifts_client):
+        result = steamgifts_client.check_page_safety(
+            _giveaway_page(
+                "Good luck!",
+                comments=(
+                    "do not enter, this is a bot trap",
+                    "don't enter — you will get banned",
+                    "trap giveaway, stay away",
+                ),
+            )
+        )
+
+        assert result["warning_comments"] == 3
+        assert result["verdict"] == "borderline"
+
+    def test_single_warning_comment_stays_safe(self, steamgifts_client):
+        result = steamgifts_client.check_page_safety(
+            _giveaway_page("Good luck!", comments=("nice giveaway", "do not enter, trap!"))
+        )
+
+        assert result["warning_comments"] == 1
+        assert result["verdict"] == "safe"
 
     @pytest.mark.asyncio
     async def test_check_giveaway_safety_success(self, steamgifts_client):

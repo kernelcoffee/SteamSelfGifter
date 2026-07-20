@@ -246,12 +246,14 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         """
         now = utcnow()
 
-        # Base filters: active, not hidden, not entered
+        # Base filters: active, not hidden, not entered, not flagged by the
+        # safety check (NULL = unchecked passes; mirrors evaluate_eligibility)
         base_conditions = [
             self.model.end_time.isnot(None),
             self.model.end_time > now,
             self.model.is_hidden == False,  # noqa: E712
             self.model.is_entered == False,  # noqa: E712
+            self.model.is_safe.isnot(False),
         ]
 
         # Wishlist giveaways bypass the price and game-quality filters;
