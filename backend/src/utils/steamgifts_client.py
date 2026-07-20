@@ -96,6 +96,7 @@ class SteamGiftsClient:
         rate_limit_calls: int = 30,
         rate_limit_window: int = 60,
         max_retries: int = 3,
+        transport: httpx.AsyncBaseTransport | None = None,
     ):
         """
         Initialize SteamGifts client.
@@ -108,6 +109,7 @@ class SteamGiftsClient:
             rate_limit_calls: Max requests per rate-limit window
             rate_limit_window: Rate-limit window in seconds
             max_retries: Retry attempts for transient failures
+            transport: Optional httpx transport, used by tests to mock HTTP
 
         Example:
             >>> client = SteamGiftsClient(
@@ -126,6 +128,7 @@ class SteamGiftsClient:
             window_seconds=rate_limit_window,
         )
 
+        self._transport = transport
         self._client: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
@@ -148,6 +151,7 @@ class SteamGiftsClient:
                 cookies=cookies,
                 headers=headers,
                 follow_redirects=True,
+                transport=self._transport,
             )
 
             # Extract XSRF token if not provided (only if we have a session)
