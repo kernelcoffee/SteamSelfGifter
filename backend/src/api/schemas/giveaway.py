@@ -124,7 +124,9 @@ class GiveawayResponse(GiveawayBase):
         examples=[123],
     )
 
-    @computed_field(description="Win chance in percent (copies/entries*100) as of the last scan")
+    @computed_field(  # type: ignore[prop-decorator]  # pydantic-documented mypy limitation
+        description="Win chance in percent (copies/entries*100) as of the last scan"
+    )
     @property
     def win_chance(self) -> float:
         """Chance to win in percent; 100 when nobody has entered yet.
