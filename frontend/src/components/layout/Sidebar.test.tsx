@@ -42,4 +42,11 @@ describe('Sidebar', () => {
     const listItems = screen.getAllByRole('listitem');
     expect(listItems).toHaveLength(10);
   });
+
+  it('should pin Settings as the last link, in the bottom section', () => {
+    render(<Sidebar />);
+
+    const links = screen.getAllByRole('link');
+    expect(links[links.length - 1]).toHaveTextContent('Settings');
+  });
 });
