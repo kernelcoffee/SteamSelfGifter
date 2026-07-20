@@ -66,28 +66,8 @@ async def start_scheduler(settings_service: SettingsServiceDep) -> dict[str, Any
     settings = await settings_service.get_settings()
     cycle_interval_minutes = settings.scan_interval_minutes or 30
 
-    # Remove any existing jobs (in case of restart)
-    try:
-        scheduler_manager.remove_job("automation_cycle")
-    except Exception:
-        pass
-
-    # Legacy job cleanup
-    try:
-        scheduler_manager.remove_job("scan_giveaways")
-    except Exception:
-        pass
-
-    try:
-        scheduler_manager.remove_job("process_giveaways")
-    except Exception:
-        pass
-
-    # Legacy safety-check job cleanup (safety is now inline at entry time)
-    try:
-        scheduler_manager.remove_job("safety_check")
-    except Exception:
-        pass
+    # Remove any existing job (in case of restart); remove_job never raises
+    scheduler_manager.remove_job("automation_cycle")
 
     # Add the single automation cycle job
     scheduler_manager.add_interval_job(
