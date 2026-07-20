@@ -29,6 +29,17 @@ npm install
 npm test  # Verify setup
 ```
 
+### Data directory
+
+The backend picks its data directory at runtime (`get_data_dir()` in
+`backend/src/core/config.py`): `/config` if it exists (the Docker volume,
+mounted from `./config` by the compose file), otherwise `./data` relative to
+the working directory — i.e. `backend/data/` when running uvicorn from
+`backend/`. Each holds a `steamselfgifter.db` and `app.log`, and both are
+gitignored, so a checkout that has seen both local and container runs will
+have two databases; check which one your process is using before inspecting
+data.
+
 ## Guidelines
 
 ### Code Style
