@@ -6,7 +6,8 @@ Single unified job that performs all automated tasks in sequence:
 3. Scan DLC giveaways
 4. Sync wins
 5. Sync entered giveaways
-6. Process eligible giveaways (enter them)
+6. Safety-sweep unchecked giveaways
+7. Process eligible giveaways (enter them)
 
 This is the engine driven both by the scheduler (interval job) and by the
 manual ``/run`` trigger. It shares its bootstrap with the other workers via
@@ -164,6 +165,24 @@ async def automation_cycle() -> dict[str, Any]:
             except Exception as e:
                 logger.error("sync_entered_failed", error=str(e))
                 results["entered_sync"]["error"] = str(e)
+
+            # === STEP 3.75: Safety sweep ===
+            # Score unchecked giveaways before entry selection so verdicts are
+            # already stored when the entry loop runs (and traps are hidden).
+            logger.info("automation_step", step="safety_sweep")
+            results["safety_sweep"] = {"checked": 0, "skipped": False}
+
+            if not settings.safety_check_enabled:
+                results["safety_sweep"]["skipped"] = True
+                results["safety_sweep"]["reason"] = "safety_check_disabled"
+            else:
+                try:
+                    sweep_counts = await giveaway_service.sweep_unchecked_safety(limit=10)
+                    results["safety_sweep"] = {**sweep_counts, "skipped": False}
+                    logger.info("safety_sweep_completed", **sweep_counts)
+                except Exception as e:
+                    logger.error("safety_sweep_failed", error=str(e))
+                    results["safety_sweep"]["error"] = str(e)
 
             # === STEP 4: Process entries ===
             logger.info("automation_step", step="process_entries")

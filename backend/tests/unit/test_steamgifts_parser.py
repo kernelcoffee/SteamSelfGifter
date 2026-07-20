@@ -119,7 +119,84 @@ class TestParserEdgeCases:
         assert clean["is_safe"] is True
         assert clean["safety_score"] == 100
 
-        trap = parser.check_page_safety(
-            "please do not enter this is fake and you will get a ban, bot trap"
+
+@pytest.fixture(scope="module")
+def comments_html() -> str:
+    return (FIXTURES / "giveaway_page.html").read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def description_html() -> str:
+    return (FIXTURES / "giveaway_page_description.html").read_text(encoding="utf-8")
+
+
+class TestGiveawayPageFixtures:
+    """Structural regression tests against sanitized live giveaway pages.
+
+    giveaway_page.html: a real giveaway with 6 visible comments (plus
+    collapsed placeholders that must be excluded) and no description.
+    giveaway_page_description.html: a real giveaway with a description
+    and no comments. Refresh with tests/scripts/fetch_giveaway_page.py.
+    """
+
+    def test_comments_extracted_collapsed_excluded(self, comments_html):
+        texts = parser.extract_giveaway_texts(comments_html)
+        assert texts["description"] == ""
+        assert len(texts["comments"]) == 6
+        assert not any("collapsed" in c.lower() for c in texts["comments"])
+
+    def test_fixture_actually_contains_collapsed_placeholders(self, comments_html):
+        # Guard against a silently outdated fixture: the collapse-state blocks
+        # must be present for the exclusion assertion above to mean anything.
+        assert comments_html.count("comment__collapse-state") > 0
+
+    def test_description_extracted(self, description_html):
+        texts = parser.extract_giveaway_texts(description_html)
+        assert texts["description"] == "Mystery Box Bundle - Holiday Edition, Fanatical"
+        assert texts["comments"] == []
+
+    def test_both_real_pages_score_safe(self, comments_html, description_html):
+        assert parser.check_page_safety(comments_html)["verdict"] == "safe"
+        assert parser.check_page_safety(description_html)["verdict"] == "safe"
+
+
+class TestSafetyScoring:
+    def test_trap_description_unsafe(self):
+        result = parser.score_giveaway_safety(
+            "Do not enter, this is a bot trap, you will get banned", []
         )
-        assert trap["is_safe"] is False
+        assert result["verdict"] == "unsafe"
+        assert result["is_safe"] is False
+        assert result["safety_score"] < 50
+        assert result["details"]
+
+    def test_weak_word_borderline(self):
+        result = parser.score_giveaway_safety("these screenshots look fake", [])
+        assert result["verdict"] == "borderline"
+        assert result["safety_score"] == 80
+
+    def test_word_boundaries(self):
+        result = parser.score_giveaway_safety(
+            "urban banking robots and banners in abandoned bandit lands", []
+        )
+        assert result["verdict"] == "safe"
+        assert result["safety_score"] == 100
+
+    def test_comment_weight_capped(self):
+        warnings = ["do not enter, bot trap"] * 10
+        result = parser.score_giveaway_safety("", warnings)
+        # Cap keeps a comment pile-on at borderline, never outright unsafe
+        assert result["warning_comments"] == 10
+        assert result["verdict"] == "borderline"
+        assert result["safety_score"] == 60
+
+    def test_single_warning_comment_safe(self):
+        result = parser.score_giveaway_safety("", ["don't enter!!"])
+        assert result["verdict"] == "safe"
+        assert result["safety_score"] == 85
+
+    def test_empty_texts_safe(self):
+        result = parser.score_giveaway_safety("", [])
+        assert result["verdict"] == "safe"
+        assert result["safety_score"] == 100
+        assert result["warning_comments"] == 0

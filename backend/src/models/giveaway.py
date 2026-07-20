@@ -168,6 +168,11 @@ class Giveaway(Base, TimestampMixin):
         nullable=True,
         comment="Scam detection confidence (0-100)",
     )
+    safety_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        comment="When the safety verdict was last computed (UTC); NULL = never checked",
+    )
 
     # ==================== Eligibility Diagnostics ====================
     eligibility_reason: Mapped[str | None] = mapped_column(

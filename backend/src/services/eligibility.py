@@ -32,6 +32,7 @@ ELIGIBLE = "eligible"
 EXPIRED = "expired"
 HIDDEN = "hidden"
 ENTERED = "entered"
+UNSAFE = "unsafe"
 PRICE_BELOW_MIN = "price_below_min"
 PRICE_ABOVE_MAX = "price_above_max"
 NO_GAME_DATA = "no_game_data"
@@ -45,6 +46,7 @@ REASON_LABELS = {
     EXPIRED: "Giveaway has ended",
     HIDDEN: "Hidden",
     ENTERED: "Already entered",
+    UNSAFE: "Flagged unsafe or borderline by the safety check",
     PRICE_BELOW_MIN: "Price below minimum",
     PRICE_ABOVE_MAX: "Price above maximum",
     NO_GAME_DATA: "No Steam game data cached",
@@ -105,6 +107,12 @@ def evaluate_eligibility(giveaway: Any, game: Any, criteria: EligibilityCriteria
 
     if giveaway.is_entered:
         return ENTERED
+
+    # Safety verdicts: is_safe False covers both outright traps (also hidden)
+    # and borderline scores — automation never touches either. NULL (never
+    # checked) passes; the inline entry check still guards those.
+    if giveaway.is_safe is False:
+        return UNSAFE
 
     # Wishlist games are wanted by definition: they bypass the price and
     # game-quality filters (matches the `is_wishlist OR (...)` in the SQL),

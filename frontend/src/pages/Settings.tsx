@@ -207,7 +207,7 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
         <div className="space-y-4">
           <Toggle
             label="Enable Trap Detection"
-            description="Check giveaways for warning words before auto-entering (e.g., 'don't enter', 'ban', 'fake')"
+            description="Scan each giveaway's description and comments for trap language (e.g., 'do not enter', 'bot trap', 'you will be banned') before auto-entering"
             checked={formData.safety_check_enabled ?? true}
             onChange={(checked) => handleChange('safety_check_enabled', checked)}
           />
@@ -219,8 +219,9 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
           />
         </div>
         <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
-          Trap detection analyzes giveaway pages for warning signs that indicate scam or trap giveaways.
-          When enabled, unsafe giveaways will be skipped during auto-entry.
+          Unchecked giveaways are scored by a background sweep each cycle. Outright traps are
+          hidden; borderline scores (50&ndash;84) are skipped by auto-entry but stay visible with a
+          Borderline badge so you can review them and re-check manually.
         </p>
       </Card>
 

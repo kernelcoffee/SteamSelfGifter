@@ -22,11 +22,44 @@ from core.time import from_timestamp
 
 logger = structlog.get_logger()
 
-# Safety detection word lists (from legacy code)
-# Words that indicate potential traps/scams
-FORBIDDEN_WORDS = (" ban", " fake", " bot", " not enter", " don't enter", " do not enter")
-# Words that look similar but are innocent (to avoid false positives)
-GOOD_WORDS = (" bank", " banan", " both", " band", " banner", " bang")
+# === Trap/scam giveaway detection ===
+#
+# Matching is scoped to the giveaway *description* and (at lower weight) the
+# comment thread — never the whole page — so navigation, sidebar and other
+# giveaways' text can't trigger false positives. Patterns are word-boundary
+# regexes with a weight; higher-weight phrases are near-certain trap language.
+TRAP_PATTERNS: tuple[tuple[re.Pattern[str], int], ...] = (
+    (re.compile(r"\bdo\s+not\s+enter\b"), 3),
+    (re.compile(r"\bdon[o'’]?t\s+enter\b"), 3),
+    (re.compile(r"\bbot\s+trap\b"), 3),
+    (re.compile(r"\bfor\s+bots?\b"), 3),
+    (re.compile(r"\btest(?:ing)?\s+(?:for\s+)?bots?\b"), 3),
+    (re.compile(r"\bfake\s+giveaway\b"), 3),
+    (re.compile(r"\btroll\s+giveaway\b"), 3),
+    (re.compile(r"\b(?:will\s+(?:get|be)|you(?:'ll|\s+will)\s+(?:get|be))\s+banned\b"), 3),
+    (re.compile(r"\breport(?:ed)?\s+to\s+(?:support|steamgifts|cg)\b"), 3),
+    (re.compile(r"\bbanned\b"), 2),
+    (re.compile(r"\bban\b"), 2),
+    (re.compile(r"\btrap\b"), 2),
+    (re.compile(r"\bsuspend(?:ed|s)?\b"), 2),
+    (re.compile(r"\bstay\s+away\b"), 2),
+    (re.compile(r"\bnot\s+enter\b"), 2),
+    (re.compile(r"\bfake\b"), 1),
+    (re.compile(r"\bblacklist(?:ed)?\b"), 1),
+    (re.compile(r"\bsuspicious\b"), 1),
+)
+
+# Score bands: >= SAFE_THRESHOLD is safe to auto-enter; scores in
+# [UNSAFE_THRESHOLD, SAFE_THRESHOLD) are "borderline" — skipped by automation
+# but left visible for manual review; below UNSAFE_THRESHOLD is an outright
+# trap (hidden). Description hits cost 20 points per weight; each warning
+# comment costs 5 per weight (capped) so a single commenter can't sink a
+# legitimate giveaway but a chorus of warnings drops it to borderline.
+SAFE_THRESHOLD = 85
+UNSAFE_THRESHOLD = 50
+_DESCRIPTION_PENALTY = 20
+_COMMENT_PENALTY = 5
+_COMMENT_WEIGHT_CAP = 8
 
 
 def has_no_results_marker(html: str) -> bool:
@@ -441,58 +474,96 @@ def parse_giveaway_game_id(html: str) -> int | None:
     return None
 
 
-def check_page_safety(html_content: str) -> dict[str, Any]:
-    """
-    Check if a giveaway page contains suspicious content.
+def extract_giveaway_texts(html: str) -> dict[str, Any]:
+    """Extract the description and comment texts from a giveaway page.
 
-    Analyzes the page text for forbidden words that might indicate
-    a trap giveaway (e.g., "don't enter", "ban", "fake").
+    Returns ``{"description": str, "comments": list[str]}``. A giveaway
+    without a description yields an empty string; collapsed-comment
+    placeholders (``comment__collapse-state``) are excluded.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    description = ""
+    desc_el = soup.select_one(".page__description .markdown")
+    if desc_el:
+        description = desc_el.get_text(" ", strip=True)
+
+    comments = [
+        el.get_text(" ", strip=True)
+        for el in soup.select(".comment__display-state .comment__description")
+    ]
+
+    return {"description": description, "comments": comments}
+
+
+def _match_weight(text: str) -> tuple[int, list[str]]:
+    """Total trap-pattern weight in ``text`` plus the matched pattern strings."""
+    lowered = text.lower()
+    weight = 0
+    matched = []
+    for pattern, pattern_weight in TRAP_PATTERNS:
+        hits = len(pattern.findall(lowered))
+        if hits:
+            weight += pattern_weight * hits
+            matched.append(pattern.pattern)
+    return weight, matched
+
+
+def score_giveaway_safety(description: str, comments: list[str]) -> dict[str, Any]:
+    """Score trap likelihood from a giveaway's description and comments.
 
     Returns:
         Dictionary with safety check results:
-            - is_safe: True if page appears safe
-            - safety_score: Score from 0-100 (higher = safer)
-            - bad_count: Number of bad words found
-            - good_count: Number of good words found (false positives)
-            - details: List of found bad words
+            - verdict: "safe" | "borderline" | "unsafe"
+            - is_safe: True only when verdict is "safe"
+            - safety_score: 0-100 (higher = safer)
+            - details: matched trap patterns (description first)
+            - warning_comments: number of comments containing trap language
     """
-    text_lower = html_content.lower()
+    desc_weight, desc_matched = _match_weight(description)
 
-    bad_count = 0
-    good_count = 0
-    found_bad_words = []
+    warning_comments = 0
+    comment_weight = 0
+    comment_matched: list[str] = []
+    for comment in comments:
+        weight, matched = _match_weight(comment)
+        if weight:
+            warning_comments += 1
+            # One comment counts once, at its strongest signal.
+            comment_weight += max(
+                pattern_weight
+                for pattern, pattern_weight in TRAP_PATTERNS
+                if pattern.pattern in matched
+            )
+            comment_matched.extend(m for m in matched if m not in comment_matched)
+    comment_weight = min(comment_weight, _COMMENT_WEIGHT_CAP)
 
-    # Count forbidden words
-    for bad_word in FORBIDDEN_WORDS:
-        count = text_lower.count(bad_word.lower())
-        if count > 0:
-            bad_count += count
-            found_bad_words.append(bad_word.strip())
+    score = max(
+        0, 100 - _DESCRIPTION_PENALTY * desc_weight - _COMMENT_PENALTY * comment_weight
+    )
 
-    # Count good words (false positive indicators)
-    if bad_count > 0:
-        for good_word in GOOD_WORDS:
-            good_count += text_lower.count(good_word.lower())
-
-    # Calculate safety score
-    # Net bad = bad words minus false positives
-    net_bad = max(0, bad_count - good_count)
-
-    if net_bad == 0:
-        safety_score = 100
-        is_safe = True
-    elif net_bad <= 2:
-        safety_score = 50
-        is_safe = True  # Borderline, but allow
+    if score >= SAFE_THRESHOLD:
+        verdict = "safe"
+    elif score >= UNSAFE_THRESHOLD:
+        verdict = "borderline"
     else:
-        safety_score = max(0, 100 - (net_bad * 20))
-        is_safe = False
+        verdict = "unsafe"
 
     return {
-        "is_safe": is_safe,
-        "safety_score": safety_score,
-        "bad_count": bad_count,
-        "good_count": good_count,
-        "net_bad": net_bad,
-        "details": found_bad_words,
+        "verdict": verdict,
+        "is_safe": verdict == "safe",
+        "safety_score": score,
+        "details": desc_matched + [m for m in comment_matched if m not in desc_matched],
+        "warning_comments": warning_comments,
     }
+
+
+def check_page_safety(html_content: str) -> dict[str, Any]:
+    """Check a giveaway page for trap/scam language.
+
+    Extracts the description and comment thread from the page and scores
+    them with :func:`score_giveaway_safety` — surrounding page chrome
+    (navigation, sidebar, other giveaways) is never matched.
+    """
+    texts = extract_giveaway_texts(html_content)
+    return score_giveaway_safety(texts["description"], texts["comments"])
