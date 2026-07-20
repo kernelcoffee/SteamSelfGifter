@@ -171,9 +171,10 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Expose port 80 (nginx serves both frontend and proxies to backend)
 EXPOSE 80
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost/api/v1/system/health || exit 1
+# No HEALTHCHECK here: OCI image format (podman's default) can't store it
+# and warns on every build. The healthcheck is defined in docker-compose.yml
+# instead; for plain `docker run`, pass --health-cmd if you want one:
+#   --health-cmd 'curl -f http://localhost/api/v1/system/health || exit 1'
 
 # Start via the entrypoint (handles optional PUID/PGID, then runs
 # supervisord which manages nginx + uvicorn)
