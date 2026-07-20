@@ -122,9 +122,9 @@ async def _process_entries(
             event_type="entry",
             message=f"Accumulating points: {points}P is below the {start_at}P start threshold",
         )
-        stats = _skipped_stats("points_below_start_threshold")
-        stats["points_available"] = points
-        return stats
+        skip_stats = _skipped_stats("points_below_start_threshold")
+        skip_stats["points_available"] = points
+        return skip_stats
 
     # Evaluate the candidate pool: this both selects the eligible giveaways and
     # records a per-giveaway eligibility reason for the ones that didn't qualify.
