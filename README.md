@@ -203,6 +203,10 @@ npm run build
 
 The project uses Alembic for database migrations. Migrations run automatically on startup.
 
+The SQLite database lives in the runtime data directory: `/config` inside the
+container (mounted from `./config` by the compose file), or `./data` relative
+to the working directory when running the backend locally.
+
 ```bash
 # Create a new migration after model changes
 cd backend/src
