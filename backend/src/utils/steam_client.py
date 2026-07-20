@@ -137,6 +137,7 @@ class SteamClient:
         rate_limit_window: int = 60,
         max_retries: int = 3,
         timeout_seconds: int = 30,
+        transport: httpx.AsyncBaseTransport | None = None,
     ):
         """
         Initialize Steam API client.
@@ -147,6 +148,7 @@ class SteamClient:
             rate_limit_window: Rate limit window in seconds
             max_retries: Maximum retry attempts for failed requests
             timeout_seconds: Request timeout in seconds
+            transport: Optional httpx transport, used by tests to mock HTTP
 
         Example:
             >>> client = SteamClient(
@@ -164,6 +166,7 @@ class SteamClient:
             window_seconds=rate_limit_window
         )
 
+        self._transport = transport
         self._client: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
@@ -183,7 +186,8 @@ class SteamClient:
             }
             self._client = httpx.AsyncClient(
                 timeout=self.timeout_seconds,
-                headers=headers
+                headers=headers,
+                transport=self._transport,
             )
 
     async def close(self) -> None:
@@ -411,7 +415,7 @@ class SteamClient:
 
         try:
             # Make a fresh request with browser-like headers to avoid 403
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=30, transport=self._transport) as client:
                 response = await client.get(
                     url,
                     params=params,

@@ -29,7 +29,9 @@ render, driven by a tick interval).
 
 - [x] Re-enable `react-hooks/set-state-in-effect` after refactoring affected components
 - [x] Fix APScheduler event loop conflicts to enable scheduler e2e tests in CI (fixed by the automation-layer consolidation)
-- [ ] Add more integration test coverage with mocked external services
+- [x] Add more integration test coverage with mocked external services
+      (`tests/integration_mocked/` — real clients through `httpx.MockTransport`,
+      runs in CI; both clients take an optional `transport` for this)
 
 ### Dependency Notes
 
