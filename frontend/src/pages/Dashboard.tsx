@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, Pause, Square, RefreshCw, Zap, Gift, Clock, ExternalLink, X, Trophy, RotateCw, AlertTriangle, Settings, CheckCircle, Shield, ShieldAlert, ShieldQuestion } from 'lucide-react';
+import { Play, Pause, Square, RefreshCw, Zap, Gift, Clock, ExternalLink, X, Trophy, RotateCw, AlertTriangle, Settings, Shield, ShieldAlert, ShieldQuestion } from 'lucide-react';
 import { SiSteam } from 'react-icons/si';
 import { Card, Button, Badge, Loading, CardSkeleton } from '@/components/common';
 import { useDashboard, useSchedulerStatus, useSchedulerControl, useGiveaways, useRemoveEntry } from '@/hooks';
@@ -648,18 +648,6 @@ function SessionStatusBanner({ session }: SessionStatusBannerProps) {
     );
   }
 
-  // Session valid - show connected status (compact)
-  return (
-    <div className="rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3">
-      <div className="flex items-center gap-2">
-        <CheckCircle className="text-green-500 shrink-0" size={18} />
-        <span className="text-sm text-green-700 dark:text-green-300">
-          Connected to SteamGifts
-          {session.username && (
-            <span className="font-medium"> as {session.username}</span>
-          )}
-        </span>
-      </div>
-    </div>
-  );
+  // Session valid: no banner — the header shows the connected indicator.
+  return null;
 }
