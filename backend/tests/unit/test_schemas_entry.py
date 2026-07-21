@@ -74,10 +74,11 @@ def test_entry_base_validates_status():
     # Valid statuses
     EntryBase(giveaway_id=1, points_spent=50, entry_type="manual", status="success")
     EntryBase(giveaway_id=1, points_spent=50, entry_type="manual", status="failed")
+    EntryBase(giveaway_id=1, points_spent=50, entry_type="manual", status="pending")
 
     # Invalid status
     with pytest.raises(ValidationError):
-        EntryBase(giveaway_id=1, points_spent=50, entry_type="manual", status="pending")
+        EntryBase(giveaway_id=1, points_spent=50, entry_type="manual", status="unknown")
 
 
 def test_entry_response():
@@ -151,10 +152,11 @@ def test_entry_filter_validates_status():
     # Valid
     EntryFilter(status="success")
     EntryFilter(status="failed")
+    EntryFilter(status="pending")
 
     # Invalid
     with pytest.raises(ValidationError):
-        EntryFilter(status="pending")
+        EntryFilter(status="unknown")
 
 
 def test_entry_stats():
@@ -251,3 +253,28 @@ def test_entry_history():
 def test_entry_response_orm_mode():
     """Test EntryResponse has ORM mode enabled."""
     assert EntryResponse.model_config.get("from_attributes") is True
+
+
+def test_entry_base_accepts_dlc_type_and_pending_status():
+    """Regression: dlc entries (and pending status) must serialize.
+
+    The /entries/ endpoint 500'd on real databases because EntryResponse
+    still rejected entry_type='dlc' rows created by the DLC priority scan.
+    """
+    entry = EntryBase(
+        giveaway_id=123,
+        points_spent=25,
+        entry_type="dlc",
+        status="pending",
+    )
+
+    assert entry.entry_type == "dlc"
+    assert entry.status == "pending"
+
+
+def test_entry_filter_accepts_dlc_and_pending():
+    """The filter schema accepts the same values the list endpoint does."""
+    filters = EntryFilter(entry_type="dlc", status="pending")
+
+    assert filters.entry_type == "dlc"
+    assert filters.status == "pending"

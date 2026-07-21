@@ -29,14 +29,14 @@ class EntryBase(BaseModel):
     )
     entry_type: str = Field(
         ...,
-        description="Type of entry (manual, auto, wishlist)",
-        pattern="^(manual|auto|wishlist)$",
+        description="Type of entry (manual, auto, wishlist, dlc)",
+        pattern="^(manual|auto|wishlist|dlc)$",
         examples=["manual"],
     )
     status: str = Field(
         ...,
-        description="Entry status (success, failed)",
-        pattern="^(success|failed)$",
+        description="Entry status (success, failed, pending)",
+        pattern="^(success|failed|pending)$",
         examples=["success"],
     )
     error_message: str | None = Field(
@@ -138,14 +138,14 @@ class EntryFilter(BaseModel):
 
     entry_type: str | None = Field(
         default=None,
-        description="Filter by entry type (manual, auto, wishlist)",
-        pattern="^(manual|auto|wishlist)$",
+        description="Filter by entry type (manual, auto, wishlist, dlc)",
+        pattern="^(manual|auto|wishlist|dlc)$",
         examples=["auto"],
     )
     status: str | None = Field(
         default=None,
-        description="Filter by status (success, failed)",
-        pattern="^(success|failed)$",
+        description="Filter by status (success, failed, pending)",
+        pattern="^(success|failed|pending)$",
         examples=["success"],
     )
     giveaway_id: int | None = Field(
