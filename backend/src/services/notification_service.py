@@ -6,6 +6,7 @@ WebSocket connection management.
 """
 
 import json
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -224,6 +225,54 @@ class NotificationService:
         """
         return await self.repo.get_by_event_type(event_type=event_type, limit=limit)
 
+    async def search_logs(
+        self,
+        *,
+        level: str | None = None,
+        event_type: str | None = None,
+        search: str | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[ActivityLog], int]:
+        """
+        Combinable filtered log listing with total count (see repo.search).
+
+        Example:
+            >>> logs, total = await service.search_logs(level="error", search="scan")
+        """
+        return await self.repo.search(
+            level=level,
+            event_type=event_type,
+            search=search,
+            from_date=from_date,
+            to_date=to_date,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def prune_old_logs(self, retention_days: int) -> int:
+        """
+        Delete logs older than ``retention_days`` days.
+
+        Args:
+            retention_days: Age cutoff in days; values <= 0 disable pruning
+
+        Returns:
+            Number of logs deleted
+
+        Example:
+            >>> deleted = await service.prune_old_logs(30)
+        """
+        if retention_days <= 0:
+            return 0
+        cutoff = utcnow() - timedelta(days=retention_days)
+        deleted = await self.repo.delete_older_than(cutoff)
+        if deleted:
+            await self.session.commit()
+        return deleted
+
     async def get_error_count(self) -> int:
         """
         Get count of error-level logs.
@@ -293,53 +342,10 @@ class NotificationService:
             details={"new": new_count, "updated": updated_count},
         )
 
-    async def log_entry_success(
-        self, giveaway_code: str, game_name: str, points: int
-    ) -> ActivityLog:
-        """
-        Convenience method to log successful giveaway entry.
-
-        Args:
-            giveaway_code: Giveaway code
-            game_name: Name of the game
-            points: Points spent
-
-        Returns:
-            Created ActivityLog object
-
-        Example:
-            >>> await service.log_entry_success("AbCd1", "Portal 2", 50)
-        """
-        return await self.log_activity(
-            level="info",
-            event_type="entry",
-            message=f"Entered giveaway: {game_name} ({points}P)",
-            details={"code": giveaway_code, "game": game_name, "points": points},
-        )
-
-    async def log_entry_failure(
-        self, giveaway_code: str, game_name: str, reason: str
-    ) -> ActivityLog:
-        """
-        Convenience method to log failed giveaway entry.
-
-        Args:
-            giveaway_code: Giveaway code
-            game_name: Name of the game
-            reason: Failure reason
-
-        Returns:
-            Created ActivityLog object
-
-        Example:
-            >>> await service.log_entry_failure("AbCd1", "Portal 2", "Insufficient points")
-        """
-        return await self.log_activity(
-            level="warning",
-            event_type="entry",
-            message=f"Failed to enter {game_name}: {reason}",
-            details={"code": giveaway_code, "game": game_name, "reason": reason},
-        )
+    # Entry attempts are NOT logged here: they are first-class Entry rows
+    # (the History page), so mirroring them into the activity log would
+    # duplicate every entry event. The activity log carries system events
+    # only (scan, scheduler, config, win, error).
 
     async def log_error(self, error_type: str, message: str, details: dict[str, Any] | None = None) -> ActivityLog:
         """

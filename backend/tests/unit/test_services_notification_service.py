@@ -266,48 +266,49 @@ async def test_log_scan_complete(test_db):
 
 
 @pytest.mark.asyncio
-async def test_log_entry_success(test_db):
-    """Test convenience method for logging successful entry."""
+async def test_search_logs_combinable_filters(test_db):
+    """search_logs composes level, event type, text and date filters."""
     async with test_db() as session:
         service = NotificationService(session)
 
-        log = await service.log_entry_success(
-            giveaway_code="AbCd1",
-            game_name="Portal 2",
-            points=50
-        )
+        await service.log_activity(level="info", event_type="scan", message="Scan completed")
+        await service.log_activity(level="error", event_type="scan", message="Scan drifted")
+        await service.log_activity(level="error", event_type="error", message="Boom")
 
-        assert log.level == "info"
-        assert log.event_type == "entry"
-        assert "Portal 2" in log.message
-        assert "50P" in log.message
+        logs, total = await service.search_logs(level="error", event_type="scan")
+        assert total == 1
+        assert logs[0].message == "Scan drifted"
 
-        details = json.loads(log.details)
-        assert details["code"] == "AbCd1"
-        assert details["game"] == "Portal 2"
-        assert details["points"] == 50
+        logs, total = await service.search_logs(search="scan")
+        assert total == 2  # case-insensitive message match
+
+        logs, total = await service.search_logs(limit=1, offset=1)
+        assert total == 3
+        assert len(logs) == 1
 
 
 @pytest.mark.asyncio
-async def test_log_entry_failure(test_db):
-    """Test convenience method for logging failed entry."""
+async def test_prune_old_logs(test_db):
+    """prune_old_logs deletes rows past retention; 0 disables pruning."""
+    from datetime import timedelta
+
+    from core.time import utcnow
+
     async with test_db() as session:
         service = NotificationService(session)
 
-        log = await service.log_entry_failure(
-            giveaway_code="AbCd1",
-            game_name="Portal 2",
-            reason="Insufficient points"
-        )
+        old = await service.log_activity(level="info", event_type="scan", message="Ancient")
+        old.created_at = utcnow() - timedelta(days=60)
+        await service.log_activity(level="info", event_type="scan", message="Recent")
+        await session.commit()
 
-        assert log.level == "warning"
-        assert log.event_type == "entry"
-        assert "Portal 2" in log.message
-        assert "Insufficient points" in log.message
+        assert await service.prune_old_logs(0) == 0  # disabled
+        assert await service.get_logs_count() == 2
 
-        details = json.loads(log.details)
-        assert details["code"] == "AbCd1"
-        assert details["reason"] == "Insufficient points"
+        assert await service.prune_old_logs(30) == 1
+        logs, total = await service.search_logs()
+        assert total == 1
+        assert logs[0].message == "Recent"
 
 
 @pytest.mark.asyncio
@@ -352,20 +353,18 @@ async def test_multiple_operations(test_db):
     async with test_db() as session:
         service = NotificationService(session)
 
-        # Log various activities
+        # Log various activities (entry attempts are Entry rows, not logs)
         await service.log_scan_start(pages=3)
-        await service.log_entry_success("GA1", "Game 1", 50)
-        await service.log_entry_success("GA2", "Game 2", 75)
-        await service.log_entry_failure("GA3", "Game 3", "Already entered")
+        await service.log_error("api", "SteamGifts timeout")
         await service.log_scan_complete(new_count=10, updated_count=5)
 
         # Verify all logs
         all_logs = await service.get_recent_logs(limit=100)
-        assert len(all_logs) == 5
+        assert len(all_logs) == 3
 
         # Check specific log types
-        entry_logs = await service.get_logs_by_event_type("entry")
-        assert len(entry_logs) == 3
+        error_logs = await service.get_logs_by_event_type("error")
+        assert len(error_logs) == 1
 
         scan_logs = await service.get_logs_by_event_type("scan")
         assert len(scan_logs) == 2

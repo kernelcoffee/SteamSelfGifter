@@ -12,6 +12,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.entry import Entry
+from models.giveaway import Giveaway
 from repositories.base import BaseRepository
 
 
@@ -93,6 +94,63 @@ class EntryRepository(BaseRepository[Entry]):
 
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def search(
+        self,
+        *,
+        status: str | None = None,
+        entry_type: str | None = None,
+        giveaway_id: int | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[tuple[Entry, Giveaway | None]], int]:
+        """
+        Combinable filtered entry listing with true total count.
+
+        All filters compose (AND). Returns one page of (entry, giveaway)
+        pairs — the giveaway joined in a single query, no per-row lookups —
+        plus the total number of matching rows for pagination.
+
+        Args:
+            status: Filter by status (success/failed/pending)
+            entry_type: Filter by type (manual/auto/wishlist/dlc)
+            giveaway_id: Filter by giveaway
+            from_date: Only entries created at/after this time
+            to_date: Only entries created before this time
+            limit: Page size
+            offset: Rows to skip
+
+        Returns:
+            Tuple of (page rows, total matching count)
+        """
+        conditions = []
+        if status:
+            conditions.append(self.model.status == status)
+        if entry_type:
+            conditions.append(self.model.entry_type == entry_type)
+        if giveaway_id:
+            conditions.append(self.model.giveaway_id == giveaway_id)
+        if from_date:
+            conditions.append(self.model.created_at >= from_date)
+        if to_date:
+            conditions.append(self.model.created_at < to_date)
+
+        count_query = select(func.count()).select_from(self.model).where(*conditions)
+        total = (await self.session.execute(count_query)).scalar_one()
+
+        page_query = (
+            select(self.model, Giveaway)
+            .outerjoin(Giveaway, self.model.giveaway_id == Giveaway.id)
+            .where(*conditions)
+            .order_by(self.model.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(page_query)
+        rows = [(entry, giveaway) for entry, giveaway in result.all()]
+        return rows, total
 
     async def get_by_status(
         self, status: str, limit: int | None = None

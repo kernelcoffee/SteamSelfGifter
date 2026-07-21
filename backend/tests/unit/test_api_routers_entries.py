@@ -63,68 +63,97 @@ def create_mock_giveaway(
     return mock
 
 
+def _call_list_entries(mock_service, **overrides):
+    kwargs = dict(
+        giveaway_service=mock_service,
+        status_filter=None,
+        entry_type=None,
+        giveaway_id=None,
+        from_date=None,
+        to_date=None,
+        limit=50,
+        offset=0,
+    )
+    kwargs.update(overrides)
+    return list_entries(**kwargs)
+
+
 @pytest.mark.asyncio
 async def test_list_entries_all():
     """Test listing all entries."""
     mock_service = AsyncMock()
     mock_entry = create_mock_entry()
     mock_giveaway = create_mock_giveaway()
-    mock_service.get_entry_history.return_value = [mock_entry]
-    mock_service.giveaway_repo.get_by_id.return_value = mock_giveaway
+    mock_service.entry_repo.search.return_value = ([(mock_entry, mock_giveaway)], 1)
 
-    result = await list_entries(
-        giveaway_service=mock_service,
-        status_filter=None,
-        entry_type=None,
-        limit=50,
-        offset=0,
-    )
+    result = await _call_list_entries(mock_service)
 
     assert result["success"] is True
     assert result["data"]["count"] == 1
-    mock_service.get_entry_history.assert_called_once_with(limit=50)
-
-
-@pytest.mark.asyncio
-async def test_list_entries_by_status():
-    """Test filtering entries by status."""
-    mock_service = AsyncMock()
-    mock_entry = create_mock_entry(status="success")
-    mock_giveaway = create_mock_giveaway()
-    mock_service.get_entry_history.return_value = [mock_entry]
-    mock_service.giveaway_repo.get_by_id.return_value = mock_giveaway
-
-    result = await list_entries(
-        giveaway_service=mock_service,
-        status_filter="success",
+    assert result["data"]["entries"][0]["giveaway"]["game_name"] == mock_giveaway.game_name
+    mock_service.entry_repo.search.assert_called_once_with(
+        status=None,
         entry_type=None,
+        giveaway_id=None,
+        from_date=None,
+        to_date=None,
         limit=50,
         offset=0,
     )
-
-    assert result["success"] is True
-    mock_service.get_entry_history.assert_called_once_with(limit=50, status="success")
 
 
 @pytest.mark.asyncio
-async def test_list_entries_by_type():
-    """Test filtering entries by type."""
+async def test_list_entries_count_is_total_not_page_size():
+    """The count field reports total matching rows for pagination."""
     mock_service = AsyncMock()
-    mock_entry = create_mock_entry(entry_type="auto")
+    mock_entry = create_mock_entry()
     mock_giveaway = create_mock_giveaway()
-    mock_service.entry_repo.get_by_entry_type.return_value = [mock_entry]
-    mock_service.giveaway_repo.get_by_id.return_value = mock_giveaway
+    mock_service.entry_repo.search.return_value = ([(mock_entry, mock_giveaway)], 137)
 
-    result = await list_entries(
-        giveaway_service=mock_service,
-        status_filter=None,
-        entry_type="auto",
-        limit=50,
-        offset=0,
+    result = await _call_list_entries(mock_service, limit=1)
+
+    assert result["data"]["count"] == 137
+    assert len(result["data"]["entries"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_entries_combined_filters_forwarded():
+    """Status, type and date filters all reach the repo together."""
+    from datetime import date
+
+    mock_service = AsyncMock()
+    mock_service.entry_repo.search.return_value = ([], 0)
+
+    result = await _call_list_entries(
+        mock_service,
+        status_filter="failed",
+        entry_type="wishlist",
+        from_date=date(2026, 7, 1),
+        to_date=date(2026, 7, 15),
+        offset=20,
     )
 
     assert result["success"] is True
-    mock_service.entry_repo.get_by_entry_type.assert_called_once_with("auto", limit=50)
+    call = mock_service.entry_repo.search.call_args.kwargs
+    assert call["status"] == "failed"
+    assert call["entry_type"] == "wishlist"
+    assert call["from_date"] == datetime(2026, 7, 1, 0, 0)
+    # to_date is inclusive: forwarded as the next midnight
+    assert call["to_date"] == datetime(2026, 7, 16, 0, 0)
+    assert call["offset"] == 20
+
+
+@pytest.mark.asyncio
+async def test_list_entries_missing_giveaway_omits_key():
+    """An entry whose giveaway is gone still serializes."""
+    mock_service = AsyncMock()
+    mock_entry = create_mock_entry()
+    mock_service.entry_repo.search.return_value = ([(mock_entry, None)], 1)
+
+    result = await _call_list_entries(mock_service)
+
+    assert result["success"] is True
+    assert "giveaway" not in result["data"]["entries"][0]
 
 
 @pytest.mark.asyncio

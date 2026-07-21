@@ -207,12 +207,6 @@ async def _process_entries(
                 stats["points_spent"] += entry.points_spent
                 points -= entry.points_spent
 
-                await notification_service.log_entry_success(
-                    giveaway_code=giveaway.code,
-                    game_name=giveaway.game_name,
-                    points=entry.points_spent
-                )
-
                 await event_manager.broadcast_event(
                     "entry_success",
                     {
@@ -228,14 +222,9 @@ async def _process_entries(
                     points_spent=entry.points_spent,
                 )
             else:
-                # None means the entry was skipped (e.g. unsafe) or failed.
+                # None means the entry was skipped (e.g. unsafe) or failed;
+                # the Entry row records the reason — no activity log needed.
                 stats["failed"] += 1
-
-                await notification_service.log_entry_failure(
-                    giveaway_code=giveaway.code,
-                    game_name=giveaway.game_name,
-                    reason="Entry returned none"
-                )
 
                 logger.warning(
                     "giveaway_entry_failed",
@@ -246,10 +235,11 @@ async def _process_entries(
         except Exception as e:
             stats["failed"] += 1
 
-            await notification_service.log_entry_failure(
-                giveaway_code=giveaway.code,
-                game_name=giveaway.game_name,
-                reason=str(e)
+            # Unexpected exceptions are real system events (unlike ordinary
+            # entry failures, which live as Entry rows in History).
+            await notification_service.log_error(
+                error_type="entry",
+                message=f"Entering {giveaway.game_name} ({giveaway.code}) crashed: {e}",
             )
 
             logger.error(

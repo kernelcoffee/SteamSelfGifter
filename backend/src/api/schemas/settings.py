@@ -139,6 +139,12 @@ class SettingsBase(BaseModel):
         ge=0,
         examples=[12],
     )
+    log_retention_days: int = Field(
+        default=30,
+        description="Activity logs older than this many days are pruned (0 = keep forever)",
+        ge=0,
+        examples=[30],
+    )
 
     @field_validator("entry_delay_max")
     @classmethod
@@ -339,6 +345,11 @@ class SettingsUpdate(BaseModel):
     entry_delay_max: int | None = Field(
         default=None,
         description="Maximum delay between entries (seconds)",
+        ge=0,
+    )
+    log_retention_days: int | None = Field(
+        default=None,
+        description="Activity logs older than this many days are pruned (0 = keep forever)",
         ge=0,
     )
 

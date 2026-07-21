@@ -18,7 +18,7 @@ export const entryKeys = {
  */
 export interface EntryFilters {
   status?: 'success' | 'failed' | 'pending' | 'all';
-  type?: 'manual' | 'auto' | 'wishlist' | 'all';
+  type?: 'manual' | 'auto' | 'wishlist' | 'dlc' | 'all';
   giveaway_id?: number;
   from_date?: string;
   to_date?: string;
@@ -69,12 +69,11 @@ export function useEntries(filters: EntryFilters = {}) {
       if (filters.to_date) {
         params.set('to_date', filters.to_date);
       }
-      if (filters.limit) {
-        params.set('limit', String(filters.limit));
-      }
+      const limitParam = filters.limit || 20;
+      params.set('limit', String(limitParam));
+      params.set('offset', String(((filters.page || 1) - 1) * limitParam));
 
-      const queryString = params.toString();
-      const endpoint = `/api/v1/entries/${queryString ? `?${queryString}` : ''}`;
+      const endpoint = `/api/v1/entries/?${params.toString()}`;
 
       const response = await api.get<EntriesApiResponse>(endpoint);
       if (!response.success) {

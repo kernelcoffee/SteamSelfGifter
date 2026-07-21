@@ -8,6 +8,7 @@ Single unified job that performs all automated tasks in sequence:
 5. Sync entered giveaways
 6. Safety-sweep unchecked giveaways
 7. Process eligible giveaways (enter them)
+8. Prune activity logs past retention
 
 This is the engine driven both by the scheduler (interval job) and by the
 manual ``/run`` trigger. It shares its bootstrap with the other workers via
@@ -207,6 +208,17 @@ async def automation_cycle() -> dict[str, Any]:
                 except Exception as e:
                     logger.error("process_entries_failed", error=str(e))
                     results["entries"]["error"] = str(e)
+
+            # === STEP 5: Prune old activity logs ===
+            try:
+                retention_days = settings.log_retention_days or 0
+                pruned = await notification_service.prune_old_logs(retention_days)
+                results["log_prune"] = {"deleted": pruned, "retention_days": retention_days}
+                if pruned:
+                    logger.info("activity_logs_pruned", deleted=pruned, days=retention_days)
+            except Exception as e:
+                logger.error("log_prune_failed", error=str(e))
+                results["log_prune"] = {"error": str(e)}
 
             # Calculate total cycle time
             end_time = datetime.now(UTC)

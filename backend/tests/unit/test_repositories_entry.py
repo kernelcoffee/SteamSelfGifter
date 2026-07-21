@@ -77,6 +77,41 @@ async def test_get_by_giveaway_not_found(test_db):
 
 
 @pytest.mark.asyncio
+async def test_search_combines_filters_joins_giveaway_and_counts(test_db, sample_giveaway):
+    """search composes filters, joins the giveaway, and reports the true total."""
+    async with test_db() as session:
+        repo = EntryRepository(session)
+
+        old_success = await repo.create(
+            giveaway_id=sample_giveaway, points_spent=50, entry_type="auto", status="success"
+        )
+        old_success.created_at = utcnow() - timedelta(days=10)
+        await repo.create(
+            giveaway_id=sample_giveaway, points_spent=0, entry_type="auto", status="failed"
+        )
+        await repo.create(
+            giveaway_id=sample_giveaway, points_spent=30, entry_type="wishlist", status="success"
+        )
+        await session.commit()
+
+        # Combined status + type filter
+        rows, total = await repo.search(status="success", entry_type="auto")
+        assert total == 1
+        entry, giveaway = rows[0]
+        assert entry.entry_type == "auto"
+        assert giveaway.game_name == "Test Game"  # joined, no extra query
+
+        # Date filter excludes the old entry
+        rows, total = await repo.search(from_date=utcnow() - timedelta(days=1))
+        assert total == 2
+
+        # Pagination: total stays the full match count
+        rows, total = await repo.search(limit=1, offset=1)
+        assert total == 3
+        assert len(rows) == 1
+
+
+@pytest.mark.asyncio
 async def test_get_recent(test_db, sample_giveaway):
     """Test getting recent entries ordered by creation time."""
     async with test_db() as session:

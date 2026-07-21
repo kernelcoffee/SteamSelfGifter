@@ -107,6 +107,7 @@ export interface Settings {
   max_scan_pages: number;
   entry_delay_min: number;
   entry_delay_max: number;
+  log_retention_days: number;
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
