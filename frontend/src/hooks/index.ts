@@ -49,6 +49,7 @@ export {
 // Analytics hooks
 export {
   useDashboard,
+  useSessionStatus,
   useEntryStats,
   useGiveawayStats,
   useGameStats,

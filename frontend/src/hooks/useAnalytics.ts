@@ -22,21 +22,40 @@ export interface TimeRangeFilter {
   to_date?: string;
 }
 
+async function fetchDashboard(): Promise<DashboardData | undefined> {
+  const response = await api.get<DashboardData>('/api/v1/analytics/dashboard');
+  if (!response.success) {
+    throw new Error(response.error || 'Failed to fetch dashboard data');
+  }
+  return response.data;
+}
+
 /**
  * Fetch dashboard overview data
  */
 export function useDashboard() {
   return useQuery({
     queryKey: analyticsKeys.dashboard,
-    queryFn: async () => {
-      const response = await api.get<DashboardData>('/api/v1/analytics/dashboard');
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to fetch dashboard data');
-      }
-      return response.data;
-    },
+    queryFn: fetchDashboard,
     // Dashboard refreshes every 30 seconds
     refetchInterval: 30_000,
+  });
+}
+
+/**
+ * SteamGifts session status for the header indicator.
+ *
+ * Shares the dashboard query cache but deliberately does NOT poll: the
+ * dashboard endpoint live-tests the session against SteamGifts, and the
+ * header is mounted on every page. On the Dashboard page the shared cache
+ * is refreshed by useDashboard's interval anyway.
+ */
+export function useSessionStatus() {
+  return useQuery({
+    queryKey: analyticsKeys.dashboard,
+    queryFn: fetchDashboard,
+    staleTime: 60_000,
+    select: (data) => data?.session,
   });
 }
 
