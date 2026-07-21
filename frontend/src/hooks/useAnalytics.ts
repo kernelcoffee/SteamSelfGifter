@@ -164,23 +164,32 @@ export function useGameStats() {
 export interface TrendDataPoint {
   date: string;
   entries: number;
+  successful: number;
+  failed: number;
   points_spent: number;
+  wins: number;
+}
+
+/** Backend response for entries/trends */
+interface TrendsResponse {
+  period: string;
+  trends: TrendDataPoint[];
 }
 
 /**
- * Fetch entry trends over time
+ * Fetch per-day entry/points/win trends
  */
 export function useEntryTrends(period: 'week' | 'month' | 'year' = 'month') {
   return useQuery({
     queryKey: [...analyticsKeys.entries, 'trends', period],
     queryFn: async () => {
-      const response = await api.get<TrendDataPoint[]>(
+      const response = await api.get<TrendsResponse>(
         `/api/v1/analytics/entries/trends?period=${period}`
       );
       if (!response.success) {
         throw new Error(response.error || 'Failed to fetch entry trends');
       }
-      return response.data;
+      return response.data?.trends ?? [];
     },
   });
 }

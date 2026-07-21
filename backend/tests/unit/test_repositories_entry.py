@@ -112,6 +112,43 @@ async def test_search_combines_filters_joins_giveaway_and_counts(test_db, sample
 
 
 @pytest.mark.asyncio
+async def test_get_daily_stats(test_db, sample_giveaway):
+    """get_daily_stats groups by day, counts statuses, sums success points."""
+    async with test_db() as session:
+        repo = EntryRepository(session)
+
+        await repo.create(
+            giveaway_id=sample_giveaway, points_spent=50, entry_type="auto", status="success"
+        )
+        await repo.create(
+            giveaway_id=sample_giveaway, points_spent=30, entry_type="auto", status="success"
+        )
+        failed = await repo.create(
+            giveaway_id=sample_giveaway, points_spent=0, entry_type="auto", status="failed"
+        )
+        old = await repo.create(
+            giveaway_id=sample_giveaway, points_spent=99, entry_type="auto", status="success"
+        )
+        old.created_at = utcnow() - timedelta(days=3)
+        await session.commit()
+
+        rows = await repo.get_daily_stats(since=utcnow() - timedelta(days=7))
+
+        assert len(rows) == 2  # today + three days ago
+        today = rows[-1]
+        assert today["entries"] == 3
+        assert today["successful"] == 2
+        assert today["failed"] == 1
+        assert today["points_spent"] == 80  # success points only
+        assert rows[0]["points_spent"] == 99
+        assert failed.status == "failed"
+
+        # Window excludes the old day
+        rows = await repo.get_daily_stats(since=utcnow() - timedelta(days=1))
+        assert len(rows) == 1
+
+
+@pytest.mark.asyncio
 async def test_get_recent(test_db, sample_giveaway):
     """Test getting recent entries ordered by creation time."""
     async with test_db() as session:

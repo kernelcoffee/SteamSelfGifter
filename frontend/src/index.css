@@ -63,4 +63,22 @@
   html {
     transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
   }
+
+  /* Chart palette (validated per-mode; see Analytics page) */
+  :root {
+    --chart-series-1: #2a78d6; /* accent series (blue) */
+    --chart-series-2: #008300; /* wins (green) */
+    --chart-emphasis: #898781; /* de-emphasis gray for context series */
+    --chart-grid: #e1e0d9;
+    --chart-ink-muted: #898781;
+    --chart-surface: #ffffff; /* matches the light card surface */
+  }
+  .dark {
+    --chart-series-1: #3987e5;
+    --chart-series-2: #008300;
+    --chart-emphasis: #898781;
+    --chart-grid: #2c3350;
+    --chart-ink-muted: #898781;
+    --chart-surface: #16213e; /* matches --color-surface-dark cards */
+  }
 }
