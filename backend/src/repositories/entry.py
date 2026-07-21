@@ -8,7 +8,7 @@ entry performance.
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.entry import Entry
@@ -513,6 +513,42 @@ class EntryRepository(BaseRepository[Entry]):
                 "wishlist": row.wishlist or 0,
             },
         }
+
+    async def get_daily_stats(self, since: datetime) -> list[dict[str, Any]]:
+        """
+        Per-day entry aggregates since ``since`` (for trend charts).
+
+        Returns:
+            One dict per day that has entries, ascending by date:
+            ``{"date": "YYYY-MM-DD", "entries", "successful", "failed",
+            "points_spent"}`` — points counted on successful entries only.
+        """
+        day = func.date(self.model.created_at)
+        query = (
+            select(
+                day.label("day"),
+                func.count().label("entries"),
+                func.sum(case((self.model.status == "success", 1), else_=0)).label("successful"),
+                func.sum(case((self.model.status == "failed", 1), else_=0)).label("failed"),
+                func.sum(
+                    case((self.model.status == "success", self.model.points_spent), else_=0)
+                ).label("points_spent"),
+            )
+            .where(self.model.created_at >= since)
+            .group_by(day)
+            .order_by(day)
+        )
+        result = await self.session.execute(query)
+        return [
+            {
+                "date": row.day,
+                "entries": row.entries,
+                "successful": int(row.successful or 0),
+                "failed": int(row.failed or 0),
+                "points_spent": int(row.points_spent or 0),
+            }
+            for row in result.all()
+        ]
 
     async def get_recent_failures(self, limit: int = 10) -> list[Entry]:
         """

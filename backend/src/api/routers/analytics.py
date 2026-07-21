@@ -121,6 +121,69 @@ async def get_entry_summary(
 
 
 @router.get(
+    "/entries/trends",
+    response_model=dict[str, Any],
+    summary="Get daily entry trends",
+    description="Per-day entries, points and wins for trend charts.",
+)
+async def get_entry_trends(
+    giveaway_service: GiveawayServiceDep,
+    period: str = Query(
+        default="month",
+        pattern="^(week|month|year)$",
+        description="Time window: week (7d), month (30d), year (365d)",
+    ),
+) -> dict[str, Any]:
+    """
+    Get per-day entry/points/win series for the given window.
+
+    Days without activity are filled with zeros so charts get a
+    continuous series.
+
+    Example response:
+        {
+            "success": true,
+            "data": {
+                "period": "week",
+                "trends": [
+                    {"date": "2026-07-15", "entries": 12, "successful": 11,
+                     "failed": 1, "points_spent": 340, "wins": 0},
+                    ...
+                ]
+            }
+        }
+    """
+    days = {"week": 7, "month": 30, "year": 365}[period]
+    now = datetime.now(UTC)
+    since = (now - timedelta(days=days - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
+
+    daily_entries = await giveaway_service.entry_repo.get_daily_stats(since)
+    daily_wins = await giveaway_service.giveaway_repo.get_daily_wins(since)
+
+    entries_by_day = {row["date"]: row for row in daily_entries}
+    wins_by_day = {row["date"]: row["wins"] for row in daily_wins}
+
+    trends = []
+    for offset in range(days):
+        day = (since + timedelta(days=offset)).date().isoformat()
+        entry_row = entries_by_day.get(day)
+        trends.append(
+            {
+                "date": day,
+                "entries": entry_row["entries"] if entry_row else 0,
+                "successful": entry_row["successful"] if entry_row else 0,
+                "failed": entry_row["failed"] if entry_row else 0,
+                "points_spent": entry_row["points_spent"] if entry_row else 0,
+                "wins": wins_by_day.get(day, 0),
+            }
+        )
+
+    return create_success_response(data={"period": period, "trends": trends})
+
+
+@router.get(
     "/giveaways/summary",
     response_model=dict[str, Any],
     summary="Get giveaway summary",

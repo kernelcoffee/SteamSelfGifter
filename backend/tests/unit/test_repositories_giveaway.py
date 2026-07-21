@@ -964,3 +964,36 @@ async def test_create_or_update_by_code_updates_existing(test_db):
         # Verify only one record exists
         all_giveaways = await repo.get_all()
         assert len(all_giveaways) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_daily_wins(test_db):
+    """get_daily_wins groups won giveaways by day within the window."""
+    async with test_db() as session:
+        repo = GiveawayRepository(session)
+
+        now = utcnow()
+        await repo.create(
+            code="WIN1", game_name="A", price=10, url="http://x/1",
+            is_won=True, won_at=now,
+        )
+        await repo.create(
+            code="WIN2", game_name="B", price=10, url="http://x/2",
+            is_won=True, won_at=now,
+        )
+        await repo.create(
+            code="WIN3", game_name="C", price=10, url="http://x/3",
+            is_won=True, won_at=now - timedelta(days=2),
+        )
+        await repo.create(
+            code="OLDWIN", game_name="D", price=10, url="http://x/4",
+            is_won=True, won_at=now - timedelta(days=30),
+        )
+        await repo.create(code="NOWIN", game_name="E", price=10, url="http://x/5")
+        await session.commit()
+
+        rows = await repo.get_daily_wins(since=now - timedelta(days=7))
+
+        assert len(rows) == 2  # two days with wins inside the window
+        assert rows[-1]["wins"] == 2  # today, ascending order
+        assert rows[0]["wins"] == 1

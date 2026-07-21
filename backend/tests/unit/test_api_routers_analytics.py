@@ -99,6 +99,40 @@ async def test_get_entry_summary():
 
 
 @pytest.mark.asyncio
+async def test_get_entry_trends_fills_missing_days():
+    """Trends return a continuous zero-filled daily series with wins merged in."""
+    from datetime import UTC, datetime, timedelta
+
+    from api.routers.analytics import get_entry_trends
+
+    today = datetime.now(UTC).date().isoformat()
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.entry_repo.get_daily_stats.return_value = [
+        {"date": yesterday, "entries": 3, "successful": 2, "failed": 1, "points_spent": 90},
+    ]
+    mock_giveaway_service.giveaway_repo.get_daily_wins.return_value = [
+        {"date": today, "wins": 1},
+    ]
+
+    result = await get_entry_trends(giveaway_service=mock_giveaway_service, period="week")
+
+    assert result["success"] is True
+    trends = result["data"]["trends"]
+    assert len(trends) == 7  # every day present, gaps zero-filled
+    by_date = {t["date"]: t for t in trends}
+    assert by_date[yesterday]["entries"] == 3
+    assert by_date[yesterday]["points_spent"] == 90
+    assert by_date[today]["wins"] == 1
+    assert by_date[today]["entries"] == 0
+    # A day with no data at all is all zeros
+    zero_days = [t for t in trends if t["date"] not in (today, yesterday)]
+    assert all(t["entries"] == 0 and t["wins"] == 0 for t in zero_days)
+    assert trends[-1]["date"] == today  # ascending, ends today
+
+
+@pytest.mark.asyncio
 async def test_get_giveaway_summary():
     """Test GET /analytics/giveaways/summary endpoint."""
     mock_giveaway_service = AsyncMock()

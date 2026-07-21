@@ -191,7 +191,20 @@ export async function mockApi(page: Page): Promise<ApiCall[]> {
       return route.fulfill(ok({ total: 200, games: 180, dlc: 15, bundles: 5, stale_count: 3 }));
     }
     if (path.startsWith('/api/v1/analytics/entries/trends')) {
-      return route.fulfill(ok({ period: 'week', trends: [] }));
+      const trends = Array.from({ length: 30 }, (_, i) => {
+        const d = new Date(Date.now() - (29 - i) * 86_400_000);
+        const successful = (i * 7) % 11;
+        const failed = i % 3 === 0 ? 1 : 0;
+        return {
+          date: d.toISOString().slice(0, 10),
+          entries: successful + failed,
+          successful,
+          failed,
+          points_spent: successful * 27,
+          wins: i % 9 === 0 ? 1 : 0,
+        };
+      });
+      return route.fulfill(ok({ period: 'month', trends }));
     }
 
     // --- System logs (Dashboard activity feed / Logs page) ---

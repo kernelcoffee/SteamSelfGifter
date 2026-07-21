@@ -253,13 +253,13 @@ describe('useAnalytics', () => {
   describe('useEntryTrends hook', () => {
     it('should fetch entry trends successfully', async () => {
       const mockTrends = [
-        { date: '2024-01-01', entries: 10, points_spent: 50 },
-        { date: '2024-01-02', entries: 15, points_spent: 75 },
+        { date: '2024-01-01', entries: 10, successful: 9, failed: 1, points_spent: 50, wins: 0 },
+        { date: '2024-01-02', entries: 15, successful: 15, failed: 0, points_spent: 75, wins: 1 },
       ];
 
       mockApi.get.mockResolvedValueOnce({
         success: true,
-        data: mockTrends,
+        data: { period: 'month', trends: mockTrends },
       });
 
       const { result } = renderHook(() => useEntryTrends('month'), {
