@@ -43,7 +43,7 @@ describe('Sidebar', () => {
     expect(listItems).toHaveLength(10);
   });
 
-  it('should pin Settings as the last link, in the bottom section', () => {
+  it('should render Settings as the last link', () => {
     render(<Sidebar />);
 
     const links = screen.getAllByRole('link');
