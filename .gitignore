@@ -60,6 +60,7 @@ frontend/coverage/
 # Docker Config Volume
 # ===================
 config/
+config-dev/
 
 # ===================
 # Environment & Secrets

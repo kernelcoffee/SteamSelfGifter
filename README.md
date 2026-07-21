@@ -90,6 +90,22 @@ set `PUID`/`PGID` (see the commented lines in `docker-compose.yml`) to run
 the backend as that uid/gid — `/config` is chown'd accordingly on startup so
 the database and logs end up owned by your host user instead of root.
 
+### Development with Docker
+
+`docker-compose.dev.yml` runs both halves from source with auto-reload
+(uvicorn `--reload`, Vite HMR) — the production `docker-compose.yml` is
+untouched:
+
+```bash
+docker compose -f docker-compose.dev.yml up
+
+# Frontend (proxies /api and /ws): http://localhost:5173
+# Backend API directly:            http://localhost:8000
+```
+
+Dev data lives in `./config-dev` (separate from the production `./config`);
+dependencies are cached in named volumes, so only the first start installs.
+
 ### Manual Installation
 
 #### Backend

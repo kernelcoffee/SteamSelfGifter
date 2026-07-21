@@ -1,0 +1,48 @@
+# Development compose: source is bind-mounted and both services reload on
+# change (uvicorn --reload / vite HMR). Production stays docker-compose.yml.
+#
+#   docker compose -f docker-compose.dev.yml up
+#
+# Frontend: http://localhost:5173 (proxies /api and /ws to the backend).
+# Backend API directly: http://localhost:8000.
+# Data/logs live in ./config-dev so dev never touches the production ./config.
+# Dependencies are cached in named volumes; the first start installs them.
+
+services:
+  backend:
+    image: python:3.14-slim
+    container_name: steamselfgifter-dev-backend
+    working_dir: /app
+    command: >
+      bash -c "python -m venv /opt/venv &&
+               /opt/venv/bin/pip install --quiet -e '.[dev]' &&
+               cd src &&
+               /opt/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload"
+    volumes:
+      - ./backend:/app:z
+      - ./config-dev:/config:z
+      - backend-venv:/opt/venv
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+    ports:
+      - "8000:8000"
+
+  frontend:
+    image: node:24-alpine
+    container_name: steamselfgifter-dev-frontend
+    working_dir: /app
+    command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
+    volumes:
+      - ./frontend:/app:z
+      - frontend-node-modules:/app/node_modules
+    environment:
+      - VITE_PROXY_TARGET=http://backend:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  backend-venv:
+  frontend-node-modules:
