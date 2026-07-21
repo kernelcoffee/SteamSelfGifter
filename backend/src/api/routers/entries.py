@@ -4,6 +4,7 @@ This module provides REST API endpoints for viewing entry history,
 filtering entries, and getting entry statistics.
 """
 
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -23,53 +24,58 @@ router = APIRouter()
     "/",
     response_model=dict[str, Any],
     summary="List entries",
-    description="Get entry history with optional filtering.",
+    description="Get entry history with combinable filters and pagination.",
 )
 async def list_entries(
     giveaway_service: GiveawayServiceDep,
     status_filter: str | None = Query(
         default=None,
         alias="status",
-        description="Filter by status (success, failed)",
-        pattern="^(success|failed)$"
+        description="Filter by status (success, failed, pending)",
+        pattern="^(success|failed|pending)$"
     ),
     entry_type: str | None = Query(
         default=None,
-        description="Filter by entry type (manual, auto, wishlist)",
-        pattern="^(manual|auto|wishlist)$"
+        description="Filter by entry type (manual, auto, wishlist, dlc)",
+        pattern="^(manual|auto|wishlist|dlc)$"
     ),
+    giveaway_id: int | None = Query(default=None, description="Filter by giveaway ID"),
+    from_date: date | None = Query(default=None, description="Only entries on/after this date"),
+    to_date: date | None = Query(default=None, description="Only entries on/before this date"),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
     offset: int = Query(default=0, ge=0, description="Offset for pagination"),
 ) -> dict[str, Any]:
     """
-    List entries with filtering options.
+    List entries with combinable filters.
 
-    Returns:
-        Success response with list of entries including giveaway data
+    All filters compose (AND). ``count`` in the response is the total number
+    of matching rows (not the page size), so clients can paginate.
 
     Example response:
         {
             "success": true,
             "data": {
                 "entries": [...],
-                "count": 50
+                "count": 137,
+                "limit": 50,
+                "offset": 0
             }
         }
     """
-    # Use giveaway_service.get_entry_history which delegates to entry_repo
-    if status_filter:
-        entries = await giveaway_service.get_entry_history(limit=limit, status=status_filter)
-    elif entry_type:
-        entries = await giveaway_service.entry_repo.get_by_entry_type(entry_type, limit=limit)
-    else:
-        entries = await giveaway_service.get_entry_history(limit=limit)
+    rows, total = await giveaway_service.entry_repo.search(
+        status=status_filter,
+        entry_type=entry_type,
+        giveaway_id=giveaway_id,
+        from_date=datetime.combine(from_date, time.min) if from_date else None,
+        # to_date is inclusive: match everything before the next midnight
+        to_date=datetime.combine(to_date + timedelta(days=1), time.min) if to_date else None,
+        limit=limit,
+        offset=offset,
+    )
 
-    # Convert to response format with giveaway data
     entry_list = []
-    for entry in entries:
+    for entry, giveaway in rows:
         entry_data = EntryResponse.model_validate(entry).model_dump()
-        # Fetch associated giveaway
-        giveaway = await giveaway_service.giveaway_repo.get_by_id(entry.giveaway_id)
         if giveaway:
             entry_data["giveaway"] = {
                 "id": giveaway.id,
@@ -86,7 +92,9 @@ async def list_entries(
     return create_success_response(
         data={
             "entries": entry_list,
-            "count": len(entry_list),
+            "count": total,
+            "limit": limit,
+            "offset": offset,
         }
     )
 

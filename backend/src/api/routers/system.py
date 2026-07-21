@@ -6,6 +6,7 @@ system information, and activity logs.
 
 import csv
 import json
+from datetime import date, datetime, time, timedelta
 from io import StringIO
 from typing import Any
 
@@ -84,24 +85,20 @@ async def system_info() -> dict[str, Any]:
 async def get_logs(
     notification_service: NotificationServiceDep,
     limit: int = Query(default=50, ge=1, le=500, description="Number of logs to retrieve"),
+    offset: int = Query(default=0, ge=0, description="Offset for pagination"),
     level: str | None = Query(default=None, description="Filter by log level (info, warning, error)"),
     event_type: str | None = Query(
-        default=None, description="Filter by event type (scan, entry, error, config, scheduler)"
+        default=None, description="Filter by event type (scan, entry, error, config, scheduler, win)"
     ),
+    search: str | None = Query(default=None, description="Case-insensitive message search"),
+    from_date: date | None = Query(default=None, description="Only logs on/after this date"),
+    to_date: date | None = Query(default=None, description="Only logs on/before this date"),
 ) -> dict[str, Any]:
     """
-    Get recent activity logs.
+    Get activity logs with combinable filters and pagination.
 
-    Retrieves recent activity logs from the system.
-
-    Args:
-        notification_service: Notification service dependency
-        limit: Maximum number of logs to retrieve (1-500, default 50)
-        level: Optional filter by log level
-        event_type: Optional filter by event type
-
-    Returns:
-        dict: List of recent logs
+    All filters compose (AND); ``count`` is the total number of matching
+    rows, not the page size.
 
     Example Response:
         {
@@ -111,31 +108,27 @@ async def get_logs(
                     {
                         "id": 123,
                         "level": "info",
-                        "message": "Entered giveaway for Portal 2",
-                        "event_type": "entry",
+                        "message": "Scan completed",
+                        "event_type": "scan",
                         "created_at": "2024-01-15T10:30:00"
                     }
                 ],
-                "count": 1,
-                "limit": 50
+                "count": 412,
+                "limit": 50,
+                "offset": 0
             }
         }
     """
-    # Get activity logs based on filter
-    if level:
-        activity_logs = await notification_service.get_logs_by_level(
-            level=level,
-            limit=limit,
-        )
-    elif event_type:
-        activity_logs = await notification_service.get_logs_by_event_type(
-            event_type=event_type,
-            limit=limit,
-        )
-    else:
-        activity_logs = await notification_service.get_recent_logs(limit=limit)
+    activity_logs, total = await notification_service.search_logs(
+        level=level,
+        event_type=event_type,
+        search=search,
+        from_date=datetime.combine(from_date, time.min) if from_date else None,
+        to_date=datetime.combine(to_date + timedelta(days=1), time.min) if to_date else None,
+        limit=limit,
+        offset=offset,
+    )
 
-    # Convert to log format
     logs = [
         {
             "id": log.id,
@@ -150,8 +143,9 @@ async def get_logs(
     return create_success_response(
         data={
             "logs": logs,
-            "count": len(logs),
+            "count": total,
             "limit": limit,
+            "offset": offset,
         }
     )
 

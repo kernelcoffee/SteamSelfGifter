@@ -68,12 +68,11 @@ export function useLogs(filters: LogFilters = {}) {
       if (filters.search) {
         params.set('search', filters.search);
       }
-      if (filters.limit) {
-        params.set('limit', String(filters.limit));
-      }
+      const limitParam = filters.limit || 50;
+      params.set('limit', String(limitParam));
+      params.set('offset', String(((filters.page || 1) - 1) * limitParam));
 
-      const queryString = params.toString();
-      const endpoint = `/api/v1/system/logs${queryString ? `?${queryString}` : ''}`;
+      const endpoint = `/api/v1/system/logs?${params.toString()}`;
 
       const response = await api.get<LogsApiResponse>(endpoint);
       if (!response.success) {

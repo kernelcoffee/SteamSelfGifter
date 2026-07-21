@@ -64,6 +64,7 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
     max_scan_pages: settings.max_scan_pages,
     entry_delay_min: settings.entry_delay_min,
     entry_delay_max: settings.entry_delay_max,
+    log_retention_days: settings.log_retention_days,
   }));
   const [hasChanges, setHasChanges] = useState(false);
   const [showPhpsessid, setShowPhpsessid] = useState(false);
@@ -312,6 +313,13 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
             value={formData.max_entries_per_cycle ?? ''}
             onChange={(e) => handleChange('max_entries_per_cycle', e.target.value ? parseInt(e.target.value) : null)}
             helperText="Limit entries per cycle (empty = unlimited)"
+          />
+          <Input
+            label="Log Retention (days)"
+            type="number"
+            value={formData.log_retention_days ?? 30}
+            onChange={(e) => handleChange('log_retention_days', parseInt(e.target.value) || 0)}
+            helperText="Activity logs older than this are pruned (0 = keep forever)"
           />
         </div>
       </Card>

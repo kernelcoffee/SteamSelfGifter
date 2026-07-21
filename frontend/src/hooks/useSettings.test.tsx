@@ -66,6 +66,7 @@ const mockSettings: Settings = {
   max_scan_pages: 5,
   entry_delay_min: 1000,
   entry_delay_max: 3000,
+  log_retention_days: 30,
   last_synced_at: '2024-01-01T00:00:00Z',
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',

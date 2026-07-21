@@ -74,6 +74,21 @@ async def test_system_info_includes_config():
     assert isinstance(data["database_url"], str)
 
 
+def _call_get_logs(mock_service, **overrides):
+    kwargs = dict(
+        notification_service=mock_service,
+        limit=50,
+        offset=0,
+        level=None,
+        event_type=None,
+        search=None,
+        from_date=None,
+        to_date=None,
+    )
+    kwargs.update(overrides)
+    return get_logs(**kwargs)
+
+
 @pytest.mark.asyncio
 async def test_get_logs():
     """Test GET /system/logs endpoint."""
@@ -82,58 +97,65 @@ async def test_get_logs():
         create_mock_activity_log(1, "info", "scan", "Test log 1"),
         create_mock_activity_log(2, "warning", "entry", "Test log 2"),
     ]
-    mock_service.get_recent_logs.return_value = mock_logs
+    mock_service.search_logs.return_value = (mock_logs, 2)
 
-    result = await get_logs(notification_service=mock_service, limit=50, level=None, event_type=None)
+    result = await _call_get_logs(mock_service)
 
     assert result["success"] is True
     assert "data" in result
     assert result["data"]["count"] == 2
     assert result["data"]["limit"] == 50
     assert len(result["data"]["logs"]) == 2
-    mock_service.get_recent_logs.assert_called_once_with(limit=50)
 
 
 @pytest.mark.asyncio
-async def test_get_logs_with_level_filter():
-    """Test GET /system/logs with level filter."""
+async def test_get_logs_combinable_filters():
+    """Level, event type, search and dates are all forwarded together."""
+    from datetime import date, time, timedelta
+
     mock_service = AsyncMock()
-    mock_logs = [
-        create_mock_activity_log(1, "error", "error", "Error message"),
-    ]
-    mock_service.get_logs_by_level.return_value = mock_logs
+    mock_service.search_logs.return_value = ([], 0)
 
-    result = await get_logs(notification_service=mock_service, limit=50, level="error", event_type=None)
-
-    assert result["success"] is True
-    assert result["data"]["count"] == 1
-    mock_service.get_logs_by_level.assert_called_once_with(
+    result = await _call_get_logs(
+        mock_service,
         level="error",
-        limit=50,
+        event_type="scan",
+        search="drift",
+        from_date=date(2026, 7, 1),
+        to_date=date(2026, 7, 15),
+        offset=100,
     )
 
+    assert result["success"] is True
+    call = mock_service.search_logs.call_args.kwargs
+    assert call["level"] == "error"
+    assert call["event_type"] == "scan"
+    assert call["search"] == "drift"
+    assert call["from_date"] == datetime.combine(date(2026, 7, 1), time.min)
+    assert call["to_date"] == datetime.combine(date(2026, 7, 15) + timedelta(days=1), time.min)
+    assert call["offset"] == 100
+
 
 @pytest.mark.asyncio
-async def test_get_logs_with_custom_limit():
-    """Test GET /system/logs with custom limit."""
+async def test_get_logs_count_is_total_not_page_size():
+    """The count field reports total matching rows for pagination."""
     mock_service = AsyncMock()
-    mock_logs = []
-    mock_service.get_recent_logs.return_value = mock_logs
+    mock_log = create_mock_activity_log(1, "info", "scan", "Test")
+    mock_service.search_logs.return_value = ([mock_log], 412)
 
-    result = await get_logs(notification_service=mock_service, limit=100, level=None, event_type=None)
+    result = await _call_get_logs(mock_service, limit=1)
 
-    assert result["success"] is True
-    assert result["data"]["limit"] == 100
-    mock_service.get_recent_logs.assert_called_once_with(limit=100)
+    assert result["data"]["count"] == 412
+    assert len(result["data"]["logs"]) == 1
 
 
 @pytest.mark.asyncio
 async def test_get_logs_empty_result():
     """Test GET /system/logs with no logs."""
     mock_service = AsyncMock()
-    mock_service.get_recent_logs.return_value = []
+    mock_service.search_logs.return_value = ([], 0)
 
-    result = await get_logs(notification_service=mock_service, limit=50, level=None, event_type=None)
+    result = await _call_get_logs(mock_service)
 
     assert result["success"] is True
     assert result["data"]["count"] == 0
@@ -145,9 +167,9 @@ async def test_get_logs_formats_correctly():
     """Test GET /system/logs formats log data correctly."""
     mock_service = AsyncMock()
     mock_log = create_mock_activity_log(123, "info", "entry", "Test message")
-    mock_service.get_recent_logs.return_value = [mock_log]
+    mock_service.search_logs.return_value = ([mock_log], 1)
 
-    result = await get_logs(notification_service=mock_service, limit=50, level=None, event_type=None)
+    result = await _call_get_logs(mock_service)
 
     log = result["data"]["logs"][0]
     assert log["id"] == 123
@@ -165,9 +187,9 @@ async def test_get_logs_handles_null_created_at():
     mock_service = AsyncMock()
     mock_log = create_mock_activity_log(1, "info", "scan", "Test")
     mock_log.created_at = None
-    mock_service.get_recent_logs.return_value = [mock_log]
+    mock_service.search_logs.return_value = ([mock_log], 1)
 
-    result = await get_logs(notification_service=mock_service, limit=50, level=None, event_type=None)
+    result = await _call_get_logs(mock_service)
 
     log = result["data"]["logs"][0]
     assert log["created_at"] is None

@@ -134,6 +134,12 @@ export function History() {
               >
                 Wishlist
               </FilterButton>
+              <FilterButton
+                active={filters.type === 'dlc'}
+                onClick={() => handleTypeFilter('dlc')}
+              >
+                DLC
+              </FilterButton>
             </div>
           </div>
 

@@ -88,7 +88,7 @@ describe('useLogs', () => {
         limit: 50,
         pages: 1,
       });
-      expect(mockApi.get).toHaveBeenCalledWith('/api/v1/system/logs');
+      expect(mockApi.get).toHaveBeenCalledWith('/api/v1/system/logs?limit=50&offset=0');
     });
 
     it('should fetch with filters', async () => {
@@ -108,7 +108,7 @@ describe('useLogs', () => {
       });
 
       expect(mockApi.get).toHaveBeenCalledWith(
-        '/api/v1/system/logs?level=error&event_type=entry&search=failed'
+        '/api/v1/system/logs?level=error&event_type=entry&search=failed&limit=50&offset=0'
       );
     });
 

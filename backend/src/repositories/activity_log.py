@@ -1,7 +1,8 @@
 """Repository for ActivityLog model."""
 
+from datetime import datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.activity_log import ActivityLog
@@ -157,6 +158,49 @@ class ActivityLogRepository:
         )
         return list(result.scalars().all())
 
+    async def search(
+        self,
+        *,
+        level: str | None = None,
+        event_type: str | None = None,
+        search: str | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[ActivityLog], int]:
+        """
+        Combinable filtered log listing with true total count.
+
+        All filters compose (AND); ``search`` matches the message
+        case-insensitively. Returns one page (newest first) plus the total
+        number of matching rows for pagination.
+        """
+        conditions = []
+        if level:
+            conditions.append(ActivityLog.level == level)
+        if event_type:
+            conditions.append(ActivityLog.event_type == event_type)
+        if search:
+            conditions.append(ActivityLog.message.ilike(f"%{search}%"))
+        if from_date:
+            conditions.append(ActivityLog.created_at >= from_date)
+        if to_date:
+            conditions.append(ActivityLog.created_at < to_date)
+
+        count_query = select(func.count()).select_from(ActivityLog).where(*conditions)
+        total = (await self.session.execute(count_query)).scalar_one()
+
+        page_query = (
+            select(ActivityLog)
+            .where(*conditions)
+            .order_by(desc(ActivityLog.created_at))
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.session.execute(page_query)
+        return list(result.scalars().all()), total
+
     async def count_by_level(self, level: str) -> int:
         """
         Count activity logs by severity level.
@@ -171,9 +215,24 @@ class ActivityLogRepository:
             >>> error_count = await repo.count_by_level("error")
         """
         result = await self.session.execute(
-            select(ActivityLog).where(ActivityLog.level == level)
+            select(func.count()).select_from(ActivityLog).where(ActivityLog.level == level)
         )
-        return len(list(result.scalars().all()))
+        return result.scalar_one()
+
+    async def delete_older_than(self, cutoff: datetime) -> int:
+        """
+        Delete logs created before ``cutoff`` (retention pruning).
+
+        Returns:
+            Number of logs deleted
+
+        Note:
+            Does NOT commit; the caller must call session.commit().
+        """
+        result = await self.session.execute(
+            delete(ActivityLog).where(ActivityLog.created_at < cutoff)
+        )
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def get_all(self) -> list[ActivityLog]:
         """
@@ -205,7 +264,6 @@ class ActivityLogRepository:
             >>> deleted_count = await repo.delete_all()
             >>> await session.commit()
         """
-        from sqlalchemy import delete
         result = await self.session.execute(delete(ActivityLog))
         # execute() is typed as Result, but DELETE always yields a CursorResult.
         return int(result.rowcount or 0)  # type: ignore[attr-defined]
@@ -220,7 +278,6 @@ class ActivityLogRepository:
         Example:
             >>> total = await repo.count()
         """
-        from sqlalchemy import func
         result = await self.session.execute(
             select(func.count()).select_from(ActivityLog)
         )

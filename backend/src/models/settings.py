@@ -184,6 +184,11 @@ class Settings(Base, TimestampMixin):
         default=12,
         comment="Maximum delay between entries (seconds)",
     )
+    log_retention_days: Mapped[int] = mapped_column(
+        Integer,
+        default=30,
+        comment="Activity logs older than this many days are pruned (0 = keep forever)",
+    )
 
     # ==================== Metadata ====================
     last_synced_at: Mapped[datetime | None] = mapped_column(
