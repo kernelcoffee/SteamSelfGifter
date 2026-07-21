@@ -23,7 +23,8 @@ interface NavItem {
   end?: boolean;
 }
 
-// Navigation items configuration
+// Navigation items configuration. Settings goes last: pinning it to the
+// column bottom scrolled it off-screen on pages taller than the viewport.
 const navItems: NavItem[] = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/giveaways', label: 'Giveaways', icon: Gift, end: true },
@@ -34,10 +35,8 @@ const navItems: NavItem[] = [
   { path: '/history', label: 'History', icon: History },
   { path: '/analytics', label: 'Analytics', icon: BarChart3 },
   { path: '/logs', label: 'Logs', icon: FileText },
+  { path: '/settings', label: 'Settings', icon: Settings },
 ];
-
-// Pinned to the bottom of the column, below the scrollable main nav
-const bottomNavItems: NavItem[] = [{ path: '/settings', label: 'Settings', icon: Settings }];
 
 function NavList({ items }: { items: NavItem[] }) {
   return (
@@ -70,12 +69,9 @@ function NavList({ items }: { items: NavItem[] }) {
  */
 export function Sidebar() {
   return (
-    <aside className="w-64 border-r border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark min-h-[calc(100vh-4rem)] flex flex-col">
-      <nav className="p-4 flex flex-col flex-1">
+    <aside className="w-64 border-r border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark min-h-[calc(100vh-4rem)]">
+      <nav className="p-4">
         <NavList items={navItems} />
-        <div className="mt-auto pt-4 border-t border-gray-200 dark:border-gray-700">
-          <NavList items={bottomNavItems} />
-        </div>
       </nav>
     </aside>
   );
