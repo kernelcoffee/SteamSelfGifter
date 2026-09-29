@@ -29,7 +29,7 @@ services:
       - "8000:8000"
 
   frontend:
-    image: node:24-alpine
+    image: node:26-alpine
     container_name: steamselfgifter-dev-frontend
     working_dir: /app
     command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
