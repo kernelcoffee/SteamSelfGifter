@@ -32,6 +32,7 @@ backend/logs/*.log
 .coverage
 .coverage.*
 htmlcov/
+coverage.xml
 .tox/
 .nox/
 backend/tests/scripts/output/
@@ -88,7 +89,7 @@ Thumbs.db
 # AI Assistant
 # ===================
 CLAUDE.md
-.claude/
+.claude/settings.local.json
 
 # Playwright
 frontend/test-results/
