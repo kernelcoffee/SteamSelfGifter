@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd backend && .venv/bin/ruff check*)",
+      "Bash(cd backend && .venv/bin/python -m pytest*)",
+      "Bash(npm --prefix frontend ci)",
+      "Bash(npm --prefix frontend run lint*)",
+      "Bash(npm --prefix frontend run test:run*)",
+      "Bash(npm --prefix frontend run test:coverage*)",
+      "Bash(npm --prefix frontend run build*)",
+      "Bash(npm --prefix frontend run test:e2e*)",
+      "Bash(podman build *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)"
+    ]
+  },
+  "workflowSizeGuideline": "medium",
+  "subagentPromptCacheTtl": "1h"
+}
