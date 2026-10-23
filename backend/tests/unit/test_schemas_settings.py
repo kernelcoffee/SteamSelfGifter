@@ -26,6 +26,31 @@ def test_settings_base_defaults():
     assert settings.autojoin_start_at == 350
     assert settings.autojoin_stop_at == 200
     assert settings.automation_enabled is False
+    assert settings.ending_soon_priority_enabled is False
+    assert settings.ending_soon_threshold_minutes == 60
+
+
+@pytest.mark.parametrize("value", [5, 10080])
+def test_ending_soon_threshold_accepts_bounds(value):
+    """5 and 10080 minutes are the inclusive bounds for both schemas."""
+    assert SettingsUpdate(ending_soon_threshold_minutes=value).ending_soon_threshold_minutes == value
+    base = SettingsBase(user_agent="ua", ending_soon_threshold_minutes=value)
+    assert base.ending_soon_threshold_minutes == value
+
+
+@pytest.mark.parametrize("value", [4, 10081])
+def test_ending_soon_threshold_rejects_out_of_range(value):
+    """Values just outside 5..10080 fail validation in both schemas."""
+    with pytest.raises(ValidationError):
+        SettingsUpdate(ending_soon_threshold_minutes=value)
+    with pytest.raises(ValidationError):
+        SettingsBase(user_agent="ua", ending_soon_threshold_minutes=value)
+
+
+def test_ending_soon_explicit_false_survives_exclude_none():
+    """An explicit False is kept by the router's exclude_none dump."""
+    update = SettingsUpdate(ending_soon_priority_enabled=False)
+    assert update.model_dump(exclude_none=True) == {"ending_soon_priority_enabled": False}
 
 
 def test_settings_base_custom_values():

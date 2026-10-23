@@ -34,6 +34,8 @@ def create_mock_settings():
     settings.autojoin_min_score = 7
     settings.autojoin_min_reviews = 1000
     settings.wishlist_priority_enabled = True
+    settings.ending_soon_priority_enabled = True
+    settings.ending_soon_threshold_minutes = 120
     settings.scan_interval_minutes = 30
     settings.max_entries_per_cycle = 10
     settings.automation_enabled = True
@@ -59,6 +61,8 @@ async def test_get_settings():
     assert "data" in result
     assert result["data"]["id"] == 1
     assert result["data"]["phpsessid"] == "test_session"
+    assert result["data"]["ending_soon_priority_enabled"] is True
+    assert result["data"]["ending_soon_threshold_minutes"] == 120
     mock_service.get_settings.assert_called_once()
 
 

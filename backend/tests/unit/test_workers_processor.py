@@ -20,6 +20,8 @@ def _autojoin_settings(**overrides):
     mock_settings.autojoin_stop_at = 0
     mock_settings.wishlist_priority_enabled = True
     mock_settings.dlc_priority_enabled = False
+    mock_settings.ending_soon_priority_enabled = False
+    mock_settings.ending_soon_threshold_minutes = 60
     mock_settings.max_entries_per_cycle = 5
     mock_settings.entry_delay_min = 0.01
     mock_settings.entry_delay_max = 0.02
@@ -298,6 +300,87 @@ async def test_process_giveaways_dlc_entry_type():
         assert results["entered"] == 2
         mock_giveaway_service.enter_giveaway.assert_any_await("BOTH1", entry_type="wishlist")
         mock_giveaway_service.enter_giveaway.assert_any_await("DLC01", entry_type="dlc")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled, threshold", [(True, 120), (False, 60)])
+async def test_process_giveaways_passes_ending_soon_criteria(enabled, threshold):
+    """The ending-soon settings reach the EligibilityCriteria used for the
+    cycle, and an ending-soon plain giveaway is still entered as 'auto'."""
+    from services.eligibility import EligibilityCriteria
+    from workers.processor import process_giveaways
+
+    mock_settings = _autojoin_settings(
+        ending_soon_priority_enabled=enabled,
+        ending_soon_threshold_minutes=threshold,
+    )
+    soon_ga = _mock_giveaway(code="SOON1")
+
+    mock_entry = MagicMock()
+    mock_entry.points_spent = 50
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
+    mock_giveaway_service.evaluate_and_get_eligible.return_value = [soon_ga]
+    mock_giveaway_service.enter_giveaway.return_value = mock_entry
+
+    patcher, ctx = patch_automation_context(
+        "workers.processor", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, \
+         patch("workers.processor.event_manager") as mock_event_manager, \
+         patch("workers.processor.asyncio.sleep", new_callable=AsyncMock):
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await process_giveaways()
+
+    criteria = mock_giveaway_service.evaluate_and_get_eligible.call_args.args[0]
+    assert isinstance(criteria, EligibilityCriteria)
+    assert criteria.ending_soon_priority is enabled
+    assert criteria.ending_soon_threshold_minutes == threshold
+    assert results["entered"] == 1
+    mock_giveaway_service.enter_giveaway.assert_awaited_once_with("SOON1", entry_type="auto")
+
+
+@pytest.mark.asyncio
+async def test_process_giveaways_ending_soon_row_over_budget_is_skipped_not_stopping():
+    """An ending-soon giveaway sorted first that would drop the balance below
+    autojoin_stop_at is skipped (skipped_budget +1); a later, cheaper non-soon
+    giveaway that fits is still entered as 'auto'."""
+    from workers.processor import process_giveaways
+
+    mock_settings = _autojoin_settings(
+        autojoin_start_at=350, autojoin_stop_at=400,
+        ending_soon_priority_enabled=True, ending_soon_threshold_minutes=60,
+    )
+    # Order as evaluate_and_get_eligible would return it with the lift on:
+    # the soon row first even though it is the most expensive.
+    soon = _mock_giveaway(code="SOON", price=150)
+    later = _mock_giveaway(code="LATER", price=50)
+
+    mock_entry = MagicMock()
+    mock_entry.points_spent = 50
+
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
+    mock_giveaway_service.evaluate_and_get_eligible.return_value = [soon, later]
+    mock_giveaway_service.enter_giveaway.return_value = mock_entry
+
+    patcher, ctx = patch_automation_context(
+        "workers.processor", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, \
+         patch("workers.processor.event_manager") as mock_event_manager, \
+         patch("workers.processor.asyncio.sleep", new_callable=AsyncMock):
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        results = await process_giveaways()
+
+    assert results["skipped_budget"] == 1
+    assert results["entered"] == 1
+    mock_giveaway_service.enter_giveaway.assert_awaited_once_with("LATER", entry_type="auto")
 
 
 @pytest.mark.asyncio

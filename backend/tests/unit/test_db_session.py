@@ -166,3 +166,129 @@ async def test_init_db_tracked_database_applies_pending_migrations(tmp_path, mon
     # THEN: Pending migrations are applied up to head
     assert _db_revision(db_path) == _head_revision()
     assert "is_dlc" in _column_names(db_path, "giveaways")
+
+
+ENDING_SOON_REVISION = "e3a9c7b5d1f4"
+ENDING_SOON_COLUMNS = {"ending_soon_priority_enabled", "ending_soon_threshold_minutes"}
+
+
+@pytest.mark.asyncio
+async def test_ending_soon_migration_upgrade_backfills_and_downgrade_drops(tmp_path, monkeypatch):
+    """The ending-soon settings revision revises a7d4e8f2c6b1, lies on the
+    single head's lineage, backfills an existing settings row with False/60 and downgrades
+    cleanly in batch mode."""
+    from alembic.script import ScriptDirectory
+
+    from alembic import command
+
+    # GIVEN: A database at the previous head with an existing settings row
+    db_path = tmp_path / "ending_soon.db"
+    monkeypatch.setattr(settings, "database_url", f"sqlite+aiosqlite:///{db_path}")
+    cfg = _alembic_config()
+    await asyncio.to_thread(command.upgrade, cfg, "a7d4e8f2c6b1")
+    assert ENDING_SOON_COLUMNS.isdisjoint(_column_names(db_path, "settings"))
+    conn = sqlite3.connect(db_path)
+    row_values = {
+        "id": 1, "user_agent": "ua", "safety_check_enabled": 1, "auto_hide_unsafe": 1,
+        "autojoin_enabled": 0, "autojoin_start_at": 350, "autojoin_stop_at": 200,
+        "autojoin_min_price": 10, "autojoin_min_score": 7, "autojoin_min_reviews": 1000,
+        "scan_interval_minutes": 30, "automation_enabled": 0, "max_scan_pages": 3,
+        "entry_delay_min": 8, "entry_delay_max": 12,
+        "created_at": "2026-01-01 00:00:00", "updated_at": "2026-01-01 00:00:00",
+    }
+    conn.execute(
+        f"INSERT INTO settings ({', '.join(row_values)}) "
+        f"VALUES ({', '.join('?' * len(row_values))})",
+        tuple(row_values.values()),
+    )
+    conn.commit()
+    conn.close()
+
+    # THEN: the chain is a7d4e8f2c6b1 -> ending-soon, there is a single head,
+    # and the ending-soon revision is on its lineage (later revisions may
+    # build on top of it without breaking this test)
+    script = ScriptDirectory.from_config(cfg)
+    heads = script.get_heads()
+    assert len(heads) == 1
+    lineage = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert ENDING_SOON_REVISION in lineage
+    assert script.get_revision(ENDING_SOON_REVISION).down_revision == "a7d4e8f2c6b1"
+
+    # WHEN: Upgrading to the ending-soon revision
+    await asyncio.to_thread(command.upgrade, cfg, ENDING_SOON_REVISION)
+
+    # THEN: Both columns exist and the existing row got the defaults
+    assert _db_revision(db_path) == ENDING_SOON_REVISION
+    assert ENDING_SOON_COLUMNS <= _column_names(db_path, "settings")
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT ending_soon_priority_enabled, ending_soon_threshold_minutes "
+            "FROM settings WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row == (0, 60)
+
+    # WHEN: Downgrading back to the previous revision
+    await asyncio.to_thread(command.downgrade, cfg, "a7d4e8f2c6b1")
+
+    # THEN: Both columns are gone and the row survives
+    assert _db_revision(db_path) == "a7d4e8f2c6b1"
+    assert ENDING_SOON_COLUMNS.isdisjoint(_column_names(db_path, "settings"))
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_ending_soon_migration_round_trip_on_empty_database(tmp_path, monkeypatch):
+    """On an empty SQLite database the ending-soon revision upgrades, downgrades
+    and re-upgrades cleanly, and the server defaults fill a row inserted
+    without the new columns (NOT NULL holds)."""
+    from alembic import command
+
+    # GIVEN: A brand-new empty database
+    db_path = tmp_path / "ending_soon_empty.db"
+    monkeypatch.setattr(settings, "database_url", f"sqlite+aiosqlite:///{db_path}")
+    cfg = _alembic_config()
+
+    # WHEN: Upgrading from nothing to the ending-soon revision, then back
+    await asyncio.to_thread(command.upgrade, cfg, ENDING_SOON_REVISION)
+    assert _db_revision(db_path) == ENDING_SOON_REVISION
+    assert ENDING_SOON_COLUMNS <= _column_names(db_path, "settings")
+
+    await asyncio.to_thread(command.downgrade, cfg, "a7d4e8f2c6b1")
+    assert _db_revision(db_path) == "a7d4e8f2c6b1"
+    assert ENDING_SOON_COLUMNS.isdisjoint(_column_names(db_path, "settings"))
+
+    # AND: Re-upgrading to head works (downgrade left no residue)
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+    assert _db_revision(db_path) == _head_revision()
+    assert ENDING_SOON_COLUMNS <= _column_names(db_path, "settings")
+
+    # THEN: Both columns are NOT NULL with the contract defaults
+    conn = sqlite3.connect(db_path)
+    try:
+        info = {
+            row[1]: row for row in conn.execute("PRAGMA table_info(settings)").fetchall()
+        }
+        for column in ENDING_SOON_COLUMNS:
+            assert info[column][3] == 1, f"{column} must be NOT NULL"
+        conn.execute(
+            "INSERT INTO settings (id, user_agent, safety_check_enabled, auto_hide_unsafe, "
+            "autojoin_enabled, autojoin_start_at, autojoin_stop_at, autojoin_min_price, "
+            "autojoin_min_score, autojoin_min_reviews, scan_interval_minutes, "
+            "automation_enabled, max_scan_pages, entry_delay_min, entry_delay_max, "
+            "created_at, updated_at) VALUES (1, 'ua', 1, 1, 0, 350, 200, 10, 7, 1000, "
+            "30, 0, 3, 8, 12, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+        )
+        row = conn.execute(
+            "SELECT ending_soon_priority_enabled, ending_soon_threshold_minutes "
+            "FROM settings WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row == (0, 60)

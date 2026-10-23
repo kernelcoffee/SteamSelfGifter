@@ -22,6 +22,8 @@ async def test_get_settings_creates_default(test_client: AsyncClient):
     assert settings["autojoin_enabled"] is False  # Default is False
     assert settings["autojoin_min_price"] == 10  # Default is 10
     assert settings["autojoin_min_score"] == 7  # Default is 7
+    assert settings["ending_soon_priority_enabled"] is False
+    assert settings["ending_soon_threshold_minutes"] == 60
 
 
 @pytest.mark.asyncio
@@ -315,3 +317,74 @@ async def test_update_multiple_settings(test_client: AsyncClient):
     assert data["autojoin_min_score"] == 8
     assert data["autojoin_min_reviews"] == 500
     assert data["max_scan_pages"] == 5
+
+
+@pytest.mark.asyncio
+async def test_update_ending_soon_settings_round_trip(test_client: AsyncClient):
+    """PUT both ending-soon fields, then GET reflects them."""
+    response = await test_client.put(
+        "/api/v1/settings",
+        json={"ending_soon_priority_enabled": True, "ending_soon_threshold_minutes": 120},
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["ending_soon_priority_enabled"] is True
+    assert response.json()["data"]["ending_soon_threshold_minutes"] == 120
+
+    settings = (await test_client.get("/api/v1/settings")).json()["data"]
+    assert settings["ending_soon_priority_enabled"] is True
+    assert settings["ending_soon_threshold_minutes"] == 120
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [4, 10081, "abc", 60.5])
+async def test_update_ending_soon_threshold_invalid_leaves_row_unchanged(
+    test_client: AsyncClient, value
+):
+    """Out-of-range or non-integer thresholds are 422 and nothing is written."""
+    await test_client.put("/api/v1/settings", json={"ending_soon_threshold_minutes": 90})
+
+    response = await test_client.put(
+        "/api/v1/settings", json={"ending_soon_threshold_minutes": value}
+    )
+    assert response.status_code == 422
+
+    settings = (await test_client.get("/api/v1/settings")).json()["data"]
+    assert settings["ending_soon_threshold_minutes"] == 90
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [5, 10080])
+async def test_update_ending_soon_threshold_bounds_accepted(test_client: AsyncClient, value):
+    """The inclusive bounds are accepted even with the toggle off."""
+    response = await test_client.put(
+        "/api/v1/settings", json={"ending_soon_threshold_minutes": value}
+    )
+    assert response.status_code == 200
+
+    settings = (await test_client.get("/api/v1/settings")).json()["data"]
+    assert settings["ending_soon_threshold_minutes"] == value
+    assert settings["ending_soon_priority_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_update_ending_soon_explicit_false_is_applied(test_client: AsyncClient):
+    """An explicit false alone is a valid update and is persisted."""
+    await test_client.put("/api/v1/settings", json={"ending_soon_priority_enabled": True})
+
+    response = await test_client.put(
+        "/api/v1/settings", json={"ending_soon_priority_enabled": False}
+    )
+    assert response.status_code == 200
+
+    settings = (await test_client.get("/api/v1/settings")).json()["data"]
+    assert settings["ending_soon_priority_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_update_ending_soon_all_null_is_rejected(test_client: AsyncClient):
+    """Nulls are dropped by exclude_none, leaving an empty update (400)."""
+    response = await test_client.put(
+        "/api/v1/settings",
+        json={"ending_soon_priority_enabled": None, "ending_soon_threshold_minutes": None},
+    )
+    assert response.status_code == 400

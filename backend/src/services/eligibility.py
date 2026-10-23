@@ -21,10 +21,14 @@ active/hidden/entered checks.
 DLC exception (same reasoning): SteamGifts' DLC listing only shows DLC for
 games the user owns, so ``is_dlc`` giveaways bypass the same filters when
 ``dlc_priority`` is on (driven by the dlc_priority_enabled setting).
+
+Entry order: :func:`priority_sort_key` orders the eligible giveaways for the
+automation cycle (wishlist, then DLC, then optionally "ending soon", then the
+rest). It never changes *which* giveaways are eligible.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 # === Reason codes (stored on Giveaway.eligibility_reason) ===
@@ -65,6 +69,10 @@ class EligibilityCriteria:
     ``wishlist_priority`` controls the wishlist exception described in the
     module docstring; when off, wishlist giveaways pass the same filters as
     everything else.
+
+    ``ending_soon_priority`` and ``ending_soon_threshold_minutes`` affect the
+    entry *order* only (see :func:`priority_sort_key`); they are never read by
+    :func:`evaluate_eligibility`.
     """
 
     min_price: int = 0
@@ -74,6 +82,8 @@ class EligibilityCriteria:
     max_game_age: int | None = None
     wishlist_priority: bool = True
     dlc_priority: bool = False
+    ending_soon_priority: bool = False
+    ending_soon_threshold_minutes: int = 60
 
     @property
     def needs_game_data(self) -> bool:
@@ -83,6 +93,51 @@ class EligibilityCriteria:
             or self.min_reviews is not None
             or self.max_game_age is not None
         )
+
+
+def priority_sort_key(
+    giveaway: Any, criteria: EligibilityCriteria, now: datetime
+) -> tuple[bool, bool, bool, datetime]:
+    """Sort key giving the automation cycle's entry order.
+
+    Meant for a *stable* sort over a pool already ordered by price descending.
+    The tuple orders wishlist > DLC > ending soon > rest (``False`` sorts
+    before ``True``). The fourth element orders the ending-soon group by
+    ``end_time`` ascending (soonest first) and is the constant ``datetime.min``
+    for every other row, so the stable sort keeps the pool's price order inside
+    the wishlist, DLC and rest groups, and among ending-soon rows sharing an
+    ``end_time``.
+
+    With ``ending_soon_priority`` off, the third element is ``True`` and the
+    fourth ``datetime.min`` for every row, so the result is identical to the
+    previous two-element ``(not wishlist, not dlc)`` key.
+
+    A giveaway is ending soon when ``end_time - now`` is at most the threshold
+    (exactly at the threshold counts). ``end_time`` ``None`` is never ending
+    soon. A wishlist- or DLC-lifted giveaway stays in its own group in price
+    order even when it ends soon.
+
+    Args:
+        giveaway: the Giveaway ORM object.
+        criteria: the active autojoin criteria (only the priority flags and the
+            threshold are read).
+        now: current UTC time (naive, to match stored naive datetimes).
+    """
+    lifted_wishlist = bool(criteria.wishlist_priority and giveaway.is_wishlist)
+    lifted_dlc = bool(criteria.dlc_priority and giveaway.is_dlc)
+    ending_soon = (
+        criteria.ending_soon_priority
+        and not lifted_wishlist
+        and not lifted_dlc
+        and giveaway.end_time is not None
+        and giveaway.end_time - now <= timedelta(minutes=criteria.ending_soon_threshold_minutes)
+    )
+    return (
+        not lifted_wishlist,
+        not lifted_dlc,
+        not ending_soon,
+        giveaway.end_time if ending_soon else datetime.min,
+    )
 
 
 def evaluate_eligibility(giveaway: Any, game: Any, criteria: EligibilityCriteria, now: datetime) -> str:

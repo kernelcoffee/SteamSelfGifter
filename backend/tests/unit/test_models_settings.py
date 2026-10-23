@@ -64,6 +64,8 @@ def test_settings_creation_with_defaults(session):
     assert settings.autojoin_min_price == 10
     assert settings.autojoin_min_score == 7
     assert settings.autojoin_min_reviews == 1000
+    assert settings.ending_soon_priority_enabled is False
+    assert settings.ending_soon_threshold_minutes == 60
     assert settings.scan_interval_minutes == 30
     assert settings.automation_enabled is False
     assert settings.max_scan_pages == 3

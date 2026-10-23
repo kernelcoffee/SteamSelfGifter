@@ -5,6 +5,18 @@ import { useSettings, useUpdateSettings, useTestSession } from '@/hooks';
 import { showSuccess, showError } from '@/stores/uiStore';
 import type { Settings as SettingsType } from '@/types';
 
+// Bounds mirror the backend schema (ge=5, le=10080: five minutes to one week)
+const ENDING_SOON_THRESHOLD_MIN = 5;
+const ENDING_SOON_THRESHOLD_MAX = 10080;
+const ENDING_SOON_THRESHOLD_DEFAULT = 60;
+
+/** Parse the threshold field's text; null unless it is an integer in range. */
+function parseThreshold(text: string): number | null {
+  if (!/^\d+$/.test(text.trim())) return null;
+  const value = Number(text.trim());
+  return value >= ENDING_SOON_THRESHOLD_MIN && value <= ENDING_SOON_THRESHOLD_MAX ? value : null;
+}
+
 /**
  * Settings page
  * Configure credentials, DLC settings, and auto-join rules
@@ -58,6 +70,8 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
     autojoin_min_reviews: settings.autojoin_min_reviews,
     autojoin_max_game_age: settings.autojoin_max_game_age,
     wishlist_priority_enabled: settings.wishlist_priority_enabled,
+    ending_soon_priority_enabled: settings.ending_soon_priority_enabled,
+    ending_soon_threshold_minutes: settings.ending_soon_threshold_minutes,
     scan_interval_minutes: settings.scan_interval_minutes,
     max_entries_per_cycle: settings.max_entries_per_cycle,
     automation_enabled: settings.automation_enabled,
@@ -69,12 +83,52 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
   const [hasChanges, setHasChanges] = useState(false);
   const [showPhpsessid, setShowPhpsessid] = useState(false);
 
+  const savedThreshold = settings.ending_soon_threshold_minutes ?? ENDING_SOON_THRESHOLD_DEFAULT;
+  // Raw text of the threshold field: lets the user clear it and type freely.
+  // formData only receives the number once the text is a valid threshold.
+  const [thresholdText, setThresholdText] = useState(() => String(savedThreshold));
+  const parsedThreshold = parseThreshold(thresholdText);
+  const thresholdError =
+    formData.ending_soon_priority_enabled && parsedThreshold === null
+      ? `Must be between ${ENDING_SOON_THRESHOLD_MIN} and ${ENDING_SOON_THRESHOLD_MAX} minutes`
+      : undefined;
+  const isValid = !thresholdError;
+  // Shown next to the disabled Save buttons, which may be far from the inline error.
+  const saveBlockedReason = isValid
+    ? undefined
+    : `Fix the ending soon threshold (${ENDING_SOON_THRESHOLD_MIN} to ${ENDING_SOON_THRESHOLD_MAX} minutes) to save`;
+
   const handleChange = (field: keyof SettingsType, value: string | number | boolean | null) => {
     setFormData(prev => ({ ...prev, [field]: value }));
     setHasChanges(true);
   };
 
+  const handleThresholdChange = (raw: string) => {
+    setThresholdText(raw);
+    const parsed = parseThreshold(raw);
+    if (parsed !== null) {
+      setFormData(prev => ({ ...prev, ending_soon_threshold_minutes: parsed }));
+    }
+    setHasChanges(true);
+  };
+
+  // Turning the lift off hides the threshold input, so any draft threshold
+  // (valid or not) is discarded and the saved value restored: nothing hidden
+  // from the user is ever sent.
+  const handleEndingSoonToggle = (checked: boolean) => {
+    setFormData(prev => ({
+      ...prev,
+      ending_soon_priority_enabled: checked,
+      ...(checked ? {} : { ending_soon_threshold_minutes: savedThreshold }),
+    }));
+    if (!checked) {
+      setThresholdText(String(savedThreshold));
+    }
+    setHasChanges(true);
+  };
+
   const handleSave = async () => {
+    if (!isValid) return;
     try {
       await updateSettings.mutateAsync(formData);
       showSuccess('Settings saved successfully');
@@ -104,7 +158,8 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
         <Button
           onClick={handleSave}
           isLoading={updateSettings.isPending}
-          disabled={!hasChanges}
+          disabled={!hasChanges || !isValid}
+          title={saveBlockedReason}
           icon={Save}
         >
           Save Changes
@@ -244,6 +299,28 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
             onChange={(checked) => handleChange('dlc_priority_enabled', checked)}
           />
         </div>
+        <div className="mb-4">
+          <Toggle
+            label="Enter giveaways ending soon first"
+            description="Giveaways that pass the filters below and end within the threshold are entered after wishlist and DLC ones but before the rest, soonest first"
+            checked={formData.ending_soon_priority_enabled ?? false}
+            onChange={handleEndingSoonToggle}
+          />
+          {formData.ending_soon_priority_enabled && (
+            <div className="mt-3 max-w-xs">
+              <Input
+                label="Ending Soon Threshold (minutes)"
+                type="number"
+                min={ENDING_SOON_THRESHOLD_MIN}
+                max={ENDING_SOON_THRESHOLD_MAX}
+                value={thresholdText}
+                onChange={(e) => handleThresholdChange(e.target.value)}
+                helperText={`A giveaway counts as ending soon when it ends within this many minutes (${ENDING_SOON_THRESHOLD_MIN} to ${ENDING_SOON_THRESHOLD_MAX})`}
+                error={thresholdError}
+              />
+            </div>
+          )}
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Input
             label="Start at Points"
@@ -352,11 +429,13 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
         <div className="flex items-center justify-between p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
           <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-400">
             <AlertCircle size={20} />
-            <span>You have unsaved changes</span>
+            <span>{saveBlockedReason ?? 'You have unsaved changes'}</span>
           </div>
           <Button
             onClick={handleSave}
             isLoading={updateSettings.isPending}
+            disabled={!isValid}
+            title={saveBlockedReason}
             icon={Save}
           >
             Save Changes
