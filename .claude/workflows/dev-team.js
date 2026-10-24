@@ -330,8 +330,12 @@ if (consultants.length) {
 // ---- Build -----------------------------------------------------------------
 phase('Build')
 const reports = {}
+// args.buildNotes = { backend: '...', frontend: '...' } appends a note to that
+// stack's build prompt only (for a resume after an interrupted build: the
+// other stack's cached result stays valid).
+const buildNotes = opt.buildNotes || {}
 const built = await parallel(stacks.map((s) => () =>
-  run(STACKS[s].dev, `${context()}\n\nYour brief:\n${briefs[s]}`, { phase: 'Build', schema: DEV, label: `build:${s}` })
+  run(STACKS[s].dev, `${context()}\n\nYour brief:\n${briefs[s]}${buildNotes[s] ? `\n\nNote from the orchestrator:\n${buildNotes[s]}` : ''}`, { phase: 'Build', schema: DEV, label: `build:${s}` })
     .then((r) => ({ stack: s, report: r }))))
 for (const b of built.filter(Boolean)) reports[b.stack] = b.report
 for (const s of stacks) if (!reports[s]) throw new Error(`${STACKS[s].dev} returned nothing`)
