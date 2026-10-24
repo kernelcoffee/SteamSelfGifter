@@ -122,6 +122,116 @@ async def test_automation_cycle_skips_entries_when_autojoin_disabled():
 
 
 @pytest.mark.asyncio
+async def test_automation_cycle_refreshes_stale_games_before_entries():
+    """Each cycle runs the bounded background refresh (the genres backfill
+    path) with GAME_REFRESH_BATCH_SIZE, before entering giveaways."""
+    from workers.automation import GAME_REFRESH_BATCH_SIZE, automation_cycle
+
+    settings = _cycle_settings()
+    order: list[str] = []
+
+    async def entries(*args, **kwargs):
+        order.append("entries")
+        return []
+
+    async def refresh(**kwargs):
+        order.append("refresh")
+        return 3
+
+    gs = AsyncMock()
+    gs.get_current_points.return_value = 500
+    gs.sync_giveaways.return_value = (0, 0)
+    gs.sync_wins.return_value = 0
+    gs.sync_entered_giveaways.return_value = 0
+    gs.evaluate_and_get_eligible = AsyncMock(side_effect=entries)
+    game_service = AsyncMock()
+    game_service.refresh_stale_games = AsyncMock(side_effect=refresh)
+    game_service.steam_retry_after_seconds = MagicMock(return_value=0)
+
+    patcher, ctx = patch_automation_context(
+        "workers.automation", settings, giveaway_service=gs, game_service=game_service
+    )
+    with patcher, \
+         patch("workers.automation.event_manager") as ev, \
+         patch("workers.processor.event_manager") as ev2:
+        ev.broadcast_event = AsyncMock()
+        ev2.broadcast_event = AsyncMock()
+        results = await automation_cycle()
+
+    assert GAME_REFRESH_BATCH_SIZE == 10
+    game_service.refresh_stale_games.assert_awaited_once_with(limit=GAME_REFRESH_BATCH_SIZE)
+    assert results["game_refresh"] == {"refreshed": 3, "skipped": False}
+    assert order == ["refresh", "entries"]
+
+
+@pytest.mark.asyncio
+async def test_automation_cycle_survives_stale_refresh_failure():
+    """A failing background refresh is recorded and the cycle still enters."""
+    from workers.automation import automation_cycle
+
+    settings = _cycle_settings()
+    gs = AsyncMock()
+    gs.get_current_points.return_value = 500
+    gs.sync_giveaways.return_value = (0, 0)
+    gs.sync_wins.return_value = 0
+    gs.sync_entered_giveaways.return_value = 0
+    gs.evaluate_and_get_eligible.return_value = []
+    game_service = AsyncMock()
+    game_service.refresh_stale_games = AsyncMock(side_effect=RuntimeError("db locked"))
+    game_service.steam_retry_after_seconds = MagicMock(return_value=0)
+
+    patcher, ctx = patch_automation_context(
+        "workers.automation", settings, giveaway_service=gs, game_service=game_service
+    )
+    with patcher, \
+         patch("workers.automation.event_manager") as ev, \
+         patch("workers.processor.event_manager") as ev2:
+        ev.broadcast_event = AsyncMock()
+        ev2.broadcast_event = AsyncMock()
+        results = await automation_cycle()
+
+    assert results["game_refresh"]["error"] == "db locked"
+    gs.evaluate_and_get_eligible.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_automation_cycle_reports_stale_refresh_skipped_during_cooldown():
+    """While the Steam cool-down is active the refresh step is reported as
+    skipped (with the reason and retry time), not as 'ran, nothing stale',
+    and refresh_stale_games is not called."""
+    from workers.automation import automation_cycle
+
+    settings = _cycle_settings()
+    gs = AsyncMock()
+    gs.get_current_points.return_value = 500
+    gs.sync_giveaways.return_value = (0, 0)
+    gs.sync_wins.return_value = 0
+    gs.sync_entered_giveaways.return_value = 0
+    gs.evaluate_and_get_eligible.return_value = []
+    game_service = AsyncMock()
+    game_service.steam_retry_after_seconds = MagicMock(return_value=140)
+
+    patcher, ctx = patch_automation_context(
+        "workers.automation", settings, giveaway_service=gs, game_service=game_service
+    )
+    with patcher, \
+         patch("workers.automation.event_manager") as ev, \
+         patch("workers.processor.event_manager") as ev2:
+        ev.broadcast_event = AsyncMock()
+        ev2.broadcast_event = AsyncMock()
+        results = await automation_cycle()
+
+    assert results["game_refresh"] == {
+        "refreshed": 0,
+        "skipped": True,
+        "reason": "steam_rate_limited",
+        "retry_after_seconds": 140,
+    }
+    game_service.refresh_stale_games.assert_not_awaited()
+    gs.evaluate_and_get_eligible.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_sync_wins_only():
     """sync_wins_only delegates to the giveaway service via the context."""
     from workers.automation import sync_wins_only

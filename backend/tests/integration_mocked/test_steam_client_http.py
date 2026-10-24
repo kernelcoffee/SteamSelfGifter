@@ -34,6 +34,8 @@ class TestAppDetails:
         [request] = transport.requests
         assert request.url.host == "store.steampowered.com"
         assert request.url.params["appids"] == "2525380"
+        # Language pinned so genre/category names never localize.
+        assert request.url.params["l"] == "english"
 
     async def test_unsuccessful_lookup_returns_none(self, transport):
         transport.add(
@@ -42,6 +44,15 @@ class TestAppDetails:
 
         async with SteamClient(transport=transport) as client:
             assert await client.get_app_details(999) is None
+
+    async def test_null_body_raises_rate_limit_error(self, transport):
+        """A throttled store API can answer 200 with the body `null`: that is a
+        rate-limit error the callers handle, not an AttributeError."""
+        transport.add("GET", "/api/appdetails", httpx.Response(200, content=b"null"))
+
+        async with SteamClient(transport=transport) as client:
+            with pytest.raises(SteamAPIRateLimitError):
+                await client.get_app_details(2525380)
 
     async def test_404_returns_none(self, transport):
         transport.add("GET", "/api/appdetails", httpx.Response(404))

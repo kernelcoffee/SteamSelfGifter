@@ -11,6 +11,8 @@ from api.schemas.game import (
     GameRefreshResponse,
     GameResponse,
     GameStats,
+    GenreCount,
+    GenreListResponse,
 )
 from core.time import utcnow
 
@@ -184,3 +186,31 @@ def test_game_stats():
 def test_game_response_orm_mode():
     """Test GameResponse has ORM mode enabled."""
     assert GameResponse.model_config.get("from_attributes") is True
+
+
+def test_game_genres_and_categories_default_none():
+    """genres/categories default to None (not fetched yet) and keep lists."""
+    game = GameBase(id=620, name="Portal 2", type="game")
+    assert game.genres is None
+    assert game.categories is None
+
+    fetched = GameBase(
+        id=620, name="Portal 2", type="game",
+        genres=["Action", "Adventure"], categories=[],
+    )
+    assert fetched.genres == ["Action", "Adventure"]
+    assert fetched.categories == []
+
+
+def test_genre_count_validation():
+    assert GenreCount(name="Animation & Modeling", count=0).count == 0
+    with pytest.raises(ValidationError):
+        GenreCount(name="Action", count=-1)
+    with pytest.raises(ValidationError):
+        GenreCount(name="", count=1)
+
+
+def test_genre_list_response_dump():
+    response = GenreListResponse(genres=[GenreCount(name="Action", count=2)])
+    assert response.model_dump() == {"genres": [{"name": "Action", "count": 2}]}
+    assert GenreListResponse().model_dump() == {"genres": []}

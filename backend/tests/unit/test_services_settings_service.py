@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.base import Base
-from services.settings_service import SettingsService
+from services.settings_service import SettingsService, normalize_excluded_genres
 
 
 # Test database setup
@@ -274,8 +274,10 @@ async def test_reset_to_defaults(test_db):
             max_scan_pages=10,
             ending_soon_priority_enabled=True,
             ending_soon_threshold_minutes=120,
+            excluded_genres=["Sports"],
         )
         assert (await service.get_settings()).ending_soon_threshold_minutes == 120
+        assert (await service.get_settings()).excluded_genres == ["Sports"]
 
         # Reset
         settings = await service.reset_to_defaults()
@@ -296,6 +298,69 @@ async def test_reset_to_defaults(test_db):
         assert settings.entry_delay_max == 12
         assert settings.ending_soon_priority_enabled is False
         assert settings.ending_soon_threshold_minutes == 60
+        assert settings.excluded_genres == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value, match", [
+    ([f"Genre {i}" for i in range(51)], "at most 50 genres"),
+    (["x" * 65], "at most 64 characters"),
+    ([" " + "x" * 65 + " "], "at most 64 characters"),
+    ("Action", "list of strings"),
+    ([1, 2], "list of strings"),
+    (None, "list of strings"),
+])
+async def test_update_settings_rejects_invalid_excluded_genres(test_db, value, match):
+    """Too many items, an over-long item or a non-list raise ValueError
+    (400 via the router) and nothing is written."""
+    async with test_db() as session:
+        service = SettingsService(session)
+        await service.update_settings(excluded_genres=["Sports"])
+
+        with pytest.raises(ValueError, match=match):
+            await service.update_settings(excluded_genres=value)
+
+        assert (await service.get_settings()).excluded_genres == ["Sports"]
+
+
+@pytest.mark.asyncio
+async def test_update_settings_normalizes_excluded_genres(test_db):
+    """Items are stripped, empties dropped and case-insensitive duplicates
+    removed keeping the first spelling and the user's order."""
+    async with test_db() as session:
+        service = SettingsService(session)
+
+        settings = await service.update_settings(
+            excluded_genres=[" Action", "action", "  ", "Indie ", "", "ACTION", "Racing"]
+        )
+
+        assert settings.excluded_genres == ["Action", "Indie", "Racing"]
+
+
+@pytest.mark.asyncio
+async def test_update_settings_accepts_excluded_genres_bounds(test_db):
+    """Exactly 50 items and a 64-character item are accepted; 50 items
+    that collapse from more duplicates are accepted too."""
+    async with test_db() as session:
+        service = SettingsService(session)
+        fifty = [f"Genre {i}" for i in range(50)]
+
+        assert (await service.update_settings(excluded_genres=fifty)).excluded_genres == fifty
+        settings = await service.update_settings(excluded_genres=fifty + [g.upper() for g in fifty])
+        assert settings.excluded_genres == fifty
+        settings = await service.update_settings(excluded_genres=["x" * 64])
+        assert settings.excluded_genres == ["x" * 64]
+
+
+@pytest.mark.asyncio
+async def test_update_settings_empty_excluded_genres_clears(test_db):
+    async with test_db() as session:
+        service = SettingsService(session)
+        await service.update_settings(excluded_genres=["Sports", "Racing"])
+
+        settings = await service.update_settings(excluded_genres=[])
+
+        assert settings.excluded_genres == []
 
 
 @pytest.mark.asyncio
@@ -419,3 +484,12 @@ async def test_update_settings_out_of_range_threshold_keeps_prior_value(test_db,
         settings = await service.get_settings()
         assert settings.ending_soon_threshold_minutes == 90
         assert settings.ending_soon_priority_enabled is True
+
+
+def test_normalize_excluded_genres_dedupes_with_the_match_fold():
+    """Dedupe uses the same ASCII-only fold as the eligibility match, so
+    spellings that match differently ("Éducation"/"éducation") are both kept
+    while ASCII case variants are merged."""
+    assert normalize_excluded_genres(["Éducation", "éducation", "ACTION", "action"]) == [
+        "Éducation", "éducation", "ACTION",
+    ]

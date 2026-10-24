@@ -22,6 +22,7 @@ def _autojoin_settings(**overrides):
     mock_settings.dlc_priority_enabled = False
     mock_settings.ending_soon_priority_enabled = False
     mock_settings.ending_soon_threshold_minutes = 60
+    mock_settings.excluded_genres = []
     mock_settings.max_entries_per_cycle = 5
     mock_settings.entry_delay_min = 0.01
     mock_settings.entry_delay_max = 0.02
@@ -341,6 +342,37 @@ async def test_process_giveaways_passes_ending_soon_criteria(enabled, threshold)
     assert criteria.ending_soon_threshold_minutes == threshold
     assert results["entered"] == 1
     mock_giveaway_service.enter_giveaway.assert_awaited_once_with("SOON1", entry_type="auto")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored, expected", [
+    (["Sports", "RACING"], frozenset({"sports", "racing"})),
+    ([], frozenset()),
+    (None, frozenset()),
+])
+async def test_process_giveaways_passes_excluded_genres(stored, expected):
+    """settings.excluded_genres reaches the cycle's EligibilityCriteria,
+    lowercased; [] or None disable the genre filter."""
+    from workers.processor import process_giveaways
+
+    mock_settings = _autojoin_settings(excluded_genres=stored)
+    mock_giveaway_service = AsyncMock()
+    mock_giveaway_service.get_current_points.return_value = 500
+    mock_giveaway_service.evaluate_and_get_eligible.return_value = []
+
+    patcher, ctx = patch_automation_context(
+        "workers.processor", mock_settings, giveaway_service=mock_giveaway_service
+    )
+
+    with patcher, \
+         patch("workers.processor.event_manager") as mock_event_manager, \
+         patch("workers.processor.asyncio.sleep", new_callable=AsyncMock):
+        mock_event_manager.broadcast_event = AsyncMock()
+
+        await process_giveaways()
+
+    criteria = mock_giveaway_service.evaluate_and_get_eligible.call_args.args[0]
+    assert criteria.excluded_genres == expected
 
 
 @pytest.mark.asyncio

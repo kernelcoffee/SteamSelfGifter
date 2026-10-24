@@ -10,6 +10,7 @@ from api.routers.giveaways import (
     enter_giveaway,
     get_active_giveaways,
     get_eligible_giveaways,
+    get_entered_giveaways,
     get_expiring_giveaways,
     get_giveaway,
     get_giveaway_stats,
@@ -58,12 +59,34 @@ def create_mock_giveaway(
     mock.is_won = False
     mock.won_at = None
     mock.game_thumbnail = None
+    mock.game_genres = None
     mock.game_review_score = None
     mock.game_total_reviews = None
     mock.game_review_summary = None
     mock.eligibility_reason = None
     mock.eligibility_checked_at = None
     return mock
+
+
+@pytest.mark.asyncio
+async def test_list_giveaways_serializes_game_genres():
+    """The joined game_genres field reaches the response; None stays null."""
+    mock_service = AsyncMock()
+    with_genres = create_mock_giveaway(id=1, code="AAA11")
+    with_genres.game_genres = ["Action", "Indie"]
+    without = create_mock_giveaway(id=2, code="BBB22")
+    mock_service.get_all_giveaways.return_value = [with_genres, without]
+    mock_service.enrich_giveaways_with_game_data.return_value = [with_genres, without]
+
+    result = await list_giveaways(
+        giveaway_service=mock_service, min_price=None, max_price=None,
+        min_score=None, min_reviews=None, search=None, is_entered=None,
+        active_only=False, limit=50, offset=0,
+    )
+
+    first, second = result["data"]["giveaways"]
+    assert first["game_genres"] == ["Action", "Indie"]
+    assert second["game_genres"] is None
 
 
 @pytest.mark.asyncio
@@ -222,11 +245,38 @@ async def test_get_giveaway_found():
     mock_service = AsyncMock()
     mock_giveaway = create_mock_giveaway(code="ABC123")
     mock_service.giveaway_repo.get_by_code.return_value = mock_giveaway
+    enriched = create_mock_giveaway(code="ABC123", game_id=620)
+    enriched.game_genres = ["Action"]
+    mock_service.enrich_giveaways_with_game_data.return_value = [enriched]
 
     result = await get_giveaway(code="ABC123", giveaway_service=mock_service)
 
     assert result["success"] is True
     assert result["data"]["code"] == "ABC123"
+    assert result["data"]["game_genres"] == ["Action"]
+    mock_service.enrich_giveaways_with_game_data.assert_awaited_once_with([mock_giveaway])
+
+
+@pytest.mark.asyncio
+async def test_get_entered_giveaways():
+    """Test GET /giveaways/entered: entered list, enriched with game data."""
+    mock_service = AsyncMock()
+    entered = create_mock_giveaway(id=1, code="ENTR1", is_entered=True)
+    mock_service.get_entered_giveaways.return_value = [entered]
+    enriched = create_mock_giveaway(id=1, code="ENTR1", is_entered=True)
+    enriched.game_genres = ["Indie"]
+    mock_service.enrich_giveaways_with_game_data.return_value = [enriched]
+
+    result = await get_entered_giveaways(
+        giveaway_service=mock_service, limit=20, active_only=True
+    )
+
+    assert result["success"] is True
+    assert result["data"]["count"] == 1
+    assert result["data"]["giveaways"][0]["code"] == "ENTR1"
+    assert result["data"]["giveaways"][0]["game_genres"] == ["Indie"]
+    mock_service.get_entered_giveaways.assert_awaited_once_with(limit=20, active_only=True)
+    mock_service.enrich_giveaways_with_game_data.assert_awaited_once_with([entered])
 
 
 @pytest.mark.asyncio

@@ -16,11 +16,20 @@ from api.dependencies import get_database
 from api.main import app
 from db.session import get_db
 from models.base import Base
+from services.game_service import steam_cooldown
 from workers import scheduler as scheduler_module
 from workers.scheduler import SchedulerManager
 
 # Use in-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+
+@pytest.fixture(autouse=True)
+def reset_steam_cooldown():
+    """Clear the process-wide Steam rate-limit pause around every test."""
+    steam_cooldown.reset()
+    yield
+    steam_cooldown.reset()
 
 
 @pytest.fixture(autouse=True)
@@ -76,6 +85,9 @@ def patch_automation_context(target_module: str, settings, **service_mocks):
 
     if authenticated:
         ctx.game_service = service_mocks.get("game_service", AsyncMock())
+        if "game_service" not in service_mocks:
+            # Sync method on the real service: no Steam cool-down by default.
+            ctx.game_service.steam_retry_after_seconds = MagicMock(return_value=0)
         ctx.giveaway_service = service_mocks.get("giveaway_service", AsyncMock())
         ctx.notification_service = service_mocks.get("notification_service", AsyncMock())
         ctx.scheduler_service = service_mocks.get("scheduler_service", AsyncMock())

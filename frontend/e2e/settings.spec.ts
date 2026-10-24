@@ -34,4 +34,24 @@ test.describe('Settings', () => {
     await page.getByRole('button', { name: /test session/i }).click();
     await expect(page.getByText(/session valid.*e2e-user/i)).toBeVisible();
   });
+  test('excluding a cached genre and typing a new one PUTs the full list', async ({ page }) => {
+    const action = page.getByRole('button', { name: 'Action (12 games)' });
+    await expect(action).toHaveAttribute('aria-pressed', 'false');
+    await action.click();
+    await expect(action).toHaveAttribute('aria-pressed', 'true');
+
+    const input = page.getByLabel('Add a genre');
+    await input.fill('Racing');
+    await input.press('Enter');
+    await expect(input).toHaveValue('');
+    const chips = page.getByRole('group', { name: 'Excluded genres' });
+    await expect(chips.getByText('Racing', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Save Changes' }).first().click();
+    await expect(page.getByText('Settings saved successfully')).toBeVisible();
+
+    const puts = calls.filter((c) => c.method === 'PUT' && c.url === '/api/v1/settings');
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0].postData!).excluded_genres).toEqual(['Action', 'Racing']);
+  });
 });

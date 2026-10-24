@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from api.routers.games import (
     bulk_cache_games,
     get_game,
+    get_game_genres,
     get_game_stats,
     get_highly_rated_games,
     list_games,
@@ -16,6 +17,8 @@ from api.routers.games import (
     refresh_stale_games,
     search_games,
 )
+from core.exceptions import RateLimitError
+from services.game_service import FetchStatus, RefreshOutcome
 
 
 def create_mock_game(
@@ -33,6 +36,8 @@ def create_mock_game(
     description=None,
     price=None,
     last_refreshed_at=None,
+    genres=None,
+    categories=None,
 ):
     """Create a mock game object."""
     mock = MagicMock()
@@ -49,6 +54,9 @@ def create_mock_game(
     mock.game_id = game_id
     mock.description = description
     mock.price = price
+    # List fields must be set: a bare MagicMock attribute validates as []
+    mock.genres = genres
+    mock.categories = categories
     mock.last_refreshed_at = last_refreshed_at or datetime.now(UTC)
     return mock
 
@@ -157,6 +165,55 @@ async def test_get_game_stats():
 
 
 @pytest.mark.asyncio
+async def test_get_game_genres():
+    """GET /games/genres wraps the service rows in the envelope, in order."""
+    mock_service = AsyncMock()
+    mock_service.get_genre_counts.return_value = [
+        {"name": "Action", "count": 2},
+        {"name": "Indie", "count": 1},
+    ]
+
+    result = await get_game_genres(game_service=mock_service)
+
+    assert result["success"] is True
+    assert result["data"] == {
+        "genres": [{"name": "Action", "count": 2}, {"name": "Indie", "count": 1}]
+    }
+    mock_service.get_genre_counts.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_get_game_genres_empty():
+    mock_service = AsyncMock()
+    mock_service.get_genre_counts.return_value = []
+
+    result = await get_game_genres(game_service=mock_service)
+
+    assert result["data"] == {"genres": []}
+
+
+@pytest.mark.asyncio
+async def test_list_games_serializes_genres_and_categories():
+    """GameResponse carries genres/categories; None stays null (not fetched)."""
+    mock_service = AsyncMock()
+    mock_service.repo.get_all.return_value = [
+        create_mock_game(id=1, genres=["Action"], categories=["Single-player"]),
+        create_mock_game(id=2),
+    ]
+
+    result = await list_games(
+        game_service=mock_service, type=None, min_score=None,
+        min_reviews=None, search=None, limit=50,
+    )
+
+    fetched, unfetched = result["data"]["games"]
+    assert fetched["genres"] == ["Action"]
+    assert fetched["categories"] == ["Single-player"]
+    assert unfetched["genres"] is None
+    assert unfetched["categories"] is None
+
+
+@pytest.mark.asyncio
 async def test_search_games():
     """Test GET /games/search/{query} endpoint."""
     mock_service = AsyncMock()
@@ -198,7 +255,7 @@ async def test_get_game_found():
     """Test GET /games/{app_id} endpoint when found."""
     mock_service = AsyncMock()
     mock_game = create_mock_game(id=620, name="Portal 2")
-    mock_service.get_or_fetch_game.return_value = mock_game
+    mock_service.lookup_game.return_value = (mock_game, None)
 
     result = await get_game(
         app_id=620,
@@ -208,14 +265,14 @@ async def test_get_game_found():
 
     assert result["success"] is True
     assert result["data"]["id"] == 620
-    mock_service.get_or_fetch_game.assert_called_once_with(620, force_refresh=False)
+    mock_service.lookup_game.assert_called_once_with(620, force_refresh=False)
 
 
 @pytest.mark.asyncio
 async def test_get_game_not_found():
     """Test GET /games/{app_id} endpoint when not found."""
     mock_service = AsyncMock()
-    mock_service.get_or_fetch_game.return_value = None
+    mock_service.lookup_game.return_value = (None, FetchStatus.UNAVAILABLE)
 
     with pytest.raises(HTTPException) as exc_info:
         await get_game(
@@ -228,11 +285,39 @@ async def test_get_game_not_found():
 
 
 @pytest.mark.asyncio
+async def test_get_game_uncached_during_rate_limit_is_429_not_404():
+    """An uncached app that Steam was not asked about (cool-down) is a rate
+    limit with the retry time, not a 404 'not found'."""
+    mock_service = AsyncMock()
+    mock_service.lookup_game.return_value = (None, FetchStatus.RATE_LIMITED)
+    mock_service.steam_retry_after_seconds = MagicMock(return_value=95)
+
+    with pytest.raises(RateLimitError) as exc_info:
+        await get_game(app_id=12345, game_service=mock_service, force_refresh=True)
+
+    assert exc_info.value.code == "STEAM_003"
+    assert exc_info.value.details == {"app_id": 12345, "retry_after_seconds": 95}
+    assert "retry in 95 s" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_get_game_cached_during_rate_limit_serves_row():
+    """A cached row is still served (200) while Steam is rate limiting."""
+    mock_service = AsyncMock()
+    mock_service.lookup_game.return_value = (create_mock_game(id=620), FetchStatus.RATE_LIMITED)
+
+    result = await get_game(app_id=620, game_service=mock_service, force_refresh=True)
+
+    assert result["success"] is True
+    assert result["data"]["id"] == 620
+
+
+@pytest.mark.asyncio
 async def test_get_game_force_refresh():
     """Test GET /games/{app_id} with force refresh."""
     mock_service = AsyncMock()
     mock_game = create_mock_game()
-    mock_service.get_or_fetch_game.return_value = mock_game
+    mock_service.lookup_game.return_value = (mock_game, FetchStatus.REFRESHED)
 
     result = await get_game(
         app_id=620,
@@ -241,7 +326,7 @@ async def test_get_game_force_refresh():
     )
 
     assert result["success"] is True
-    mock_service.get_or_fetch_game.assert_called_once_with(620, force_refresh=True)
+    mock_service.lookup_game.assert_called_once_with(620, force_refresh=True)
 
 
 @pytest.mark.asyncio
@@ -249,32 +334,83 @@ async def test_refresh_game_success():
     """Test POST /games/{app_id}/refresh endpoint success."""
     mock_service = AsyncMock()
     mock_game = create_mock_game()
-    mock_service.get_or_fetch_game.return_value = mock_game
+    mock_service.refresh_game.return_value = RefreshOutcome(
+        status=FetchStatus.REFRESHED, game=mock_game
+    )
 
     result = await refresh_game(app_id=620, game_service=mock_service)
 
     assert result["success"] is True
     assert result["data"]["refreshed"] is True
-    mock_service.get_or_fetch_game.assert_called_once_with(620, force_refresh=True)
+    assert result["data"]["last_refreshed_at"] == mock_game.last_refreshed_at
+    assert result["data"]["retry_after_seconds"] is None
+    mock_service.refresh_game.assert_called_once_with(620)
 
 
 @pytest.mark.asyncio
 async def test_refresh_game_not_found():
     """Test POST /games/{app_id}/refresh endpoint when not found."""
     mock_service = AsyncMock()
-    mock_service.get_or_fetch_game.return_value = None
+    mock_service.refresh_game.return_value = RefreshOutcome(
+        status=FetchStatus.UNAVAILABLE, game=None
+    )
 
     result = await refresh_game(app_id=999999, game_service=mock_service)
 
     assert result["success"] is True
     assert result["data"]["refreshed"] is False
+    assert "not found on Steam" in result["data"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_game_unavailable_cached_row_not_reported_refreshed():
+    """A cached app Steam no longer serves is kept, but not reported refreshed."""
+    mock_service = AsyncMock()
+    mock_service.refresh_game.return_value = RefreshOutcome(
+        status=FetchStatus.UNAVAILABLE, game=create_mock_game()
+    )
+
+    result = await refresh_game(app_id=620, game_service=mock_service)
+
+    assert result["data"]["refreshed"] is False
+    assert result["data"]["last_refreshed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_game_rate_limited():
+    """During Steam's throttle the refresh is reported as skipped with a retry delay."""
+    mock_service = AsyncMock()
+    mock_service.refresh_game.return_value = RefreshOutcome(
+        status=FetchStatus.RATE_LIMITED, game=create_mock_game(), retry_after_seconds=120
+    )
+
+    result = await refresh_game(app_id=620, game_service=mock_service)
+
+    assert result["data"]["refreshed"] is False
+    assert result["data"]["retry_after_seconds"] == 120
+    assert result["data"]["last_refreshed_at"] is None
+    assert result["data"]["message"] == "Steam is rate limiting requests, retry in 120 s"
+
+
+@pytest.mark.asyncio
+async def test_refresh_game_steam_error_not_reported_refreshed():
+    """A Steam API error keeps the cache but reports refreshed=False."""
+    mock_service = AsyncMock()
+    mock_service.refresh_game.return_value = RefreshOutcome(
+        status=FetchStatus.FAILED, game=create_mock_game()
+    )
+
+    result = await refresh_game(app_id=620, game_service=mock_service)
+
+    assert result["data"]["refreshed"] is False
+    assert result["data"]["message"] == "Steam request failed, cached data kept"
 
 
 @pytest.mark.asyncio
 async def test_refresh_game_error():
     """Test POST /games/{app_id}/refresh endpoint with error."""
     mock_service = AsyncMock()
-    mock_service.get_or_fetch_game.side_effect = Exception("API error")
+    mock_service.refresh_game.side_effect = Exception("API error")
 
     with pytest.raises(HTTPException) as exc_info:
         await refresh_game(app_id=620, game_service=mock_service)

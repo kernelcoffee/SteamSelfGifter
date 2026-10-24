@@ -33,9 +33,20 @@ class Game(Base, TimestampMixin):
             bundle_content: List of Steam App IDs in bundle (JSON array)
             game_id: Main game App ID (for DLC or bundles)
 
+        Store Classification:
+            genres: Steam genre descriptions, e.g. ["Action", "Indie"]
+                (None = not fetched yet, [] = Steam returned none or no
+                longer serves the app)
+            categories: Steam category descriptions, e.g. ["Single-player"]
+                (None = not fetched yet, [] = Steam returned none or no
+                longer serves the app)
+
         Cache Management:
             last_refreshed_at: When data was last fetched from Steam API
             needs_refresh: Computed property - true if data older than 7 days
+                or genres were never fetched (background refresh queue)
+            is_stale_by_age: Computed property - true if data older than
+                7 days (read-through fetch on sync and page loads)
 
         Additional Metadata:
             description: Game description text
@@ -132,6 +143,21 @@ class Game(Base, TimestampMixin):
         comment="Main game App ID (for DLC/bundles)",
     )
 
+    # ==================== Store Classification ====================
+    # none_as_null=True stores Python None as SQL NULL (plain JSON would store
+    # the JSON text 'null'), so `Game.genres.is_(None)` in SQL and
+    # `game.genres is None` in Python agree on "not fetched yet".
+    genres: Mapped[list | None] = mapped_column(
+        JSON(none_as_null=True),
+        nullable=True,
+        comment="Steam genre names (None = not fetched yet, [] = none)",
+    )
+    categories: Mapped[list | None] = mapped_column(
+        JSON(none_as_null=True),
+        nullable=True,
+        comment="Steam category names (None = not fetched yet, [] = none)",
+    )
+
     # ==================== Cache Management ====================
     last_refreshed_at: Mapped[datetime | None] = mapped_column(
         DateTime,
@@ -180,13 +206,42 @@ class Game(Base, TimestampMixin):
         return None
 
     @property
+    def is_stale_by_age(self) -> bool:
+        """
+        Check if cached data is outdated by age alone.
+
+        True when the row was never refreshed or was last refreshed more than
+        7 days ago. This is the check the read-through path
+        (``GameService.get_or_fetch_game``, used once per giveaway by sync and
+        enrichment) uses: a row that is recent but has genres NULL is served
+        from the cache there, so upgrading a database (every legacy row has
+        genres NULL) does not refetch the whole cache synchronously. Those
+        rows are backfilled by the bounded, scheduled
+        ``GameService.refresh_stale_games`` instead (see ``needs_refresh``).
+
+        Returns:
+            True if the data is older than the cache window, False otherwise.
+        """
+        if not self.last_refreshed_at:
+            return True
+        days_old = (utcnow() - self.last_refreshed_at).days
+        return days_old > 7
+
+    @property
     def needs_refresh(self) -> bool:
         """
-        Check if cached data needs refreshing.
+        Check if cached data needs refreshing by the background refresh.
 
         Data is considered stale if:
         - Never refreshed (last_refreshed_at is None)
+        - genres is None: the row was cached before genres were stored, so a
+          refresh backfills them
         - Older than 7 days
+
+        Keep this definition identical to GameRepository.get_stale_games,
+        which feeds the bounded ``refresh_stale_games(limit=...)`` run every
+        automation cycle. The synchronous read-through path uses the narrower
+        ``is_stale_by_age`` so the genres backfill never runs as a burst.
 
         Returns:
             True if data needs refresh, False otherwise.
@@ -194,7 +249,4 @@ class Game(Base, TimestampMixin):
         Note:
             This is a computed property, not stored in the database.
         """
-        if not self.last_refreshed_at:
-            return True
-        days_old = (utcnow() - self.last_refreshed_at).days
-        return days_old > 7
+        return self.genres is None or self.is_stale_by_age

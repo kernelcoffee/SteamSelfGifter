@@ -74,6 +74,7 @@ export {
   useGame,
   useRefreshGame,
   useRefreshStaleGames,
+  useGameGenres,
   gameKeys,
   type GameFilters,
 } from './useGames';

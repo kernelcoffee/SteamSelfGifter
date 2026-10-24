@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
-import type { Game } from '@/types';
+import type { Game, GenreCount } from '@/types';
 
 /**
  * Query keys for games
@@ -11,6 +11,7 @@ export const gameKeys = {
   list: (filters: GameFilters) => [...gameKeys.lists(), filters] as const,
   details: () => [...gameKeys.all, 'detail'] as const,
   detail: (id: number) => [...gameKeys.details(), id] as const,
+  genres: () => [...gameKeys.all, 'genres'] as const,
 };
 
 /**
@@ -123,6 +124,7 @@ export function useRefreshGame() {
     onSuccess: (_, gameId) => {
       queryClient.invalidateQueries({ queryKey: gameKeys.detail(gameId) });
       queryClient.invalidateQueries({ queryKey: gameKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: gameKeys.genres() });
     },
   });
 }
@@ -144,5 +146,22 @@ export function useRefreshStaleGames() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: gameKeys.all });
     },
+  });
+}
+
+/**
+ * Fetch the distinct genres across cached games, most common first
+ */
+export function useGameGenres() {
+  return useQuery({
+    queryKey: gameKeys.genres(),
+    queryFn: async (): Promise<GenreCount[]> => {
+      const response = await api.getGameGenres();
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to fetch game genres');
+      }
+      return response.data?.genres ?? [];
+    },
+    staleTime: 60_000,
   });
 }

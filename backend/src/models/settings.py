@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base, TimestampMixin
@@ -42,6 +42,9 @@ class Settings(Base, TimestampMixin):
                 ordering only, never eligibility (default: False)
             ending_soon_threshold_minutes: Minutes before end_time within which
                 a giveaway counts as ending soon, 5-10080 (default: 60)
+            excluded_genres: Steam genre names auto-join skips, matched
+                case-insensitively against Game.genres; wishlist and (when
+                enabled) DLC giveaways bypass it (default: [])
 
         Scheduler Settings:
             scan_interval_minutes: How often to scan for giveaways (default: 30 min)
@@ -167,6 +170,13 @@ class Settings(Base, TimestampMixin):
         Integer,
         default=60,
         comment="Minutes before end_time within which a giveaway counts as ending soon (5-10080)",
+    )
+    excluded_genres: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        server_default="[]",
+        comment="Genre names auto-join skips (case-insensitive)",
     )
 
     # ==================== Scheduler Settings ====================

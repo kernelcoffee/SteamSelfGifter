@@ -84,6 +84,8 @@ def test_game_creation_with_all_fields(session):
         last_refreshed_at=utcnow(),
         description="A great game",
         price=1999,  # $19.99
+        genres=["Action", "Indie"],
+        categories=["Single-player"],
     )
     session.add(game)
     session.commit()
@@ -96,6 +98,8 @@ def test_game_creation_with_all_fields(session):
     # needs_refresh should be False when recently refreshed
     assert game.needs_refresh is False
     assert game.price == 1999
+    assert game.genres == ["Action", "Indie"]
+    assert game.categories == ["Single-player"]
 
 
 def test_game_timestamps(session):
@@ -242,6 +246,7 @@ def test_needs_refresh_property_recently_refreshed(session):
         name="Recently Refreshed",
         type="game",
         last_refreshed_at=utcnow() - timedelta(days=3),
+        genres=[],
     )
     session.add(game)
     session.commit()
@@ -306,6 +311,9 @@ def test_nullable_fields(session):
     assert game.last_refreshed_at is None
     assert game.description is None
     assert game.price is None
+    # Genres/categories default to SQL NULL ("not fetched yet")
+    assert game.genres is None
+    assert game.categories is None
 
 
 def test_cache_fields(session):
@@ -319,6 +327,7 @@ def test_cache_fields(session):
         name="Cached Game",
         type="game",
         last_refreshed_at=utcnow(),
+        genres=["Action"],
     )
     session.add(game)
     session.commit()
@@ -344,6 +353,7 @@ def test_game_update(session):
     # Update game data
     game.name = "New Name"
     game.review_score = 7
+    game.genres = ["RPG"]
     game.last_refreshed_at = utcnow()
     session.commit()
 
@@ -389,11 +399,64 @@ def test_needs_refresh_property_computed(session):
     # Should need refresh when never refreshed
     assert game.needs_refresh is True
 
-    # Update last_refreshed_at - needs_refresh should automatically become False
+    # Update last_refreshed_at and genres - needs_refresh becomes False
     game.last_refreshed_at = utcnow()
+    game.genres = []
     session.commit()
     assert game.needs_refresh is False
 
     # Verify needs_refresh cannot be set directly (it's a property)
     with pytest.raises(AttributeError):
         game.needs_refresh = True
+
+
+def test_needs_refresh_when_genres_never_fetched(session):
+    """A row refreshed just now but with genres NULL (cached before genres were
+    stored) is stale so a refresh backfills them; genres [] is not."""
+    unfetched = Game(id=171717, name="Legacy", type="game", last_refreshed_at=utcnow())
+    fetched_none = Game(
+        id=181818, name="No Genres", type="game", last_refreshed_at=utcnow(), genres=[]
+    )
+    session.add_all([unfetched, fetched_none])
+    session.commit()
+
+    assert unfetched.genres is None
+    assert unfetched.needs_refresh is True
+    assert fetched_none.needs_refresh is False
+
+
+def test_genres_none_stored_as_sql_null(session):
+    """Explicit and implicit None both store SQL NULL (none_as_null), so the
+    repository's `genres IS NULL` and Python's `is None` agree."""
+    from sqlalchemy import text
+
+    session.add_all([
+        Game(id=191919, name="Implicit", type="game"),
+        Game(id=202020, name="Explicit", type="game", genres=None, categories=None),
+        Game(id=212121, name="Empty", type="game", genres=[], categories=[]),
+    ])
+    session.commit()
+
+    rows = dict(session.execute(
+        text("SELECT id, typeof(genres) FROM games WHERE id IN (191919, 202020, 212121)")
+    ).all())
+    assert rows == {191919: "null", 202020: "null", 212121: "text"}
+    null_ids = {g.id for g in session.query(Game).filter(Game.genres.is_(None))}
+    assert {191919, 202020} <= null_ids
+    assert 212121 not in null_ids
+
+
+def test_is_stale_by_age_ignores_genres(session):
+    """is_stale_by_age (read-through path) is age-only, while needs_refresh
+    (background refresh queue) also covers genres NULL."""
+    recent_legacy = Game(id=303030, name="Legacy", type="game",
+                         last_refreshed_at=utcnow() - timedelta(days=2))
+    old_fetched = Game(id=404040, name="Old", type="game", genres=["Action"],
+                       last_refreshed_at=utcnow() - timedelta(days=8))
+    never = Game(id=505050, name="Never", type="game", genres=["Action"])
+
+    assert recent_legacy.is_stale_by_age is False
+    assert recent_legacy.needs_refresh is True
+    assert old_fetched.is_stale_by_age is True
+    assert old_fetched.needs_refresh is True
+    assert never.is_stale_by_age is True

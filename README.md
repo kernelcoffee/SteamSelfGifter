@@ -19,6 +19,7 @@ SteamSelfGifter is an automated bot for entering Steam game giveaways on SteamGi
   - Minimum price threshold
   - Minimum review score
   - Minimum number of reviews
+  - Excluded genres: skip games in Steam genres you don't want (wishlist and, when enabled, DLC giveaways are still entered). Genres come from the Steam store API; Steam's user-voted tags are not available through it, so filtering is by genre only
 - **Safety Detection**: Detects and avoids trap/scam giveaways with background safety checks
 - **Win Tracking**: Track your wins and win rate statistics
 - **Real-time Updates**: WebSocket-based live notifications
@@ -139,6 +140,7 @@ npm run dev  # Development server at http://localhost:5173
    - Enable/disable automation
    - Enable/disable DLC giveaways
    - Set auto-join criteria (min price, score, reviews)
+   - Optionally exclude Steam genres (**Excluded genres**, up to 50, picked from the genres of cached games or typed in). Games cached before this feature get their genres over the next refresh cycles
    - Optionally enter giveaways ending soon first (**Enter giveaways ending soon first**, threshold 5 to 10080 minutes, default 60)
    - Enable safety check for trap detection
 

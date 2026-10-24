@@ -22,6 +22,15 @@ DLC exception (same reasoning): SteamGifts' DLC listing only shows DLC for
 games the user owns, so ``is_dlc`` giveaways bypass the same filters when
 ``dlc_priority`` is on (driven by the dlc_priority_enabled setting).
 
+Genre exclusion: a giveaway whose cached game carries one of
+``excluded_genres`` (case-insensitive, ASCII folding exactly like SQLite's
+``lower()``) is rejected as ``GENRE_EXCLUDED``. It is checked after the price
+checks and before the game-quality checks. Unlike the quality criteria it is
+a *negative* filter, so unknowns pass: a missing game row, or genres NULL
+(not fetched yet) or [], never fails it, and it never makes game data
+required. The SQL mirror is a ``NOT EXISTS`` over ``json_each(games.genres)``.
+The wishlist and DLC bypasses apply before it, as for the other filters.
+
 Entry order: :func:`priority_sort_key` orders the eligible giveaways for the
 automation cycle (wishlist, then DLC, then optionally "ending soon", then the
 rest). It never changes *which* giveaways are eligible.
@@ -31,6 +40,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from core.text import ascii_lower
+
 # === Reason codes (stored on Giveaway.eligibility_reason) ===
 ELIGIBLE = "eligible"
 EXPIRED = "expired"
@@ -39,6 +50,7 @@ ENTERED = "entered"
 UNSAFE = "unsafe"
 PRICE_BELOW_MIN = "price_below_min"
 PRICE_ABOVE_MAX = "price_above_max"
+GENRE_EXCLUDED = "genre_excluded"
 NO_GAME_DATA = "no_game_data"
 SCORE_BELOW_MIN = "score_below_min"
 REVIEWS_BELOW_MIN = "reviews_below_min"
@@ -53,6 +65,7 @@ REASON_LABELS = {
     UNSAFE: "Flagged unsafe or borderline by the safety check",
     PRICE_BELOW_MIN: "Price below minimum",
     PRICE_ABOVE_MAX: "Price above maximum",
+    GENRE_EXCLUDED: "Game genre is excluded",
     NO_GAME_DATA: "No Steam game data cached",
     SCORE_BELOW_MIN: "Review score below minimum",
     REVIEWS_BELOW_MIN: "Too few reviews",
@@ -73,6 +86,10 @@ class EligibilityCriteria:
     ``ending_soon_priority`` and ``ending_soon_threshold_minutes`` affect the
     entry *order* only (see :func:`priority_sort_key`); they are never read by
     :func:`evaluate_eligibility`.
+
+    ``excluded_genres`` may be given as any iterable of genre names; it is normalized
+    to a frozenset of stripped, ASCII-lowercased, non-empty names. It does
+    not make game data required (see the module docstring).
     """
 
     min_price: int = 0
@@ -84,6 +101,19 @@ class EligibilityCriteria:
     dlc_priority: bool = False
     ending_soon_priority: bool = False
     ending_soon_threshold_minutes: int = 60
+    excluded_genres: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        """Normalize ``excluded_genres`` for case-insensitive matching."""
+        object.__setattr__(
+            self,
+            "excluded_genres",
+            frozenset(
+                ascii_lower(genre.strip())
+                for genre in self.excluded_genres
+                if isinstance(genre, str) and genre.strip()
+            ),
+        )
 
     @property
     def needs_game_data(self) -> bool:
@@ -144,7 +174,9 @@ def evaluate_eligibility(giveaway: Any, game: Any, criteria: EligibilityCriteria
     """Return the reason code describing this giveaway's autojoin outcome.
 
     Conditions are checked in a fixed precedence so that a multi-failure giveaway
-    reports the most fundamental reason first. The set of giveaways returning
+    reports the most fundamental reason first: expired, hidden, entered,
+    unsafe, (wishlist/DLC bypass), price below min, price above max, genre
+    excluded, no game data, score, reviews, age. The set of giveaways returning
     ``ELIGIBLE`` is identical to ``GiveawayRepository.get_eligible``'s result set.
 
     Args:
@@ -185,6 +217,20 @@ def evaluate_eligibility(giveaway: Any, game: Any, criteria: EligibilityCriteria
         return PRICE_BELOW_MIN
     if criteria.max_price is not None and giveaway.price > criteria.max_price:
         return PRICE_ABOVE_MAX
+
+    # Genre exclusion — matches the `NOT EXISTS (... json_each(games.genres)
+    # WHERE lower(value) IN (...))` condition. Negative filter: no game row,
+    # genres NULL or [] pass, and it never requires game data.
+    if (
+        criteria.excluded_genres
+        and game is not None
+        and game.genres
+        and any(
+            isinstance(genre, str) and ascii_lower(genre) in criteria.excluded_genres
+            for genre in game.genres
+        )
+    ):
+        return GENRE_EXCLUDED
 
     # Game-based criteria require a cached game (the SQL uses an inner JOIN).
     if criteria.needs_game_data and game is None:

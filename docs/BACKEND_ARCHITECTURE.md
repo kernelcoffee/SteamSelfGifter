@@ -66,11 +66,14 @@ Six entities, two of them singletons (always `id=1`):
   `is_entered`, `is_hidden`, `is_wishlist`, `is_won`, `is_safe`/`safety_score`,
   FK → Game.
 - **Game** — Steam store metadata: `review_score`, `total_reviews`,
-  `release_date`, `header_image`, `type`.
+  `release_date`, `header_image`, `type`, `genres`/`categories` (JSON lists of
+  Steam `appdetails` description strings; NULL = not fetched yet, `[]` = Steam
+  returned none).
 - **Entry** — a record that we entered a giveaway: `points_spent`, `entry_type`
   (`auto`/`manual`/`wishlist`), `status`.
 - **ActivityLog** — append-only event/audit feed surfaced in the UI.
-- **Settings** (singleton) — all user config incl. `phpsessid`.
+- **Settings** (singleton) — all user config incl. `phpsessid` and
+  `excluded_genres` (JSON list, default `[]`).
 - **SchedulerState** (singleton) — runtime counters: `total_scans`,
   `total_entries`, `total_errors`, `last_scan_at`, `next_scan_at`.
 
@@ -120,7 +123,9 @@ flowchart TD
     E --> F[Step 2.5: sync DLC if enabled]
     F --> G[Step 3: sync_wins]
     G --> H[Step 3.5: sync_entered_giveaways]
-    H --> I{autojoin_enabled?}
+    H --> H2[Step 3.75: safety sweep]
+    H2 --> H3[Step 3.9: refresh_stale_games, bounded batch]
+    H3 --> I{autojoin_enabled?}
     I -- no --> K[skip entries]
     I -- yes --> J[_process_entries]
     J --> L{entered > 0?}
@@ -143,7 +148,10 @@ steamgifts_client.get_giveaways(page)        # scrape HTML (BeautifulSoup)
 **`_process_entries` (the entry step):**
 
 ```
-get_eligible_giveaways(min_price, min_score, min_reviews, max_game_age, limit)
+get_eligible_giveaways(min_price, min_score, min_reviews, max_game_age,
+                       excluded_genres, limit)
+  # filters: price, then excluded genres, then score/reviews/age;
+  # wishlist (and DLC when dlc_priority_enabled) bypass all of them
   # sorted: wishlist (if wishlist_priority_enabled), DLC (if dlc_priority_enabled),
   # ending soon by end_time asc (if ending_soon_priority_enabled), rest by price desc
   → for each eligible giveaway:
@@ -151,6 +159,44 @@ get_eligible_giveaways(min_price, min_score, min_reviews, max_game_age, limit)
       giveaway_service.enter_giveaway(code)    # refresh xsrf → POST → record Entry
       broadcast entry_success / entry_failed
 ```
+
+**Eligibility (`services/eligibility.py`):** `evaluate_eligibility` is the pure
+decision function and returns the reason stored on
+`Giveaway.eligibility_reason`; `GiveawayRepository.get_eligible` is its SQL
+mirror, condition for condition, and a parity test asserts both select the same
+set. The genre rule rejects with `genre_excluded` when the cached game's
+`genres` contains an `excluded_genres` entry (case-insensitive; SQL side is a
+`NOT EXISTS` over `json_each(games.genres)`, added only when the list is
+non-empty). It is a negative filter: no game row, or genres NULL or `[]`,
+passes, and it never makes game data required (so it never yields
+`no_game_data`). Only store genres are available; Steam's user-voted tags are
+not in `appdetails`.
+
+**Stale-game refresh (step 3.9):** each cycle `refresh_stale_games` refreshes at
+most `GAME_REFRESH_BATCH_SIZE` (10) cached games, oldest first.
+`Game.needs_refresh` and `GameRepository.get_stale_games` share one definition
+of stale: never refreshed, older than 7 days, or `genres IS NULL` (rows cached
+before genres were stored). The per-giveaway read-through fetch during sync
+uses the narrower `is_stale_by_age`, so the genres backfill drains over cycles
+instead of as a burst. Apps Steam reports unavailable get `last_refreshed_at`
+advanced and NULL genres/categories set to `[]`, so they leave the queue. The
+cycle result key `game_refresh` is `{refreshed, skipped: false}`, or
+`{refreshed: 0, skipped: true, reason: "steam_rate_limited",
+retry_after_seconds}` during the Steam cool-down, plus `error` on failure; it
+is returned by `POST /scheduler/run` and broadcast with
+`automation_cycle_completed`.
+
+**Steam cool-down (`services/game_service.py::steam_cooldown`):** any Steam 429
+(from `appdetails`, from `appreviews` inside a save, or an `appdetails` body
+that is not a JSON object) starts a process-wide 180 s cool-down. While it
+runs no Steam lookup is sent: cached rows are served, uncached apps get no row
+(filters needing game data report `no_game_data` until a later cycle), the
+batch refresh returns 0 and stops on the first 429, and `GET /games/{app_id}`
+answers 429 `STEAM_003` for uncached apps. Requests sent inside Steam's per-IP
+throttle extend it, hence the pause. `appdetails` is requested with
+`l=english` so genre names are one vocabulary. A failed or throttled
+`appreviews` call keeps the cached review fields (and, when throttled, the old
+`last_refreshed_at`) instead of zeroing them.
 
 **Safety check (separate background job, `safety_check_cycle`, every 45s):**
 
@@ -171,9 +217,9 @@ skips them. See §6 for why this doesn't actually protect entries in practice.
 | Component | Role | Notes |
 |-----------|------|-------|
 | `SteamGiftsClient` | Scrapes giveaways/wins/entered pages; enters/hides giveaways; manages xsrf token & session | No retry/backoff/rate-limit; brittle CSS selectors |
-| `SteamClient` | Steam store API for game metadata | Has rate limiter + retry/backoff |
+| `SteamClient` | Steam store API for game metadata | Has rate limiter + retry/backoff; `appdetails` pinned to `l=english`; a non-object body raises `SteamAPIRateLimitError` |
 | `GiveawayService` | Sync giveaways/wins/entered, eligibility, enter, safety check, hide | The largest service; the orchestration hub |
-| `GameService` | Fetch/cache game metadata, compute review tiers | |
+| `GameService` | Fetch/cache game metadata (incl. genres/categories), bounded stale refresh, genre counts, review tiers | Owns the shared Steam cool-down; `lookup_game` returns the row plus a `FetchStatus` (None on a cache hit) |
 | `SettingsService` | Read/write the Settings singleton | |
 | `NotificationService` | Write ActivityLog entries + broadcast events | |
 | `SchedulerService` | Scheduler control (start/stop/pause), state/stats, **win-check scheduling** | |

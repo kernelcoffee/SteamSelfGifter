@@ -2,6 +2,7 @@
 eligibility selection, and API-response enrichment."""
 
 from collections import Counter
+from collections.abc import Iterable
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,6 +69,7 @@ class GiveawayQueryMixin:
         limit: int = 50,
         wishlist_priority: bool = True,
         dlc_priority: bool = False,
+        excluded_genres: Iterable[str] | None = None,
     ) -> list[Giveaway]:
         """
         Get eligible giveaways based on criteria.
@@ -78,6 +80,7 @@ class GiveawayQueryMixin:
         - Meet price criteria
         - Meet game rating criteria (if specified)
         - Meet game age criteria (if specified)
+        - Don't carry an excluded genre (if specified; unknown genres pass)
 
         Args:
             min_price: Minimum giveaway price
@@ -86,6 +89,7 @@ class GiveawayQueryMixin:
             min_reviews: Minimum number of reviews
             max_game_age: Maximum game age in years (None = no limit)
             limit: Maximum results to return
+            excluded_genres: Genre names to skip (case-insensitive)
 
         Returns:
             List of eligible giveaways
@@ -108,6 +112,7 @@ class GiveawayQueryMixin:
             limit=limit,
             wishlist_priority=wishlist_priority,
             dlc_priority=dlc_priority,
+            excluded_genres=excluded_genres,
         )
 
         return giveaways
@@ -252,6 +257,7 @@ class GiveawayQueryMixin:
 
         For each giveaway with a game_id, fetches the Game data and populates:
         - game_thumbnail: Steam header image URL
+        - game_genres: Steam genres (None when not fetched yet)
         - game_review_score: Review score (0-10)
         - game_total_reviews: Total number of reviews
         - game_review_summary: Text summary ("Overwhelmingly Positive", etc.)
@@ -284,6 +290,7 @@ class GiveawayQueryMixin:
                 game.header_image or
                 f"https://cdn.cloudflare.steamstatic.com/steam/apps/{game.id}/header.jpg"
             )
+            giveaway.game_genres = game.genres
 
             # Set review data
             giveaway.game_review_score = game.review_score

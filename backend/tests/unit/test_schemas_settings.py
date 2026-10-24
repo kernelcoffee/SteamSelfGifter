@@ -28,6 +28,39 @@ def test_settings_base_defaults():
     assert settings.automation_enabled is False
     assert settings.ending_soon_priority_enabled is False
     assert settings.ending_soon_threshold_minutes == 60
+    assert settings.excluded_genres == []
+
+
+def test_excluded_genres_update_normalizes():
+    """Strip, drop empties, dedupe case-insensitively keeping the first spelling."""
+    update = SettingsUpdate(excluded_genres=[" Action", "action", "Indie", "", "  "])
+    assert update.excluded_genres == ["Action", "Indie"]
+
+
+@pytest.mark.parametrize("value", [
+    [f"Genre {i}" for i in range(51)],
+    ["x" * 65],
+    ["  " + "x" * 65],
+    "Action",
+    [1, 2],
+])
+def test_excluded_genres_update_rejects_invalid(value):
+    """51 items, a 65-character item (after strip) and non-lists fail (422)."""
+    with pytest.raises(ValidationError):
+        SettingsUpdate(excluded_genres=value)
+
+
+def test_excluded_genres_update_accepts_bounds():
+    fifty = [f"Genre {i}" for i in range(50)]
+    assert SettingsUpdate(excluded_genres=fifty).excluded_genres == fifty
+    assert SettingsUpdate(excluded_genres=["x" * 64]).excluded_genres == ["x" * 64]
+
+
+def test_excluded_genres_empty_list_survives_exclude_none():
+    """[] clears the list, so the router's exclude_none dump must keep it;
+    None (unchanged) is dropped."""
+    assert SettingsUpdate(excluded_genres=[]).model_dump(exclude_none=True) == {"excluded_genres": []}
+    assert SettingsUpdate(excluded_genres=None).model_dump(exclude_none=True) == {}
 
 
 @pytest.mark.parametrize("value", [5, 10080])
@@ -65,6 +98,8 @@ def test_settings_base_custom_values():
 
     assert settings.phpsessid == "abc123"
     assert settings.autojoin_enabled is True
+    # Missing excluded_genres defaults to [] (never null in responses)
+    assert settings.excluded_genres == []
     assert settings.autojoin_min_price == 50
     assert settings.max_scan_pages == 5
 

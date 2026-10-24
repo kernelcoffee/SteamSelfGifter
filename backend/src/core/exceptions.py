@@ -96,6 +96,7 @@ ERROR_CODES = {
     "GIVE_005": "Giveaway is hidden",
     "STEAM_001": "Steam API unavailable",
     "STEAM_002": "Game not found",
+    "STEAM_003": "Steam rate limit",
     "SG_001": "SteamGifts rate limit",
     "SG_002": "SteamGifts connection failed",
     "SG_003": "Invalid session",

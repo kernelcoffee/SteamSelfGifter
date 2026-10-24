@@ -30,6 +30,7 @@ export const mockSettings = {
   wishlist_priority_enabled: true,
   ending_soon_priority_enabled: false,
   ending_soon_threshold_minutes: 60,
+  excluded_genres: [],
   scan_interval_minutes: 30,
   max_entries_per_cycle: 10,
   automation_enabled: true,
@@ -84,6 +85,7 @@ function giveaway(id: number, over: Record<string, unknown> = {}) {
     created_at: inHours(-2),
     updated_at: inHours(-2),
     game_thumbnail: null,
+    game_genres: ['Action', 'Indie'],
     game_review_score: 9,
     game_total_reviews: 12000,
     game_review_summary: 'Very Positive',
@@ -95,7 +97,7 @@ function giveaway(id: number, over: Record<string, unknown> = {}) {
 
 export const mockGiveaways = [
   giveaway(1, { game_name: 'Portal Reloaded' }),
-  giveaway(2, { game_name: 'Half-Life 3', is_wishlist: true }),
+  giveaway(2, { game_name: 'Half-Life 3', is_wishlist: true, game_genres: null }),
   giveaway(3, { game_name: 'Stardew Galaxy', is_entered: true, entered_at: inHours(-1) }),
 ];
 
@@ -207,6 +209,18 @@ export async function mockApi(page: Page): Promise<ApiCall[]> {
         };
       });
       return route.fulfill(ok({ period: 'month', trends }));
+    }
+
+    // --- Games ---
+    if (path === '/api/v1/games/genres') {
+      return route.fulfill(
+        ok({
+          genres: [
+            { name: 'Action', count: 12 },
+            { name: 'Indie', count: 9 },
+          ],
+        })
+      );
     }
 
     // --- System logs (Dashboard activity feed / Logs page) ---

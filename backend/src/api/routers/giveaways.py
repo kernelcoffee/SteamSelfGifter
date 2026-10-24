@@ -215,6 +215,48 @@ async def get_dlc_giveaways(
 
 
 @router.get(
+    "/entered",
+    response_model=dict[str, Any],
+    summary="Get entered giveaways",
+    description="Get giveaways the user has entered, most recently entered first.",
+)
+async def get_entered_giveaways(
+    giveaway_service: GiveawayServiceDep,
+    limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
+    active_only: bool = Query(
+        default=False, description="Only return giveaways that have not ended"
+    ),
+) -> dict[str, Any]:
+    """
+    Get entered giveaways.
+
+    Same result as ``GET /giveaways?is_entered=true``, on its own path so it
+    is not looked up as a giveaway code by ``/{code}``.
+
+    Returns:
+        Success response with list of entered giveaways
+    """
+    giveaways = await giveaway_service.get_entered_giveaways(
+        limit=limit, active_only=active_only
+    )
+
+    # Enrich with game data (thumbnails, reviews, genres)
+    giveaways = await giveaway_service.enrich_giveaways_with_game_data(giveaways)
+
+    giveaway_list = [
+        GiveawayResponse.model_validate(g).model_dump()
+        for g in giveaways
+    ]
+
+    return create_success_response(
+        data={
+            "giveaways": giveaway_list,
+            "count": len(giveaway_list),
+        }
+    )
+
+
+@router.get(
     "/won",
     response_model=dict[str, Any],
     summary="Get won giveaways",
@@ -372,6 +414,9 @@ async def get_giveaway(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Giveaway with code '{code}' not found"
         )
+
+    # Enrich with game data (thumbnail, reviews, genres)
+    [giveaway] = await giveaway_service.enrich_giveaways_with_game_data([giveaway])
 
     return create_success_response(
         data=GiveawayResponse.model_validate(giveaway).model_dump()

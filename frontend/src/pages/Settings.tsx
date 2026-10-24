@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Save, TestTube, AlertCircle, Eye, EyeOff, HelpCircle, ExternalLink } from 'lucide-react';
-import { Card, Button, Input, Toggle, Loading } from '@/components/common';
-import { useSettings, useUpdateSettings, useTestSession } from '@/hooks';
+import { Save, TestTube, AlertCircle, Eye, EyeOff, HelpCircle, ExternalLink, Plus, X } from 'lucide-react';
+import { Card, Button, Input, Toggle, Loading, Badge } from '@/components/common';
+import { useSettings, useUpdateSettings, useTestSession, useGameGenres } from '@/hooks';
 import { showSuccess, showError } from '@/stores/uiStore';
 import type { Settings as SettingsType } from '@/types';
 
@@ -9,6 +9,10 @@ import type { Settings as SettingsType } from '@/types';
 const ENDING_SOON_THRESHOLD_MIN = 5;
 const ENDING_SOON_THRESHOLD_MAX = 10080;
 const ENDING_SOON_THRESHOLD_DEFAULT = 60;
+
+// Bounds mirror the backend's excluded_genres validation
+const EXCLUDED_GENRES_MAX_ITEMS = 50;
+const EXCLUDED_GENRE_MAX_LENGTH = 64;
 
 /** Parse the threshold field's text; null unless it is an integer in range. */
 function parseThreshold(text: string): number | null {
@@ -72,6 +76,7 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
     wishlist_priority_enabled: settings.wishlist_priority_enabled,
     ending_soon_priority_enabled: settings.ending_soon_priority_enabled,
     ending_soon_threshold_minutes: settings.ending_soon_threshold_minutes,
+    excluded_genres: settings.excluded_genres ?? [],
     scan_interval_minutes: settings.scan_interval_minutes,
     max_entries_per_cycle: settings.max_entries_per_cycle,
     automation_enabled: settings.automation_enabled,
@@ -80,7 +85,9 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
     entry_delay_max: settings.entry_delay_max,
     log_retention_days: settings.log_retention_days,
   }));
-  const [hasChanges, setHasChanges] = useState(false);
+  // Edits to formData or the threshold text. The genre draft is not a form
+  // field, so it counts as a change only while it holds text (see hasChanges).
+  const [formEdited, setFormEdited] = useState(false);
   const [showPhpsessid, setShowPhpsessid] = useState(false);
 
   const savedThreshold = settings.ending_soon_threshold_minutes ?? ENDING_SOON_THRESHOLD_DEFAULT;
@@ -92,15 +99,30 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
     formData.ending_soon_priority_enabled && parsedThreshold === null
       ? `Must be between ${ENDING_SOON_THRESHOLD_MIN} and ${ENDING_SOON_THRESHOLD_MAX} minutes`
       : undefined;
-  const isValid = !thresholdError;
+  // Text typed in the "Add a genre" field but not added yet. It lives here,
+  // not in the editor, so an unconfirmed genre blocks saving instead of
+  // being dropped without a word when the form is saved.
+  const [genreDraft, setGenreDraft] = useState('');
+  const genreDraftState = checkGenreDraft(genreDraft, formData.excluded_genres ?? []);
+  const hasChanges = formEdited || genreDraftState.status !== 'empty';
+  const isValid = !thresholdError && genreDraftState.status === 'empty';
   // Shown next to the disabled Save buttons, which may be far from the inline error.
-  const saveBlockedReason = isValid
-    ? undefined
-    : `Fix the ending soon threshold (${ENDING_SOON_THRESHOLD_MIN} to ${ENDING_SOON_THRESHOLD_MAX} minutes) to save`;
+  const saveBlockedReason = thresholdError
+    ? `Fix the ending soon threshold (${ENDING_SOON_THRESHOLD_MIN} to ${ENDING_SOON_THRESHOLD_MAX} minutes) to save`
+    : genreDraftSaveBlockedReason(genreDraftState);
 
   const handleChange = (field: keyof SettingsType, value: string | number | boolean | null) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    setHasChanges(true);
+    setFormEdited(true);
+  };
+
+  const handleExcludedGenresChange = (genres: string[]) => {
+    setFormData(prev => ({ ...prev, excluded_genres: genres }));
+    setFormEdited(true);
+  };
+
+  const handleGenreDraftChange = (draft: string) => {
+    setGenreDraft(draft);
   };
 
   const handleThresholdChange = (raw: string) => {
@@ -109,7 +131,7 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
     if (parsed !== null) {
       setFormData(prev => ({ ...prev, ending_soon_threshold_minutes: parsed }));
     }
-    setHasChanges(true);
+    setFormEdited(true);
   };
 
   // Turning the lift off hides the threshold input, so any draft threshold
@@ -124,7 +146,7 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
     if (!checked) {
       setThresholdText(String(savedThreshold));
     }
-    setHasChanges(true);
+    setFormEdited(true);
   };
 
   const handleSave = async () => {
@@ -132,7 +154,7 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
     try {
       await updateSettings.mutateAsync(formData);
       showSuccess('Settings saved successfully');
-      setHasChanges(false);
+      setFormEdited(false);
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Failed to save settings');
     }
@@ -321,6 +343,13 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
             </div>
           )}
         </div>
+        <ExcludedGenresEditor
+          value={formData.excluded_genres ?? []}
+          onChange={handleExcludedGenresChange}
+          draft={genreDraft}
+          onDraftChange={handleGenreDraftChange}
+          draftState={genreDraftState}
+        />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Input
             label="Start at Points"
@@ -442,6 +471,248 @@ function SettingsForm({ settings }: { settings: SettingsType }) {
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Key the backend dedupes and matches on: ASCII-only lowercasing, like
+ * SQLite's `lower()` and `core.text.ascii_lower` ("É" stays "É", so
+ * "Éducation" and "éducation" are two distinct genres).
+ */
+function genreKey(genre: string): string {
+  return genre.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+/** Length the backend checks: code points after strip, not UTF-16 units. */
+function genreLength(genre: string): number {
+  return Array.from(genre).length;
+}
+
+type GenreDraftState =
+  | { status: 'empty' }
+  | { status: 'tooLong'; name: string }
+  | { status: 'duplicate'; name: string; existing: string }
+  | { status: 'full'; name: string }
+  | { status: 'ready'; name: string };
+
+/** Whether the typed genre can be added to `genres`, and if not, why. */
+function checkGenreDraft(draft: string, genres: string[]): GenreDraftState {
+  const name = draft.trim();
+  if (!name) return { status: 'empty' };
+  if (genreLength(name) > EXCLUDED_GENRE_MAX_LENGTH) return { status: 'tooLong', name };
+  const key = genreKey(name);
+  const existing = genres.find((genre) => genreKey(genre) === key);
+  if (existing !== undefined) return { status: 'duplicate', name, existing };
+  if (genres.length >= EXCLUDED_GENRES_MAX_ITEMS) return { status: 'full', name };
+  return { status: 'ready', name };
+}
+
+/** Why a pending genre draft blocks saving, or undefined when it does not. */
+function genreDraftSaveBlockedReason(state: GenreDraftState): string | undefined {
+  switch (state.status) {
+    case 'empty':
+      return undefined;
+    case 'ready':
+      return `Press Add to include "${state.name}" in the excluded genres, or clear the field, to save`;
+    case 'duplicate':
+      return `"${state.existing}" is already excluded; clear the Add a genre field to save`;
+    case 'tooLong':
+      return `Shorten or clear the genre in the Add a genre field to save`;
+    case 'full':
+      return `The excluded genres list is full; clear the Add a genre field to save`;
+  }
+}
+
+/**
+ * Editor for the auto-join genre exclusion list: removable chips for the
+ * current exclusions, a picker of the genres found in the game cache, and a
+ * text field for genres not cached yet. Normalization mirrors the backend
+ * (trim, drop empties, ASCII case-insensitive dedupe keeping the first
+ * spelling, at most 50 items of at most 64 characters after trimming), and
+ * the same ASCII key decides whether a picker genre shows as excluded.
+ */
+function ExcludedGenresEditor({
+  value,
+  onChange,
+  draft,
+  onDraftChange,
+  draftState,
+}: {
+  value: string[];
+  onChange: (genres: string[]) => void;
+  draft: string;
+  onDraftChange: (draft: string) => void;
+  draftState: GenreDraftState;
+}) {
+  const genres = useGameGenres();
+
+  const keys = new Set(value.map(genreKey));
+  const isFull = value.length >= EXCLUDED_GENRES_MAX_ITEMS;
+
+  const draftError =
+    draftState.status === 'tooLong'
+      ? `Genre names are limited to ${EXCLUDED_GENRE_MAX_LENGTH} characters`
+      : draftState.status === 'duplicate'
+        ? `${draftState.existing} is already excluded`
+        : undefined;
+
+  const excludeCachedGenre = (name: string) => {
+    if (isFull || keys.has(genreKey(name))) return;
+    onChange([...value, name]);
+  };
+
+  const removeGenre = (name: string) => {
+    onChange(value.filter((genre) => genre !== name));
+  };
+
+  const includeCachedGenre = (name: string) => {
+    const key = genreKey(name);
+    onChange(value.filter((genre) => genreKey(genre) !== key));
+  };
+
+  // Only a genre that can be added clears the field; otherwise the text and
+  // its inline error stay so the user sees why nothing was added.
+  const submitDraft = () => {
+    if (draftState.status !== 'ready') return;
+    onChange([...value, draftState.name]);
+    onDraftChange('');
+  };
+
+  return (
+    <div className="mb-4 space-y-3">
+      <p
+        id="excluded-genres-heading"
+        className="text-sm font-medium text-gray-900 dark:text-white"
+      >
+        Excluded genres
+      </p>
+
+      {/* Current exclusions */}
+      <div
+        role="group"
+        aria-labelledby="excluded-genres-heading"
+        className="flex flex-wrap gap-2"
+      >
+        {value.length === 0 ? (
+          <span className="text-sm text-gray-500 dark:text-gray-400">No genres excluded</span>
+        ) : (
+          value.map((genre) => (
+            <Badge key={genreKey(genre)} variant="default" size="sm" className="gap-1 max-w-full">
+              <span className="max-w-[14rem] truncate" title={genre}>
+                {genre}
+              </span>
+              <button
+                type="button"
+                aria-label={`Remove ${genre}`}
+                onClick={() => removeGenre(genre)}
+                className="shrink-0 rounded-full p-0.5 text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+              >
+                <X size={12} />
+              </button>
+            </Badge>
+          ))
+        )}
+      </div>
+
+      {/* Picker of cached genres */}
+      <div>
+        <p
+          id="cached-genres-heading"
+          className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
+        >
+          Genres in your cache
+        </p>
+        {genres.isLoading ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">Loading genres…</p>
+        ) : genres.isError ? (
+          <p className="text-sm text-red-600 dark:text-red-400">
+            Could not load the genre list; you can still type a genre below
+          </p>
+        ) : !genres.data || genres.data.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No genres cached yet, genres appear as games are fetched from Steam
+          </p>
+        ) : (
+          <div
+            role="group"
+            aria-labelledby="cached-genres-heading"
+            className="flex flex-wrap gap-2"
+          >
+            {genres.data.map(({ name, count }) => {
+              const isExcluded = keys.has(genreKey(name));
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={isExcluded}
+                  aria-label={`${name} (${count} ${count === 1 ? 'game' : 'games'})`}
+                  disabled={!isExcluded && isFull}
+                  onClick={() =>
+                    isExcluded ? includeCachedGenre(name) : excludeCachedGenre(name)
+                  }
+                  className={
+                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ' +
+                    (isExcluded
+                      ? 'border-red-300 bg-red-100 text-red-800 dark:border-red-800 dark:bg-red-900/30 dark:text-red-300'
+                      : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700')
+                  }
+                >
+                  <span>{name}</span>
+                  <span
+                    className={
+                      isExcluded
+                        ? 'text-red-700 dark:text-red-400'
+                        : 'text-gray-500 dark:text-gray-400'
+                    }
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Manual add */}
+      <div className="flex items-start gap-2 max-w-sm">
+        <Input
+          label="Add a genre"
+          placeholder="e.g. Sports"
+          value={draft}
+          error={draftError}
+          onChange={(e) => onDraftChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              submitDraft();
+            }
+          }}
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          icon={Plus}
+          aria-label="Add genre"
+          className="mt-6 shrink-0"
+          disabled={draftState.status !== 'ready'}
+          onClick={submitDraft}
+        >
+          Add
+        </Button>
+      </div>
+      {isFull && (
+        <p className="text-xs text-yellow-700 dark:text-yellow-400">
+          Maximum {EXCLUDED_GENRES_MAX_ITEMS} genres
+        </p>
+      )}
+
+      <p className="text-xs text-gray-500 dark:text-gray-400">
+        Auto-join skips giveaways whose game has one of these genres. Wishlist giveaways (when
+        Prioritize Wishlist is on) and DLC (when Prioritize DLC is on) are still entered. Games
+        cached before this update pick up their genres over the next refreshes.
+      </p>
     </div>
   );
 }

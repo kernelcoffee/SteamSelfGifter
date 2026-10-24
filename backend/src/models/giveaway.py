@@ -192,6 +192,7 @@ class Giveaway(Base, TimestampMixin):
     # so API responses can carry game data without an extra join/query per row.
     __allow_unmapped__ = True
     game_thumbnail: str | None = None
+    game_genres: list[str] | None = None
     game_review_score: int | None = None
     game_total_reviews: int | None = None
     game_review_summary: str | None = None

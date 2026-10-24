@@ -997,3 +997,104 @@ async def test_get_daily_wins(test_db):
         assert len(rows) == 2  # two days with wins inside the window
         assert rows[-1]["wins"] == 2  # today, ascending order
         assert rows[0]["wins"] == 1
+
+
+# ---------------------------------------------------------------------------
+# get_eligible: genre exclusion
+# ---------------------------------------------------------------------------
+
+async def _seed_genre_pool(session):
+    from models.game import Game
+
+    future = utcnow() + timedelta(days=1)
+    session.add_all([
+        Game(id=1, name="Act", type="game", genres=["Action", "Indie"]),
+        Game(id=2, name="Upper", type="game", genres=["SPORTS"]),
+        Game(id=3, name="Empty", type="game", genres=[]),
+        Game(id=4, name="Null", type="game", genres=None),
+        Game(id=5, name="Puzzle", type="game", genres=["Puzzle"]),
+    ])
+    repo = GiveawayRepository(session)
+    for code, game_id in [
+        ("act", 1), ("upper", 2), ("empty", 3), ("null", 4), ("puzzle", 5),
+        ("nogame", 999), ("nogameid", None),
+    ]:
+        await repo.create(
+            code=code, game_name=code, price=50, url=f"http://x/{code}",
+            end_time=future, game_id=game_id,
+        )
+    await session.commit()
+    return repo
+
+
+def _capture_sql(session):
+    from sqlalchemy import event
+
+    statements: list[str] = []
+    engine = session.bind.sync_engine
+
+    def listener(conn, cursor, statement, params, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", listener)
+    return statements, lambda: event.remove(engine, "before_cursor_execute", listener)
+
+
+@pytest.mark.asyncio
+async def test_get_eligible_excluded_genres_filters_matches(test_db):
+    """Matching rows are excluded case-insensitively; NULL/[]/missing-game rows pass."""
+    async with test_db() as session:
+        repo = await _seed_genre_pool(session)
+
+        eligible = await repo.get_eligible(min_price=10, excluded_genres=["action", "Sports"])
+
+        assert {g.code for g in eligible} == {"empty", "null", "puzzle", "nogame", "nogameid"}
+
+
+@pytest.mark.asyncio
+async def test_get_eligible_excluded_genres_mixed_case_list_lowered(test_db):
+    """The exclusion list is stripped and lowercased before comparing."""
+    async with test_db() as session:
+        repo = await _seed_genre_pool(session)
+
+        eligible = await repo.get_eligible(min_price=10, excluded_genres=["  INDIE ", ""])
+
+        assert "act" not in {g.code for g in eligible}
+        assert "upper" in {g.code for g in eligible}
+
+
+@pytest.mark.asyncio
+async def test_get_eligible_excluded_genres_join_only_for_genres(test_db):
+    """With no quality criteria the games join is added for the genre check
+    only, and rows without a game row are still returned."""
+    async with test_db() as session:
+        repo = await _seed_genre_pool(session)
+        statements, stop = _capture_sql(session)
+        try:
+            eligible = await repo.get_eligible(min_price=10, excluded_genres=["Puzzle"])
+        finally:
+            stop()
+
+        [query] = [s for s in statements if "FROM giveaways" in s]
+        assert "LEFT OUTER JOIN games" in query
+        assert "json_each(games.genres)" in query
+        assert {"nogame", "nogameid"} <= {g.code for g in eligible}
+        assert "puzzle" not in {g.code for g in eligible}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("excluded", [None, [], ["", "  "]])
+async def test_get_eligible_without_exclusions_unchanged(test_db, excluded):
+    """No (or only blank) exclusions: no join, no json_each, every row returned."""
+    async with test_db() as session:
+        repo = await _seed_genre_pool(session)
+        statements, stop = _capture_sql(session)
+        try:
+            eligible = await repo.get_eligible(min_price=10, excluded_genres=excluded)
+        finally:
+            stop()
+
+        [query] = [s for s in statements if "FROM giveaways" in s]
+        assert "JOIN" not in query
+        assert "json_each" not in query
+        assert len(eligible) == 7

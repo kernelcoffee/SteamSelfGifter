@@ -13,6 +13,7 @@ test.describe('Giveaways', () => {
     await expect(page.getByText('Portal Reloaded')).toBeVisible();
     await expect(page.getByText('Half-Life 3')).toBeVisible();
     await expect(page.getByText('Stardew Galaxy')).toBeVisible();
+    await expect(page.getByText('Action, Indie', { exact: true }).first()).toBeVisible();
   });
 
   test('entering a giveaway posts to the enter endpoint', async ({ page }) => {

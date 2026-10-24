@@ -7,8 +7,9 @@ Single unified job that performs all automated tasks in sequence:
 4. Sync wins
 5. Sync entered giveaways
 6. Safety-sweep unchecked giveaways
-7. Process eligible giveaways (enter them)
-8. Prune activity logs past retention
+7. Refresh a small batch of stale cached games (backfills genres)
+8. Process eligible giveaways (enter them)
+9. Prune activity logs past retention
 
 This is the engine driven both by the scheduler (interval job) and by the
 manual ``/run`` trigger. It shares its bootstrap with the other workers via
@@ -26,6 +27,12 @@ from workers.context import automation_context
 from workers.processor import _process_entries
 
 logger = structlog.get_logger()
+
+# Cached games refreshed from Steam per cycle. Each costs up to two Steam
+# requests (appdetails, plus appreviews for games), so 10 stays far below
+# Steam's per-IP store throttle (about 200 requests per 5 minutes) while the
+# backlog, such as the genres backfill after an upgrade, drains over cycles.
+GAME_REFRESH_BATCH_SIZE = 10
 
 
 async def automation_cycle() -> dict[str, Any]:
@@ -67,8 +74,10 @@ async def automation_cycle() -> dict[str, Any]:
         giveaway_service = ctx.giveaway_service
         notification_service = ctx.notification_service
         scheduler_service = ctx.scheduler_service
+        game_service = ctx.game_service
         # authenticated=True guarantees the full service stack was built.
         assert giveaway_service and notification_service and scheduler_service
+        assert game_service
 
         try:
             # === STEP 1: Scan regular giveaways ===
@@ -184,6 +193,34 @@ async def automation_cycle() -> dict[str, Any]:
                 except Exception as e:
                     logger.error("safety_sweep_failed", error=str(e))
                     results["safety_sweep"]["error"] = str(e)
+
+            # === STEP 3.9: Refresh stale cached games ===
+            # The bounded background refresh: the oldest stale rows first,
+            # including rows cached before genres were stored (genres NULL),
+            # which the per-giveaway read-through path deliberately does not
+            # refetch. Runs before entries so new genres already count.
+            logger.info("automation_step", step="refresh_stale_games")
+            results["game_refresh"] = {"refreshed": 0, "skipped": False}
+
+            try:
+                retry_after = game_service.steam_retry_after_seconds()
+                if retry_after > 0:
+                    # A 429 earlier (in this cycle's scans or elsewhere) paused
+                    # Steam lookups: report the skip, not "nothing stale".
+                    results["game_refresh"] = {
+                        "refreshed": 0,
+                        "skipped": True,
+                        "reason": "steam_rate_limited",
+                        "retry_after_seconds": retry_after,
+                    }
+                else:
+                    refreshed = await game_service.refresh_stale_games(
+                        limit=GAME_REFRESH_BATCH_SIZE
+                    )
+                    results["game_refresh"] = {"refreshed": refreshed, "skipped": False}
+            except Exception as e:
+                logger.error("refresh_stale_games_failed", error=str(e))
+                results["game_refresh"]["error"] = str(e)
 
             # === STEP 4: Process entries ===
             logger.info("automation_step", step="process_entries")

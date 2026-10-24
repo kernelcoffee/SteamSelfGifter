@@ -14,7 +14,11 @@ from api.schemas.game import (
     GameRefreshResponse,
     GameResponse,
     GameStats,
+    GenreCount,
+    GenreListResponse,
 )
+from core.exceptions import RateLimitError
+from services.game_service import FetchStatus
 
 router = APIRouter()
 
@@ -105,6 +109,31 @@ async def get_game_stats(
         bundles=by_type.get("bundle", 0),
     )
 
+    return create_success_response(data=response.model_dump())
+
+
+@router.get(
+    "/genres",
+    response_model=dict[str, Any],
+    summary="List cached genres",
+    description=(
+        "Distinct Steam genres across cached games with how many games carry "
+        "each, sorted by count descending then name."
+    ),
+)
+async def get_game_genres(
+    game_service: GameServiceDep,
+) -> dict[str, Any]:
+    """
+    List the genres known from cached games.
+
+    Declared before ``/{app_id}`` so "genres" is not parsed as an app id.
+
+    Returns:
+        Success response with ``{"genres": [{"name", "count"}, ...]}``
+    """
+    rows = await game_service.get_genre_counts()
+    response = GenreListResponse(genres=[GenreCount(**row) for row in rows])
     return create_success_response(data=response.model_dump())
 
 
@@ -204,10 +233,19 @@ async def get_game(
         Success response with game details
 
     Raises:
+        RateLimitError: 429 if the game is not cached and Steam was not asked
+            (or refused) because it is rate limiting requests
         HTTPException: 404 if game not found
     """
-    game = await game_service.get_or_fetch_game(app_id, force_refresh=force_refresh)
+    game, fetch_status = await game_service.lookup_game(app_id, force_refresh=force_refresh)
     if not game:
+        if fetch_status is FetchStatus.RATE_LIMITED:
+            retry_after = game_service.steam_retry_after_seconds()
+            raise RateLimitError(
+                message=f"Steam is rate limiting requests, retry in {retry_after} s",
+                code="STEAM_003",
+                details={"app_id": app_id, "retry_after_seconds": retry_after},
+            )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Game with App ID {app_id} not found"
@@ -238,20 +276,37 @@ async def refresh_game(
         Success response with refresh result
     """
     try:
-        game = await game_service.get_or_fetch_game(app_id, force_refresh=True)
+        outcome = await game_service.refresh_game(app_id)
 
-        if game:
-            response = GameRefreshResponse(
-                refreshed=True,
-                message="Game data refreshed successfully",
-                last_refreshed_at=game.last_refreshed_at,
-            )
-        else:
-            response = GameRefreshResponse(
-                refreshed=False,
-                message=f"Game with App ID {app_id} not found on Steam",
-                last_refreshed_at=None,
-            )
+        match outcome.status:
+            case FetchStatus.REFRESHED:
+                response = GameRefreshResponse(
+                    refreshed=True,
+                    message="Game data refreshed successfully",
+                    last_refreshed_at=outcome.game.last_refreshed_at if outcome.game else None,
+                )
+            case FetchStatus.RATE_LIMITED:
+                response = GameRefreshResponse(
+                    refreshed=False,
+                    message=(
+                        "Steam is rate limiting requests, retry in "
+                        f"{outcome.retry_after_seconds or 0} s"
+                    ),
+                    last_refreshed_at=None,
+                    retry_after_seconds=outcome.retry_after_seconds,
+                )
+            case FetchStatus.UNAVAILABLE:
+                response = GameRefreshResponse(
+                    refreshed=False,
+                    message=f"Game with App ID {app_id} not found on Steam",
+                    last_refreshed_at=None,
+                )
+            case FetchStatus.FAILED:
+                response = GameRefreshResponse(
+                    refreshed=False,
+                    message="Steam request failed, cached data kept",
+                    last_refreshed_at=None,
+                )
 
         return create_success_response(data=response.model_dump())
 
