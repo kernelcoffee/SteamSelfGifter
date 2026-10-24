@@ -23,6 +23,8 @@
 //               audit + flake runs; one repair round
 //
 // Resume after the planner stops: args.decisions (free text) or args.proceed=true.
+// args.briefsFromFiles=true makes every agent read its brief from .claude/agents/
+// at run time (use it when the briefs changed since this session started).
 // args.plan=false skips planning when the task already is a vetted brief
 // (then args.stacks must say which stacks it touches).
 // Every worker runs on Opus; the planner and the orchestrator run on Fable.
@@ -250,18 +252,22 @@ const ownerOf = (file) => {
   return 'dev-backend'
 }
 // Custom agent types load at session start. Until the next restart a new
-// type is not registered; then a default agent reads its brief from
-// .claude/agents/<type>.md and acts as that agent (tool restrictions from
-// the frontmatter do not apply in that mode, the brief's rules still do).
+// type is not registered, and an edited brief is not reloaded; then a default
+// agent reads its brief from .claude/agents/<type>.md and acts as that agent
+// (tool restrictions from the frontmatter do not apply in that mode, the
+// brief's rules still do). args.briefsFromFiles=true forces that path for
+// every agent, for a session that started before the briefs were (re)written.
+const fromBrief = (type, prompt, opts) => agent(
+  `First read the file .claude/agents/${type}.md and act exactly as the agent it describes, obeying every rule in it (including which files you may edit). Then do the task below.\n\n---\n\n${prompt}`,
+  { model: MODEL, ...opts })
 async function run(type, prompt, opts) {
+  if (opt.briefsFromFiles) return fromBrief(type, prompt, opts)
   try {
     return await agent(prompt, { model: MODEL, agentType: type, ...opts })
   } catch (e) {
     if (!String(e && e.message).includes('not found')) throw e
     log(`agent type '${type}' not registered in this session (restart Claude Code to load it); running from its brief file`)
-    return agent(
-      `First read the file .claude/agents/${type}.md and act exactly as the agent it describes, obeying every rule in it (including which files you may edit). Then do the task below.\n\n---\n\n${prompt}`,
-      { model: MODEL, ...opts })
+    return fromBrief(type, prompt, opts)
   }
 }
 // Ad-hoc specialists have no registered type: their planner-written brief

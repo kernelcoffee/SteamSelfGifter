@@ -137,6 +137,8 @@ async def _process_entries(
         max_game_age=settings.autojoin_max_game_age,
         wishlist_priority=bool(settings.wishlist_priority_enabled),
         dlc_priority=bool(settings.dlc_priority_enabled),
+        ending_soon_priority=bool(settings.ending_soon_priority_enabled),
+        ending_soon_threshold_minutes=settings.ending_soon_threshold_minutes or 60,
     )
     eligible = await giveaway_service.evaluate_and_get_eligible(criteria, limit=max_entries)
 
@@ -173,8 +175,8 @@ async def _process_entries(
 
     for giveaway in eligible:
         # Budget floor: entering must not take the balance below stop_at.
-        # Eligible is ordered by price descending, so a cheaper giveaway
-        # later in the list may still fit — skip, don't stop.
+        # Eligible is ordered by priority group then price descending; a
+        # cheaper giveaway later in the list may still fit, so skip, don't stop.
         if points - giveaway.price < stop_at:
             stats["skipped_budget"] += 1
             logger.debug(

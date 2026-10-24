@@ -14,6 +14,7 @@ SteamSelfGifter is an automated bot for entering Steam game giveaways on SteamGi
 - **Web Dashboard**: Modern React-based UI for monitoring and control
 - **Wishlist Integration**: Automatically enters giveaways for games on your Steam wishlist
 - **DLC Support**: Optional support for DLC giveaways
+- **Ending-soon Priority**: Optionally enters giveaways that pass your auto-join filters and end within a configurable window (5 minutes to 1 week, default 60 minutes) after wishlist and DLC ones but before the rest, soonest first
 - **Smart Auto-join**: Automatically enters giveaways based on customizable criteria:
   - Minimum price threshold
   - Minimum review score
@@ -138,6 +139,7 @@ npm run dev  # Development server at http://localhost:5173
    - Enable/disable automation
    - Enable/disable DLC giveaways
    - Set auto-join criteria (min price, score, reviews)
+   - Optionally enter giveaways ending soon first (**Enter giveaways ending soon first**, threshold 5 to 10080 minutes, default 60)
    - Enable safety check for trap detection
 
 ### How to get your PHPSESSID

@@ -271,8 +271,11 @@ async def test_reset_to_defaults(test_db):
             autojoin_enabled=True,
             autojoin_min_price=200,
             automation_enabled=True,
-            max_scan_pages=10
+            max_scan_pages=10,
+            ending_soon_priority_enabled=True,
+            ending_soon_threshold_minutes=120,
         )
+        assert (await service.get_settings()).ending_soon_threshold_minutes == 120
 
         # Reset
         settings = await service.reset_to_defaults()
@@ -291,6 +294,34 @@ async def test_reset_to_defaults(test_db):
         assert settings.max_scan_pages == 3
         assert settings.entry_delay_min == 8
         assert settings.entry_delay_max == 12
+        assert settings.ending_soon_priority_enabled is False
+        assert settings.ending_soon_threshold_minutes == 60
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [4, 10081])
+async def test_update_settings_rejects_out_of_range_ending_soon_threshold(test_db, value):
+    """Out-of-range thresholds raise ValueError and nothing is written."""
+    async with test_db() as session:
+        service = SettingsService(session)
+
+        with pytest.raises(ValueError, match="ending_soon_threshold_minutes"):
+            await service.update_settings(ending_soon_threshold_minutes=value)
+
+        settings = await service.get_settings()
+        assert settings.ending_soon_threshold_minutes == 60
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [5, 10080])
+async def test_update_settings_accepts_ending_soon_threshold_bounds(test_db, value):
+    """The inclusive bounds 5 and 10080 are accepted and persisted."""
+    async with test_db() as session:
+        service = SettingsService(session)
+
+        settings = await service.update_settings(ending_soon_threshold_minutes=value)
+
+        assert settings.ending_soon_threshold_minutes == value
 
 
 @pytest.mark.asyncio
@@ -367,3 +398,24 @@ async def test_validate_configuration_no_warnings_with_defaults(test_db):
         assert result["is_valid"] is True
         assert len(result["warnings"]) == 0
         assert len(result["errors"]) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [4, 10081])
+async def test_update_settings_out_of_range_threshold_keeps_prior_value(test_db, value):
+    """A rejected threshold leaves a previously stored non-default value and
+    the toggle untouched, even when sent together with a valid field."""
+    async with test_db() as session:
+        service = SettingsService(session)
+        await service.update_settings(
+            ending_soon_priority_enabled=True, ending_soon_threshold_minutes=90
+        )
+
+        with pytest.raises(ValueError, match="ending_soon_threshold_minutes"):
+            await service.update_settings(
+                ending_soon_priority_enabled=False, ending_soon_threshold_minutes=value
+            )
+
+        settings = await service.get_settings()
+        assert settings.ending_soon_threshold_minutes == 90
+        assert settings.ending_soon_priority_enabled is True

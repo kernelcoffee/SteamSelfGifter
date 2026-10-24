@@ -21,6 +21,8 @@ def _cycle_settings(**overrides):
     s.autojoin_start_at = 0
     s.autojoin_stop_at = 0
     s.wishlist_priority_enabled = True
+    s.ending_soon_priority_enabled = False
+    s.ending_soon_threshold_minutes = 60
     s.max_entries_per_cycle = 5
     s.entry_delay_min = 0.01
     s.entry_delay_max = 0.02

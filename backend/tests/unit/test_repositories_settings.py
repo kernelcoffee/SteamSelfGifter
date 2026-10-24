@@ -74,6 +74,8 @@ async def test_get_settings_creates_if_missing(settings_repo, session):
     assert settings.id == 1
     assert settings.autojoin_enabled is False  # default value
     assert settings.dlc_priority_enabled is False  # default value
+    assert settings.ending_soon_priority_enabled is False  # default value
+    assert settings.ending_soon_threshold_minutes == 60  # default value
 
 
 @pytest.mark.asyncio

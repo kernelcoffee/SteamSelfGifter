@@ -94,4 +94,7 @@ CLAUDE.md
 # Playwright
 frontend/test-results/
 frontend/playwright-report/
+
+# tsc incremental build state
+*.tsbuildinfo
 frontend/.playwright/

@@ -48,19 +48,26 @@ Get current application settings.
     "phpsessid": "string | null",
     "user_agent": "string",
     "xsrf_token": "string | null",
-    "dlc_enabled": false,
+    "dlc_priority_enabled": false,
+    "safety_check_enabled": true,
+    "auto_hide_unsafe": true,
     "autojoin_enabled": false,
     "autojoin_start_at": 350,
     "autojoin_stop_at": 200,
     "autojoin_min_price": 10,
     "autojoin_min_score": 7,
     "autojoin_min_reviews": 1000,
+    "autojoin_max_game_age": null,
+    "wishlist_priority_enabled": true,
+    "ending_soon_priority_enabled": false,
+    "ending_soon_threshold_minutes": 60,
     "scan_interval_minutes": 30,
     "max_entries_per_cycle": null,
     "automation_enabled": false,
     "max_scan_pages": 3,
     "entry_delay_min": 8,
     "entry_delay_max": 12,
+    "log_retention_days": 30,
     "last_synced_at": "datetime | null",
     "created_at": "datetime",
     "updated_at": "datetime"
@@ -76,23 +83,34 @@ Update application settings (partial updates supported).
 {
   "phpsessid": "string",
   "user_agent": "string",
-  "dlc_enabled": true,
+  "dlc_priority_enabled": true,
+  "safety_check_enabled": true,
+  "auto_hide_unsafe": true,
   "autojoin_enabled": true,
   "autojoin_start_at": 350,
   "autojoin_stop_at": 200,
   "autojoin_min_price": 10,
   "autojoin_min_score": 7,
   "autojoin_min_reviews": 1000,
+  "autojoin_max_game_age": 5,
+  "wishlist_priority_enabled": true,
+  "ending_soon_priority_enabled": true,
+  "ending_soon_threshold_minutes": 60,
   "scan_interval_minutes": 30,
   "max_entries_per_cycle": 10,
   "automation_enabled": true,
   "max_scan_pages": 3,
   "entry_delay_min": 8,
-  "entry_delay_max": 12
+  "entry_delay_max": 12,
+  "log_retention_days": 30
 }
 ```
 
+`ending_soon_threshold_minutes` must be an integer from 5 to 10080 (one week); anything else returns 422 with the standard validation body and nothing is written. The threshold is stored even while `ending_soon_priority_enabled` is false. Omitted or `null` fields are ignored; a body with no non-null fields returns 400 `"No fields provided for update"`.
+
 **Response:** Same as GET /settings/
+
+**Entry order:** each automation cycle enters eligible giveaways in this order: wishlist giveaways (when `wishlist_priority_enabled`), then DLC (when `dlc_priority_enabled`), then, when `ending_soon_priority_enabled`, the remaining giveaways whose `end_time` is set and at most `ending_soon_threshold_minutes` from now (inclusive), soonest first with ties in price order, then everything else. Wishlist, DLC and the rest stay in price-descending order. Unlike the wishlist and DLC lifts, the ending-soon lift only reorders: those giveaways must still pass the autojoin filters, and they are entered with `entry_type` `"auto"`. `max_entries_per_cycle` and the `autojoin_stop_at` budget apply after the sort. With the toggle off the order is unchanged.
 
 ### POST /settings/test-session
 Test if the configured PHPSESSID is valid.
@@ -712,19 +730,26 @@ interface Settings {
   phpsessid: string | null;
   user_agent: string;
   xsrf_token: string | null;
-  dlc_enabled: boolean;
+  dlc_priority_enabled: boolean;
+  safety_check_enabled: boolean;
+  auto_hide_unsafe: boolean;
   autojoin_enabled: boolean;
   autojoin_start_at: number;
   autojoin_stop_at: number;
   autojoin_min_price: number;
   autojoin_min_score: number;
   autojoin_min_reviews: number;
+  autojoin_max_game_age: number | null;
+  wishlist_priority_enabled: boolean;
+  ending_soon_priority_enabled: boolean;
+  ending_soon_threshold_minutes: number;
   scan_interval_minutes: number;
   max_entries_per_cycle: number | null;
   automation_enabled: boolean;
   max_scan_pages: number;
   entry_delay_min: number;
   entry_delay_max: number;
+  log_retention_days: number;
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;

@@ -144,6 +144,8 @@ steamgifts_client.get_giveaways(page)        # scrape HTML (BeautifulSoup)
 
 ```
 get_eligible_giveaways(min_price, min_score, min_reviews, max_game_age, limit)
+  # sorted: wishlist (if wishlist_priority_enabled), DLC (if dlc_priority_enabled),
+  # ending soon by end_time asc (if ending_soon_priority_enabled), rest by price desc
   → for each eligible giveaway:
       sleep(random 5–15s)                      # human-like pacing
       giveaway_service.enter_giveaway(code)    # refresh xsrf → POST → record Entry

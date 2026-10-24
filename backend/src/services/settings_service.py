@@ -101,6 +101,12 @@ class SettingsService:
             if min_reviews is not None and min_reviews < 0:
                 raise ValueError("autojoin_min_reviews must be >= 0")
 
+        # Validate ending-soon threshold (mirrors the schema's ge/le bounds)
+        if "ending_soon_threshold_minutes" in kwargs:
+            threshold = kwargs["ending_soon_threshold_minutes"]
+            if threshold is not None and not (5 <= threshold <= 10080):
+                raise ValueError("ending_soon_threshold_minutes must be between 5 and 10080")
+
         # Validate max_scan_pages
         if "max_scan_pages" in kwargs:
             max_pages = kwargs["max_scan_pages"]
@@ -259,6 +265,8 @@ class SettingsService:
             autojoin_min_score=7,   # Integer default
             autojoin_min_reviews=1000,  # Integer default
             wishlist_priority_enabled=True,
+            ending_soon_priority_enabled=False,
+            ending_soon_threshold_minutes=60,
             # Reset scheduler settings
             scan_interval_minutes=30,
             max_entries_per_cycle=None,  # None = unlimited

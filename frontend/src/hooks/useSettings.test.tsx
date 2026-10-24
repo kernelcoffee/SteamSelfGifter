@@ -60,6 +60,8 @@ const mockSettings: Settings = {
   autojoin_min_reviews: 100,
   autojoin_max_game_age: null,
   wishlist_priority_enabled: true,
+  ending_soon_priority_enabled: false,
+  ending_soon_threshold_minutes: 60,
   scan_interval_minutes: 30,
   max_entries_per_cycle: 10,
   automation_enabled: true,

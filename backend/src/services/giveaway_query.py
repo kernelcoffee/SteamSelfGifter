@@ -11,7 +11,12 @@ from models.entry import Entry
 from models.giveaway import Giveaway
 from repositories.entry import EntryRepository
 from repositories.giveaway import GiveawayRepository
-from services.eligibility import ELIGIBLE, EligibilityCriteria, evaluate_eligibility
+from services.eligibility import (
+    ELIGIBLE,
+    EligibilityCriteria,
+    evaluate_eligibility,
+    priority_sort_key,
+)
 from services.game_service import GameService
 
 logger = structlog.get_logger()
@@ -112,7 +117,7 @@ class GiveawayQueryMixin:
     ) -> list[Giveaway]:
         """
         Evaluate every active candidate, record why each one did or didn't qualify,
-        and return the eligible giveaways (highest price first, optionally limited).
+        and return the eligible giveaways in priority order (optionally limited).
 
         This is the decision step for the automation/process cycle. Every active,
         not-entered giveaway gets ``eligibility_reason`` and ``eligibility_checked_at``
@@ -125,7 +130,8 @@ class GiveawayQueryMixin:
             limit: maximum number of eligible giveaways to return (None = all).
 
         Returns:
-            Eligible giveaways, wishlist first, then by price descending.
+            Eligible giveaways: wishlist first, then DLC, then ending soon
+            (soonest first) when enabled, then the rest by price descending.
         """
         now = utcnow()
         candidates = await self.giveaway_repo.get_active_unentered()
@@ -150,13 +156,11 @@ class GiveawayQueryMixin:
         counts = Counter(g.eligibility_reason or "unknown" for g in candidates)
         logger.info("eligibility_evaluated", total=len(candidates), **dict(counts))
 
-        # candidates are ordered by price desc; the stable sort moves wishlist
-        # (then DLC) giveaways to the front while keeping price order within
-        # each group.
-        eligible.sort(key=lambda g: (
-            not (criteria.wishlist_priority and g.is_wishlist),
-            not (criteria.dlc_priority and g.is_dlc),
-        ))
+        # candidates are ordered by price desc; the stable sort moves wishlist,
+        # then DLC, then (when enabled) ending-soon giveaways to the front.
+        # Ending-soon ones are ordered soonest first; every other group keeps
+        # the pool's price order. See services.eligibility.priority_sort_key.
+        eligible.sort(key=lambda g: priority_sort_key(g, criteria, now))
         return eligible[:limit] if limit else eligible
 
     async def get_active_giveaways(

@@ -100,6 +100,21 @@ class SettingsBase(BaseModel):
         description="Wishlist giveaways bypass autojoin filters and are entered first",
         examples=[True],
     )
+    ending_soon_priority_enabled: bool = Field(
+        default=False,
+        description=(
+            "Giveaways ending within ending_soon_threshold_minutes are entered "
+            "after wishlist and DLC ones but before the rest, soonest first"
+        ),
+        examples=[False],
+    )
+    ending_soon_threshold_minutes: int = Field(
+        default=60,
+        description="Minutes before the end within which a giveaway counts as ending soon",
+        ge=5,
+        le=10080,
+        examples=[60],
+    )
 
     # Scheduler Settings
     scan_interval_minutes: int = Field(
@@ -216,6 +231,8 @@ class SettingsResponse(SettingsBase):
                     "autojoin_min_price": 10,
                     "autojoin_min_score": 7,
                     "autojoin_min_reviews": 1000,
+                    "ending_soon_priority_enabled": False,
+                    "ending_soon_threshold_minutes": 60,
                     "scan_interval_minutes": 30,
                     "max_entries_per_cycle": 10,
                     "automation_enabled": True,
@@ -313,6 +330,19 @@ class SettingsUpdate(BaseModel):
     wishlist_priority_enabled: bool | None = Field(
         default=None,
         description="Wishlist giveaways bypass autojoin filters and are entered first",
+    )
+    ending_soon_priority_enabled: bool | None = Field(
+        default=None,
+        description=(
+            "Giveaways ending within ending_soon_threshold_minutes are entered "
+            "after wishlist and DLC ones but before the rest, soonest first"
+        ),
+    )
+    ending_soon_threshold_minutes: int | None = Field(
+        default=None,
+        description="Minutes before the end within which a giveaway counts as ending soon",
+        ge=5,
+        le=10080,
     )
 
     # Scheduler Settings

@@ -34,6 +34,14 @@ class Settings(Base, TimestampMixin):
             autojoin_min_price: Minimum giveaway price in points to enter (default: 10)
             autojoin_min_score: Minimum Steam review score (0-10) required (default: 7)
             autojoin_min_reviews: Minimum number of reviews required (default: 1000)
+            autojoin_max_game_age: Maximum game age in years (default: None = no limit)
+            wishlist_priority_enabled: Wishlist giveaways bypass autojoin filters
+                and are entered first (default: True)
+            ending_soon_priority_enabled: Giveaways ending within the threshold
+                are entered after wishlist and DLC ones, soonest first. Affects
+                ordering only, never eligibility (default: False)
+            ending_soon_threshold_minutes: Minutes before end_time within which
+                a giveaway counts as ending soon, 5-10080 (default: 60)
 
         Scheduler Settings:
             scan_interval_minutes: How often to scan for giveaways (default: 30 min)
@@ -149,6 +157,16 @@ class Settings(Base, TimestampMixin):
         Boolean,
         default=True,
         comment="Wishlist giveaways bypass autojoin filters and are entered first",
+    )
+    ending_soon_priority_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        comment="Giveaways ending within the threshold are entered after wishlist and DLC ones, soonest first",
+    )
+    ending_soon_threshold_minutes: Mapped[int] = mapped_column(
+        Integer,
+        default=60,
+        comment="Minutes before end_time within which a giveaway counts as ending soon (5-10080)",
     )
 
     # ==================== Scheduler Settings ====================
