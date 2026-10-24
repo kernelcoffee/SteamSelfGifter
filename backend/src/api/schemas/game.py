@@ -88,6 +88,22 @@ class GameBase(BaseModel):
         ge=0,
         examples=[1999],
     )
+    genres: list[str] | None = Field(
+        default=None,
+        description=(
+            "Steam genre names (null = not fetched yet; [] = Steam returned "
+            "none, or Steam no longer serves this app)"
+        ),
+        examples=[["Action", "Adventure", "Indie"]],
+    )
+    categories: list[str] | None = Field(
+        default=None,
+        description=(
+            "Steam category names (null = not fetched yet; [] = Steam returned "
+            "none, or Steam no longer serves this app)"
+        ),
+        examples=[["Single-player", "Steam Achievements"]],
+    )
 
 
 class GameResponse(GameBase):
@@ -130,10 +146,55 @@ class GameResponse(GameBase):
                     "game_id": None,
                     "description": "Portal 2 is a puzzle-platform game...",
                     "price": 1999,
+                    "genres": ["Action", "Adventure"],
+                    "categories": ["Single-player", "Steam Achievements"],
                     "last_refreshed_at": "2025-10-14T12:00:00",
                 }
             ]
         },
+    }
+
+
+class GenreCount(BaseModel):
+    """A Steam genre and how many cached games carry it."""
+
+    name: str = Field(
+        ...,
+        description="Steam genre name",
+        min_length=1,
+        examples=["Action"],
+    )
+    count: int = Field(
+        ...,
+        description="Number of cached games whose genres contain this name",
+        ge=0,
+        examples=[12],
+    )
+
+
+class GenreListResponse(BaseModel):
+    """Distinct genres across cached games, most common first.
+
+    Example:
+        >>> GenreListResponse(genres=[GenreCount(name="Action", count=2)])
+    """
+
+    genres: list[GenreCount] = Field(
+        default_factory=list,
+        description="Genres sorted by count descending, then name ascending",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "genres": [
+                        {"name": "Action", "count": 12},
+                        {"name": "Indie", "count": 9},
+                    ]
+                }
+            ]
+        }
     }
 
 
@@ -233,6 +294,15 @@ class GameRefreshResponse(BaseModel):
         description="When game data was last refreshed",
         examples=["2025-10-14T12:00:00"],
     )
+    retry_after_seconds: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Seconds until Steam lookups resume, set only when the refresh was "
+            "skipped because Steam is rate limiting requests"
+        ),
+        examples=[None, 120],
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -241,7 +311,13 @@ class GameRefreshResponse(BaseModel):
                     "refreshed": True,
                     "message": "Game data refreshed successfully",
                     "last_refreshed_at": "2025-10-14T12:00:00",
-                }
+                },
+                {
+                    "refreshed": False,
+                    "message": "Steam is rate limiting requests, retry in 120 s",
+                    "last_refreshed_at": None,
+                    "retry_after_seconds": 120,
+                },
             ]
         }
     }

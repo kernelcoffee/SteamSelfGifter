@@ -165,6 +165,11 @@ class GiveawayResponse(GiveawayBase):
         description="Steam header image URL for the game",
         examples=["https://cdn.cloudflare.steamstatic.com/steam/apps/620/header.jpg"],
     )
+    game_genres: list[str] | None = Field(
+        default=None,
+        description="Steam genres of the cached game (null = not cached or not fetched yet)",
+        examples=[["Action", "Indie"]],
+    )
     game_review_score: int | None = Field(
         default=None,
         description="Steam review score (0-10)",

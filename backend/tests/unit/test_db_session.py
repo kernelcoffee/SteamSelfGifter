@@ -292,3 +292,134 @@ async def test_ending_soon_migration_round_trip_on_empty_database(tmp_path, monk
     finally:
         conn.close()
     assert row == (0, 60)
+
+
+GENRES_REVISION = "f5b2d8c3a7e1"
+GAME_GENRE_COLUMNS = {"genres", "categories"}
+
+
+def _insert_legacy_settings_and_game(db_path):
+    """Insert one settings row and one games row without the genre columns."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO settings (id, user_agent, safety_check_enabled, auto_hide_unsafe, "
+            "autojoin_enabled, autojoin_start_at, autojoin_stop_at, autojoin_min_price, "
+            "autojoin_min_score, autojoin_min_reviews, scan_interval_minutes, "
+            "automation_enabled, max_scan_pages, entry_delay_min, entry_delay_max, "
+            "created_at, updated_at) VALUES (1, 'ua', 1, 1, 0, 350, 200, 10, 7, 1000, "
+            "30, 0, 3, 8, 12, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO games (id, name, type, is_bundle, review_score, total_positive, "
+            "total_negative, total_reviews, last_refreshed_at, "
+            "created_at, updated_at) VALUES (620, 'Portal 2', 'game', 0, 9, 10, 1, 11, "
+            "'2026-01-01 00:00:00', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_genres_migration_upgrade_backfills_and_downgrade_drops(tmp_path, monkeypatch):
+    """The genres revision revises e3a9c7b5d1f4 and lies on the single head's
+    lineage; upgrading a database with existing rows leaves games.genres and
+    games.categories NULL ("not fetched yet", so a refresh backfills them)
+    and sets settings.excluded_genres to '[]'; downgrade drops all three and
+    keeps the rows."""
+    from alembic.script import ScriptDirectory
+
+    from alembic import command
+
+    # GIVEN: A database at the ending-soon revision with a settings and a games row
+    db_path = tmp_path / "genres.db"
+    monkeypatch.setattr(settings, "database_url", f"sqlite+aiosqlite:///{db_path}")
+    cfg = _alembic_config()
+    await asyncio.to_thread(command.upgrade, cfg, ENDING_SOON_REVISION)
+    assert GAME_GENRE_COLUMNS.isdisjoint(_column_names(db_path, "games"))
+    assert "excluded_genres" not in _column_names(db_path, "settings")
+    _insert_legacy_settings_and_game(db_path)
+
+    script = ScriptDirectory.from_config(cfg)
+    heads = script.get_heads()
+    assert len(heads) == 1
+    lineage = {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
+    assert GENRES_REVISION in lineage
+    assert script.get_revision(GENRES_REVISION).down_revision == ENDING_SOON_REVISION
+
+    # WHEN: Upgrading to the genres revision
+    await asyncio.to_thread(command.upgrade, cfg, GENRES_REVISION)
+
+    # THEN: The columns exist; the game row is unfetched, settings got '[]'
+    assert _db_revision(db_path) == GENRES_REVISION
+    assert GAME_GENRE_COLUMNS <= _column_names(db_path, "games")
+    assert "excluded_genres" in _column_names(db_path, "settings")
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute(
+            "SELECT genres, categories FROM games WHERE id = 620"
+        ).fetchone() == (None, None)
+        assert conn.execute(
+            "SELECT excluded_genres FROM settings WHERE id = 1"
+        ).fetchone() == ("[]",)
+    finally:
+        conn.close()
+
+    # WHEN: Downgrading back to the ending-soon revision
+    await asyncio.to_thread(command.downgrade, cfg, ENDING_SOON_REVISION)
+
+    # THEN: All three columns are gone and both rows survive
+    assert _db_revision(db_path) == ENDING_SOON_REVISION
+    assert GAME_GENRE_COLUMNS.isdisjoint(_column_names(db_path, "games"))
+    assert "excluded_genres" not in _column_names(db_path, "settings")
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM settings").fetchone()[0] == 1
+        assert conn.execute("SELECT name FROM games WHERE id = 620").fetchone() == ("Portal 2",)
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_genres_migration_round_trip_on_empty_database(tmp_path, monkeypatch):
+    """On an empty database the genres revision upgrades, downgrades and
+    re-upgrades cleanly; excluded_genres is NOT NULL with default '[]' and the
+    game columns are nullable."""
+    from alembic import command
+
+    # GIVEN: A brand-new empty database
+    db_path = tmp_path / "genres_empty.db"
+    monkeypatch.setattr(settings, "database_url", f"sqlite+aiosqlite:///{db_path}")
+    cfg = _alembic_config()
+
+    # WHEN: Upgrading to head, back to the ending-soon revision, and to head again
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+    assert GAME_GENRE_COLUMNS <= _column_names(db_path, "games")
+    await asyncio.to_thread(command.downgrade, cfg, ENDING_SOON_REVISION)
+    assert _db_revision(db_path) == ENDING_SOON_REVISION
+    assert GAME_GENRE_COLUMNS.isdisjoint(_column_names(db_path, "games"))
+    assert "excluded_genres" not in _column_names(db_path, "settings")
+    await asyncio.to_thread(command.upgrade, cfg, "head")
+    assert _db_revision(db_path) == _head_revision()
+
+    # THEN: Nullability and defaults match the model
+    conn = sqlite3.connect(db_path)
+    try:
+        games_info = {r[1]: r for r in conn.execute("PRAGMA table_info(games)").fetchall()}
+        settings_info = {r[1]: r for r in conn.execute("PRAGMA table_info(settings)").fetchall()}
+    finally:
+        conn.close()
+    for column in GAME_GENRE_COLUMNS:
+        assert games_info[column][3] == 0, f"games.{column} must be nullable"
+    assert settings_info["excluded_genres"][3] == 1
+    assert settings_info["excluded_genres"][4] == "'[]'"
+
+    # AND: A row inserted without the new columns gets the defaults
+    _insert_legacy_settings_and_game(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("SELECT excluded_genres FROM settings").fetchone() == ("[]",)
+        assert conn.execute("SELECT genres FROM games").fetchone() == (None,)
+    finally:
+        conn.close()

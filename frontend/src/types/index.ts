@@ -1,4 +1,6 @@
-// API Response wrapper - all backend responses have this shape
+// API Response wrapper as returned by the ApiClient. The backend's error
+// envelope carries `error: {code, message, details}` (or FastAPI's `detail`);
+// the ApiClient normalizes every error body so `error` is the message string.
 export interface ApiResponse<T> {
   success: boolean;
   data: T;
@@ -31,6 +33,7 @@ export interface Giveaway {
   updated_at: string;
   // Optional game data from joined Game table
   game_thumbnail?: string | null;
+  game_genres?: string[] | null;
   game_review_score?: number | null;
   game_total_reviews?: number | null;
   game_review_summary?: string | null;
@@ -69,6 +72,8 @@ export interface Game {
   game_id: number | null;
   description: string | null;
   price: number | null;
+  genres?: string[] | null;
+  categories?: string[] | null;
   last_refreshed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -103,6 +108,7 @@ export interface Settings {
   wishlist_priority_enabled: boolean;
   ending_soon_priority_enabled: boolean;
   ending_soon_threshold_minutes: number;
+  excluded_genres: string[];
   scan_interval_minutes: number;
   max_entries_per_cycle: number;
   automation_enabled: boolean;
@@ -159,6 +165,16 @@ export interface GameStats {
   dlc: number;
   bundles: number;
   stale_games: number;
+}
+
+// Distinct genres across cached games (GET /api/v1/games/genres)
+export interface GenreCount {
+  name: string;
+  count: number;
+}
+
+export interface GenreList {
+  genres: GenreCount[];
 }
 
 export interface DashboardData {

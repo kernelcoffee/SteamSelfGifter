@@ -9,9 +9,64 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import SteamGiftsAuthError, SteamGiftsError
+from core.text import ascii_lower
 from models.settings import Settings
 from repositories.settings import SettingsRepository
 from utils.steamgifts_client import SteamGiftsClient
+
+EXCLUDED_GENRES_MAX_ITEMS = 50
+EXCLUDED_GENRE_MAX_LENGTH = 64
+
+
+def normalize_excluded_genres(values: object) -> list[str]:
+    """Validate and normalize a user-supplied excluded-genres list.
+
+    In order: require a list of strings, strip each item, drop empty items,
+    reject any item longer than EXCLUDED_GENRE_MAX_LENGTH, dedupe
+    case-insensitively keeping the first spelling, and reject more than
+    EXCLUDED_GENRES_MAX_ITEMS remaining items. Shared by the API schema
+    (422 on failure) and SettingsService.update_settings (ValueError).
+
+    Args:
+        values: the submitted value.
+
+    Returns:
+        The normalized list, in the user's order.
+
+    Raises:
+        ValueError: on a non-list, a non-string item, an over-long item or
+            too many items.
+
+    Example:
+        >>> normalize_excluded_genres([" Action", "action", "Indie", ""])
+        ['Action', 'Indie']
+    """
+    if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+        raise ValueError("excluded_genres must be a list of strings")
+
+    stripped = [v.strip() for v in values]
+    stripped = [v for v in stripped if v]
+    if any(len(v) > EXCLUDED_GENRE_MAX_LENGTH for v in stripped):
+        raise ValueError(
+            f"each excluded genre must be at most {EXCLUDED_GENRE_MAX_LENGTH} characters"
+        )
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in stripped:
+        # Same fold as the eligibility match (ASCII only, like SQLite's
+        # lower()): "Éducation" and "éducation" are distinct there, so both
+        # are kept here; only spellings that match identically are merged.
+        key = ascii_lower(value)
+        if key not in seen:
+            seen.add(key)
+            normalized.append(value)
+
+    if len(normalized) > EXCLUDED_GENRES_MAX_ITEMS:
+        raise ValueError(
+            f"excluded_genres accepts at most {EXCLUDED_GENRES_MAX_ITEMS} genres"
+        )
+    return normalized
 
 
 class SettingsService:
@@ -106,6 +161,12 @@ class SettingsService:
             threshold = kwargs["ending_soon_threshold_minutes"]
             if threshold is not None and not (5 <= threshold <= 10080):
                 raise ValueError("ending_soon_threshold_minutes must be between 5 and 10080")
+
+        # Validate and normalize excluded genres (mirrors the schema validator).
+        # None is rejected too: the column is NOT NULL, and callers that mean
+        # "unchanged" leave the key out (the router drops None fields).
+        if "excluded_genres" in kwargs:
+            kwargs["excluded_genres"] = normalize_excluded_genres(kwargs["excluded_genres"])
 
         # Validate max_scan_pages
         if "max_scan_pages" in kwargs:
@@ -267,6 +328,7 @@ class SettingsService:
             wishlist_priority_enabled=True,
             ending_soon_priority_enabled=False,
             ending_soon_threshold_minutes=60,
+            excluded_genres=[],
             # Reset scheduler settings
             scan_interval_minutes=30,
             max_entries_per_cycle=None,  # None = unlimited

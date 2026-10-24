@@ -291,7 +291,10 @@ class SteamClient:
             app_id: Steam App ID
 
         Returns:
-            App details dictionary, or None if not found
+            App details dictionary (English descriptions), or None if not found
+
+        Raises:
+            SteamAPIRateLimitError: On HTTP 429 or an empty (`null`) body
 
         Example:
             >>> details = await client.get_app_details(730)  # CS:GO
@@ -299,10 +302,17 @@ class SteamClient:
             'Counter-Strike: Global Offensive'
         """
         url = f"{self.STORE_API_BASE}/appdetails"
-        params = {"appids": str(app_id)}
+        # Pin the language: genre/category descriptions are matched against
+        # user exclusions and grouped by name, so they must not localize.
+        params = {"appids": str(app_id), "l": "english"}
 
         try:
             data = await self._request(url, params)
+
+            # A throttled store API sometimes answers HTTP 200 with the body
+            # `null`; treat it as the rate limit it is.
+            if not isinstance(data, dict):
+                raise SteamAPIRateLimitError("Empty appdetails response (throttled)")
 
             # Steam API returns: {"730": {"success": true, "data": {...}}}
             app_data = data.get(str(app_id))

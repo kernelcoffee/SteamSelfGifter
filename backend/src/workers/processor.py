@@ -139,6 +139,7 @@ async def _process_entries(
         dlc_priority=bool(settings.dlc_priority_enabled),
         ending_soon_priority=bool(settings.ending_soon_priority_enabled),
         ending_soon_threshold_minutes=settings.ending_soon_threshold_minutes or 60,
+        excluded_genres=frozenset(settings.excluded_genres or []),
     )
     eligible = await giveaway_service.evaluate_and_get_eligible(criteria, limit=max_entries)
 

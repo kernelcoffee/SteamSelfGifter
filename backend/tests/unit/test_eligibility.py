@@ -25,10 +25,12 @@ from services.eligibility import (
     ENTERED,
     EXPIRED,
     GAME_TOO_OLD,
+    GENRE_EXCLUDED,
     HIDDEN,
     NO_GAME_DATA,
     PRICE_ABOVE_MAX,
     PRICE_BELOW_MIN,
+    REASON_LABELS,
     REVIEWS_BELOW_MIN,
     SCORE_BELOW_MIN,
     UNSAFE,
@@ -38,6 +40,7 @@ from services.eligibility import (
 )
 from services.game_service import GameService
 from services.giveaway_service import GiveawayService
+from services.settings_service import normalize_excluded_genres
 
 NOW = datetime(2026, 6, 17, 12, 0, 0)
 
@@ -59,7 +62,7 @@ def _gw(**kw):
 
 
 def _game(**kw):
-    base = dict(review_score=9, total_reviews=5000, release_date="2020-01-01")
+    base = dict(review_score=9, total_reviews=5000, release_date="2020-01-01", genres=["Puzzle"])
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -187,6 +190,120 @@ def test_precedence_hidden_beats_price_and_score():
 def test_precedence_price_beats_missing_game():
     crit = EligibilityCriteria(min_price=100, min_score=7)
     assert evaluate_eligibility(_gw(price=1), None, crit, NOW) == PRICE_BELOW_MIN
+
+
+# ----------------------------------------------------------------------------
+# 1b. Genre exclusion (pure)
+# ----------------------------------------------------------------------------
+
+def test_genre_excluded_on_match():
+    crit = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
+    assert evaluate_eligibility(_gw(), _game(genres=["Indie", "Action"]), crit, NOW) == GENRE_EXCLUDED
+
+
+@pytest.mark.parametrize("excluded, stored", [
+    ("ACTION", "Action"),
+    ("action", "ACTION"),
+    ("Action", "aCtIoN"),
+])
+def test_genre_excluded_case_insensitive(excluded, stored):
+    crit = EligibilityCriteria(min_price=10, excluded_genres=[excluded])
+    assert evaluate_eligibility(_gw(), _game(genres=[stored]), crit, NOW) == GENRE_EXCLUDED
+
+
+def test_genre_not_in_exclusions_passes():
+    crit = EligibilityCriteria(min_price=10, min_score=7, excluded_genres=["Action"])
+    assert evaluate_eligibility(_gw(), _game(genres=["Puzzle"]), crit, NOW) == ELIGIBLE
+
+
+@pytest.mark.parametrize("genres", [None, []])
+def test_unknown_or_empty_genres_pass(genres):
+    """Negative filter: unfetched (None) and empty genres never fail it."""
+    crit = EligibilityCriteria(min_price=10, min_score=7, excluded_genres=["Action"])
+    assert evaluate_eligibility(_gw(), _game(genres=genres), crit, NOW) == ELIGIBLE
+
+
+def test_missing_game_passes_genre_filter_without_quality_criteria():
+    """Excluded genres alone never require game data."""
+    crit = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
+    assert crit.needs_game_data is False
+    assert evaluate_eligibility(_gw(), None, crit, NOW) == ELIGIBLE
+
+
+def test_missing_game_with_quality_criteria_still_no_game_data():
+    crit = EligibilityCriteria(min_price=10, min_score=7, excluded_genres=["Action"])
+    assert evaluate_eligibility(_gw(), None, crit, NOW) == NO_GAME_DATA
+
+
+def test_empty_exclusion_list_never_excludes():
+    crit = EligibilityCriteria(min_price=10, excluded_genres=[])
+    assert evaluate_eligibility(_gw(), _game(genres=["Action"]), crit, NOW) == ELIGIBLE
+
+
+def test_wishlist_bypasses_genre_exclusion_only_when_priority_on():
+    game = _game(genres=["Action"])
+    on = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
+    off = EligibilityCriteria(min_price=10, excluded_genres=["Action"], wishlist_priority=False)
+    assert evaluate_eligibility(_gw(is_wishlist=True), game, on, NOW) == ELIGIBLE
+    assert evaluate_eligibility(_gw(is_wishlist=True), game, off, NOW) == GENRE_EXCLUDED
+
+
+def test_dlc_bypasses_genre_exclusion_only_when_priority_on():
+    game = _game(genres=["Action"])
+    on = EligibilityCriteria(min_price=10, excluded_genres=["Action"], dlc_priority=True)
+    off = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
+    assert evaluate_eligibility(_gw(is_dlc=True), game, on, NOW) == ELIGIBLE
+    assert evaluate_eligibility(_gw(is_dlc=True), game, off, NOW) == GENRE_EXCLUDED
+
+
+def test_precedence_price_beats_genre():
+    game = _game(genres=["Action"])
+    below = EligibilityCriteria(min_price=100, excluded_genres=["Action"])
+    above = EligibilityCriteria(min_price=10, max_price=40, excluded_genres=["Action"])
+    assert evaluate_eligibility(_gw(price=50), game, below, NOW) == PRICE_BELOW_MIN
+    assert evaluate_eligibility(_gw(price=50), game, above, NOW) == PRICE_ABOVE_MAX
+
+
+@pytest.mark.parametrize("game_kw, crit_kw", [
+    (dict(review_score=2), dict(min_score=7)),
+    (dict(total_reviews=3), dict(min_reviews=1000)),
+    (dict(release_date="1999-01-01"), dict(max_game_age=2)),
+])
+def test_precedence_genre_beats_quality(game_kw, crit_kw):
+    crit = EligibilityCriteria(min_price=10, excluded_genres=["Action"], **crit_kw)
+    game = _game(genres=["Action"], **game_kw)
+    assert evaluate_eligibility(_gw(), game, crit, NOW) == GENRE_EXCLUDED
+
+
+@pytest.mark.parametrize("gw_kw, expected", [
+    (dict(end_time=NOW - timedelta(hours=1)), EXPIRED),
+    (dict(is_hidden=True), HIDDEN),
+    (dict(is_entered=True), ENTERED),
+    (dict(is_safe=False), UNSAFE),
+])
+def test_precedence_base_checks_beat_genre(gw_kw, expected):
+    crit = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
+    assert evaluate_eligibility(_gw(**gw_kw), _game(genres=["Action"]), crit, NOW) == expected
+
+
+def test_criteria_normalizes_excluded_genres():
+    crit = EligibilityCriteria(excluded_genres=[" Action ", "", "  ", "INDIE", "indie"])
+    assert crit.excluded_genres == frozenset({"action", "indie"})
+    assert EligibilityCriteria().excluded_genres == frozenset()
+
+
+def test_genre_folding_matches_sqlite_lower():
+    """Only ASCII letters fold (SQLite's lower()), so the evaluator agrees
+    with the SQL query on non-ASCII names too."""
+    crit = EligibilityCriteria(min_price=10, excluded_genres=["ACCIÓN"])
+    assert crit.excluded_genres == frozenset({"acciÓn"})
+    assert evaluate_eligibility(_gw(), _game(genres=["Acción"]), crit, NOW) == ELIGIBLE
+    assert evaluate_eligibility(_gw(), _game(genres=["AcciÓn"]), crit, NOW) == GENRE_EXCLUDED
+
+
+def test_genre_reason_label():
+    assert GENRE_EXCLUDED == "genre_excluded"
+    assert REASON_LABELS[GENRE_EXCLUDED] == "Game genre is excluded"
 
 
 # ----------------------------------------------------------------------------
@@ -347,11 +464,21 @@ async def _seed(session):
 
     # Games
     session.add_all([
-        Game(id=1, name="Great", type="game", review_score=9, total_reviews=5000, release_date="2021-01-01"),
+        Game(id=1, name="Great", type="game", review_score=9, total_reviews=5000, release_date="2021-01-01",
+             genres=["Puzzle"]),
         Game(id=2, name="LowScore", type="game", review_score=4, total_reviews=5000, release_date="2021-01-01"),
         Game(id=3, name="FewReviews", type="game", review_score=9, total_reviews=10, release_date="2021-01-01"),
         Game(id=4, name="Old", type="game", review_score=9, total_reviews=5000, release_date="2005-01-01"),
         Game(id=5, name="Unknown", type="dlc", review_score=0, total_reviews=0, release_date=None),
+        # Genre rows: otherwise excellent so they only differ on genres
+        Game(id=6, name="ActionIndie", type="game", review_score=9, total_reviews=5000,
+             release_date="2024-01-01", genres=["Action", "Indie"]),
+        Game(id=7, name="NoGenres", type="game", review_score=9, total_reviews=5000,
+             release_date="2024-01-01", genres=[]),
+        Game(id=8, name="Unfetched", type="game", review_score=9, total_reviews=5000,
+             release_date="2024-01-01", genres=None),
+        Game(id=9, name="Accented", type="game", review_score=9, total_reviews=5000,
+             release_date="2024-01-01", genres=["Acción"]),
     ])
 
     def gw(code, price=50, game_id=1, end=future, hidden=False, entered=False,
@@ -386,6 +513,13 @@ async def _seed(session):
         gw("unsafegw", price=80, game_id=1, safe=False),
         gw("wishunsafe", price=80, game_id=1, wishlist=True, safe=False),
         gw("safegw", price=80, game_id=1, safe=True),          # eligible
+        # Genre rows: rejected only by an exclusion matching Action/Indie
+        gw("genrebad", price=65, game_id=6),                   # genres Action, Indie
+        gw("genreempty", price=65, game_id=7),                 # genres [] → passes
+        gw("genrenull", price=65, game_id=8),                  # genres NULL → passes
+        gw("genreaccent", price=65, game_id=9),                # non-ASCII genre
+        gw("wishgenre", price=65, game_id=6, wishlist=True),   # bypass iff wishlist_priority
+        gw("dlcgenre", price=65, game_id=6, dlc=True),         # bypass iff dlc_priority
     ])
     await session.commit()
 
@@ -411,6 +545,15 @@ def _service(session):
     dict(min_price=10, min_score=7, min_reviews=1000, ending_soon_priority=True),
     dict(min_price=10, min_score=7, min_reviews=1000, dlc_priority=True,
          ending_soon_priority=True, ending_soon_threshold_minutes=10080),
+    # Genre exclusions (mixed case; with and without quality criteria)
+    dict(min_price=10, min_score=7, min_reviews=1000, excluded_genres=["ACTION"]),
+    dict(min_price=10, excluded_genres=["action"]),  # join forced only for genres
+    dict(min_price=10, min_score=0, min_reviews=0, excluded_genres=["indie"],
+         dlc_priority=True, wishlist_priority=False),
+    dict(min_price=10, excluded_genres=["Racing", " Indie ", ""], max_game_age=5),
+    dict(min_price=10, excluded_genres=["ACCIÓN"]),  # non-ASCII Ó not folded: no match
+    dict(min_price=10, excluded_genres=["ACCIóN"]),  # ASCII folds: matches "Acción"
+    dict(min_price=10, excluded_genres=[]),          # empty list = no genre filter
 ])
 @pytest.mark.asyncio
 async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
@@ -423,6 +566,7 @@ async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
             k: v for k, v in crit_kwargs.items()
             if k not in ("ending_soon_priority", "ending_soon_threshold_minutes")
         }
+        excluded = crit_kwargs.get("excluded_genres", [])
         sql_eligible = await service.giveaway_repo.get_eligible(**sql_kwargs)
         sql_codes = {g.code for g in sql_eligible}
         # Guard against vacuous equivalence: every param set is chosen so the
@@ -439,6 +583,7 @@ async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
             "dlc_priority": crit_kwargs.get("dlc_priority", False),
             "ending_soon_priority": crit_kwargs.get("ending_soon_priority", False),
             "ending_soon_threshold_minutes": crit_kwargs.get("ending_soon_threshold_minutes", 60),
+            "excluded_genres": excluded,
         })
         evaluated = await service.evaluate_and_get_eligible(criteria)
         eval_codes = {g.code for g in evaluated}
@@ -457,6 +602,17 @@ async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
         elif (crit_kwargs.get("min_score") or 0) > 0:
             # Without the priority, strict criteria reject it (price + score).
             assert "dlcbad" not in eval_codes
+
+        # Genre rows: unknown/empty genres always pass; a matching exclusion
+        # rejects unless a priority bypass applies.
+        assert {"genreempty", "genrenull"} <= eval_codes
+        if criteria.excluded_genres & {"action", "indie"}:
+            assert "genrebad" not in eval_codes
+            assert ("wishgenre" in eval_codes) is criteria.wishlist_priority
+            assert ("dlcgenre" in eval_codes) is criteria.dlc_priority
+        else:
+            assert "genrebad" in eval_codes
+        assert ("genreaccent" in eval_codes) is ("acción" not in criteria.excluded_genres)
 
         # Ordering: wishlist first, then DLC, then ending soon, then price
         # desc (active priorities only) — mirror the sort key and require
@@ -603,3 +759,51 @@ async def test_reasons_persisted_for_all_candidates(test_db):
         }
         assert checked["good1"] is not None
         assert checked["entered"] is None
+
+
+def test_normalized_exclusions_match_each_listed_spelling():
+    """normalize_excluded_genres must not merge spellings that the matcher
+    folds differently: a user listing both "Éducation" and "éducation" still
+    excludes a game tagged "éducation"."""
+    excluded = normalize_excluded_genres(["Éducation", "éducation"])
+    criteria = EligibilityCriteria(excluded_genres=excluded)
+    giveaway = SimpleNamespace(
+        end_time=utcnow() + timedelta(hours=5), is_hidden=False, is_entered=False,
+        is_safe=True, is_wishlist=False, is_dlc=False, price=50,
+    )
+    game = SimpleNamespace(genres=["éducation"], review_score=9, total_reviews=5000,
+                           release_date="2024-01-01")
+
+    assert evaluate_eligibility(giveaway, game, criteria, utcnow()) == GENRE_EXCLUDED
+
+
+@pytest.mark.asyncio
+async def test_genre_reasons_persisted_and_excluded_rows_not_returned(test_db):
+    """A cycle with an exclusion list stores genre_excluded on the matching
+    candidates (so the UI can say why), keeps them out of the entry list,
+    and records ELIGIBLE for unknown/empty genres and for rows without a
+    game when no quality criteria need game data."""
+    async with test_db() as session:
+        await _seed(session)
+        service = _service(session)
+
+        criteria = EligibilityCriteria(min_price=10, excluded_genres=["INDIE"])
+        evaluated = await service.evaluate_and_get_eligible(criteria)
+        eval_codes = {g.code for g in evaluated}
+
+        reasons = {
+            g.code: g.eligibility_reason
+            for g in await service.giveaway_repo.get_all()
+        }
+        assert reasons["genrebad"] == GENRE_EXCLUDED
+        assert reasons["dlcgenre"] == GENRE_EXCLUDED      # dlc_priority off
+        assert reasons["wishgenre"] == ELIGIBLE          # wishlist bypass
+        assert reasons["genreempty"] == ELIGIBLE
+        assert reasons["genrenull"] == ELIGIBLE
+        # No min_score/min_reviews/max_game_age: a missing game is not a reason
+        assert reasons["nogame"] == ELIGIBLE
+        assert reasons["nogameid"] == ELIGIBLE
+        assert reasons["cheap"] == PRICE_BELOW_MIN       # price wins over genre
+        assert "genrebad" not in eval_codes
+        assert "dlcgenre" not in eval_codes
+        assert {"wishgenre", "genreempty", "genrenull", "nogame"} <= eval_codes

@@ -24,6 +24,7 @@ async def test_get_settings_creates_default(test_client: AsyncClient):
     assert settings["autojoin_min_score"] == 7  # Default is 7
     assert settings["ending_soon_priority_enabled"] is False
     assert settings["ending_soon_threshold_minutes"] == 60
+    assert settings["excluded_genres"] == []
 
 
 @pytest.mark.asyncio
@@ -388,3 +389,122 @@ async def test_update_ending_soon_all_null_is_rejected(test_client: AsyncClient)
         json={"ending_soon_priority_enabled": None, "ending_soon_threshold_minutes": None},
     )
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_update_excluded_genres_normalizes_and_round_trips(test_client: AsyncClient):
+    """Items are stripped, empties dropped, case-insensitive duplicates removed
+    keeping the first spelling; the response and a re-read echo the result."""
+    response = await test_client.put(
+        "/api/v1/settings", json={"excluded_genres": ["  Action", "action", "Indie", ""]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == ["Action", "Indie"]
+    settings = (await test_client.get("/api/v1/settings")).json()["data"]
+    assert settings["excluded_genres"] == ["Action", "Indie"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [
+    [f"Genre {i}" for i in range(51)],
+    ["x" * 65],
+    "Action",
+    [1, 2],
+])
+async def test_update_excluded_genres_invalid_leaves_row_unchanged(
+    test_client: AsyncClient, value
+):
+    """51 items, a 65-character item or a non-list body give 422 and no write."""
+    await test_client.put("/api/v1/settings", json={"excluded_genres": ["Sports"]})
+
+    response = await test_client.put("/api/v1/settings", json={"excluded_genres": value})
+
+    assert response.status_code == 422
+    settings = (await test_client.get("/api/v1/settings")).json()["data"]
+    assert settings["excluded_genres"] == ["Sports"]
+
+
+@pytest.mark.asyncio
+async def test_update_excluded_genres_bounds_accepted(test_client: AsyncClient):
+    fifty = [f"Genre {i}" for i in range(50)]
+    response = await test_client.put("/api/v1/settings", json={"excluded_genres": fifty})
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == fifty
+
+    response = await test_client.put("/api/v1/settings", json={"excluded_genres": ["x" * 64]})
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == ["x" * 64]
+
+
+@pytest.mark.asyncio
+async def test_update_excluded_genres_empty_clears_and_null_keeps(test_client: AsyncClient):
+    """[] clears the list; null or omitted leaves it unchanged."""
+    await test_client.put("/api/v1/settings", json={"excluded_genres": ["Sports", "Racing"]})
+
+    response = await test_client.put(
+        "/api/v1/settings", json={"excluded_genres": None, "autojoin_min_price": 20}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == ["Sports", "Racing"]
+
+    response = await test_client.put("/api/v1/settings", json={"autojoin_min_price": 30})
+    assert response.json()["data"]["excluded_genres"] == ["Sports", "Racing"]
+
+    response = await test_client.put("/api/v1/settings", json={"excluded_genres": []})
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == []
+
+
+@pytest.mark.asyncio
+async def test_reset_clears_excluded_genres(test_client: AsyncClient):
+    await test_client.put("/api/v1/settings", json={"excluded_genres": ["Sports"]})
+
+    response = await test_client.post("/api/v1/settings/reset")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_settings_fresh_database_excluded_genres_empty(test_client: AsyncClient):
+    """A brand-new database answers excluded_genres [] (never null)."""
+    response = await test_client.get("/api/v1/settings")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == []
+
+
+@pytest.mark.asyncio
+async def test_update_excluded_genres_limits_apply_after_normalization(test_client: AsyncClient):
+    """Order of normalization is strip, drop empties, length check, dedupe,
+    count check: 50 distinct names padded with duplicates and empty strings
+    (100+ raw items) are accepted, and a 64-character name with surrounding
+    whitespace is accepted (its length is measured after strip)."""
+    fifty = [f"Genre {i}" for i in range(50)]
+    raw = fifty + [g.upper() for g in fifty] + ["", "   "]
+
+    response = await test_client.put("/api/v1/settings", json={"excluded_genres": raw})
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == fifty
+
+    padded = "  " + "x" * 64 + "  "
+    response = await test_client.put("/api/v1/settings", json={"excluded_genres": [padded]})
+    assert response.status_code == 200
+    assert response.json()["data"]["excluded_genres"] == ["x" * 64]
+
+
+@pytest.mark.asyncio
+async def test_update_excluded_genres_51_after_dedupe_rejected(test_client: AsyncClient):
+    """51 distinct names stay over the cap even when duplicates are mixed in:
+    422 with the standard validation body and no write."""
+    await test_client.put("/api/v1/settings", json={"excluded_genres": ["Sports"]})
+    raw = [f"Genre {i}" for i in range(51)] + ["genre 0", ""]
+
+    response = await test_client.put("/api/v1/settings", json={"excluded_genres": raw})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body.get("success") is not True
+    settings = (await test_client.get("/api/v1/settings")).json()["data"]
+    assert settings["excluded_genres"] == ["Sports"]

@@ -8,6 +8,20 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
+from services.settings_service import (
+    EXCLUDED_GENRE_MAX_LENGTH,
+    EXCLUDED_GENRES_MAX_ITEMS,
+    normalize_excluded_genres,
+)
+
+EXCLUDED_GENRES_DESCRIPTION = (
+    "Steam genre names auto-join skips, matched case-insensitively against the "
+    "cached game's genres. Wishlist (and, when enabled, DLC) giveaways are "
+    f"still entered. At most {EXCLUDED_GENRES_MAX_ITEMS} genres of up to "
+    f"{EXCLUDED_GENRE_MAX_LENGTH} characters; whitespace is stripped, empty "
+    "items dropped and case-insensitive duplicates removed (first spelling kept)."
+)
+
 
 class SettingsBase(BaseModel):
     """
@@ -114,6 +128,11 @@ class SettingsBase(BaseModel):
         ge=5,
         le=10080,
         examples=[60],
+    )
+    excluded_genres: list[str] = Field(
+        default_factory=list,
+        description=EXCLUDED_GENRES_DESCRIPTION,
+        examples=[["Sports", "Racing"]],
     )
 
     # Scheduler Settings
@@ -233,6 +252,7 @@ class SettingsResponse(SettingsBase):
                     "autojoin_min_reviews": 1000,
                     "ending_soon_priority_enabled": False,
                     "ending_soon_threshold_minutes": 60,
+                    "excluded_genres": ["Sports", "Racing"],
                     "scan_interval_minutes": 30,
                     "max_entries_per_cycle": 10,
                     "automation_enabled": True,
@@ -344,6 +364,11 @@ class SettingsUpdate(BaseModel):
         ge=5,
         le=10080,
     )
+    excluded_genres: list[str] | None = Field(
+        default=None,
+        description=EXCLUDED_GENRES_DESCRIPTION + " Null leaves the list unchanged; [] clears it.",
+        examples=[["Sports", "Racing"]],
+    )
 
     # Scheduler Settings
     scan_interval_minutes: int | None = Field(
@@ -390,6 +415,7 @@ class SettingsUpdate(BaseModel):
                     "autojoin_enabled": True,
                     "autojoin_min_price": 50,
                     "max_entries_per_cycle": 15,
+                    "excluded_genres": ["Sports", "Racing"],
                 },
                 {
                     "automation_enabled": True,
@@ -398,6 +424,14 @@ class SettingsUpdate(BaseModel):
             ]
         }
     }
+
+    @field_validator("excluded_genres")
+    @classmethod
+    def validate_excluded_genres(cls, v: list[str] | None) -> list[str] | None:
+        """Strip, drop empties, bound and dedupe the excluded genres (None = unchanged)."""
+        if v is None:
+            return None
+        return normalize_excluded_genres(v)
 
 
 class SteamGiftsCredentials(BaseModel):

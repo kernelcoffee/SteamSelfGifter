@@ -90,6 +90,18 @@ def test_giveaway_response():
 
     assert giveaway.id == 123
     assert giveaway.discovered_at is not None
+    # Joined game genres default to None (game not cached / not fetched)
+    assert giveaway.game_genres is None
+
+
+def test_giveaway_response_game_genres():
+    giveaway = GiveawayResponse(
+        id=1, code="AbCd1", url="https://www.steamgifts.com/giveaway/AbCd1/",
+        game_name="Portal 2", price=50, discovered_at=utcnow(),
+        game_genres=["Action", "Indie"],
+    )
+    assert giveaway.game_genres == ["Action", "Indie"]
+    assert giveaway.model_dump()["game_genres"] == ["Action", "Indie"]
 
 
 def test_giveaway_response_win_chance():

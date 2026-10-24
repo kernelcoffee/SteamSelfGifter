@@ -20,8 +20,8 @@ render, driven by a tick interval).
 | `integration/*` | All | Requires `--run-integration` flag and valid PHPSESSID |
 
 **Test counts (as of last run):**
-- Backend: 901 passed, 17 skipped (the skips are the `integration/*` files; they need `--run-integration` + a valid PHPSESSID)
-- Frontend: 204 passed, 0 skipped
+- Backend: 1034 passed, 17 skipped (the skips are the `integration/*` files; they need `--run-integration` + a valid PHPSESSID)
+- Frontend: 253 passed, 0 skipped
 
 ## Future Improvements
 

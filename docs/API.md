@@ -61,6 +61,7 @@ Get current application settings.
     "wishlist_priority_enabled": true,
     "ending_soon_priority_enabled": false,
     "ending_soon_threshold_minutes": 60,
+    "excluded_genres": [],
     "scan_interval_minutes": 30,
     "max_entries_per_cycle": null,
     "automation_enabled": false,
@@ -96,6 +97,7 @@ Update application settings (partial updates supported).
   "wishlist_priority_enabled": true,
   "ending_soon_priority_enabled": true,
   "ending_soon_threshold_minutes": 60,
+  "excluded_genres": ["Sports", "Racing"],
   "scan_interval_minutes": 30,
   "max_entries_per_cycle": 10,
   "automation_enabled": true,
@@ -107,6 +109,10 @@ Update application settings (partial updates supported).
 ```
 
 `ending_soon_threshold_minutes` must be an integer from 5 to 10080 (one week); anything else returns 422 with the standard validation body and nothing is written. The threshold is stored even while `ending_soon_priority_enabled` is false. Omitted or `null` fields are ignored; a body with no non-null fields returns 400 `"No fields provided for update"`.
+
+`excluded_genres` is a list of Steam genre names (never `null` in responses, default `[]`). `null` or omitted leaves it unchanged; `[]` clears it. The server normalizes it in this order: strip each item, drop empty items, reject any item longer than 64 characters (422), dedupe case-insensitively keeping the first spelling, reject more than 50 items (422); on a 422 nothing is written. A non-list value or non-string items return 422. The response echoes the normalized list in the user's order, e.g. `[" Action", "action", "Indie", ""]` is stored as `["Action", "Indie"]`. `POST /settings/reset` sets it back to `[]`.
+
+**Genre exclusion:** auto-join rejects a giveaway whose cached game's `genres` contains any `excluded_genres` entry, compared case-insensitively, with `eligibility_reason` `"genre_excluded"` ("Game genre is excluded"). It is checked after the price filters and before the score/reviews/age filters, so a giveaway that fails on price reports the price reason. Wishlist giveaways (when `wishlist_priority_enabled`) and DLC (when `dlc_priority_enabled`) bypass it like the other filters. Unknown genres pass: a giveaway with no cached game, or a game whose `genres` is `null` (not fetched yet) or `[]`, is never excluded, and the genre list alone does not require game data. Games cached before genres were stored get them from the background stale-game refresh over the next cycles. Only Steam store genres are matched; user-voted Steam tags are not available through the store API.
 
 **Response:** Same as GET /settings/
 
@@ -200,6 +206,8 @@ List giveaways with optional filters.
   }
 }
 ```
+
+Giveaway objects returned by the list endpoints (`/giveaways/`, `/giveaways/active`, `/giveaways/wishlist`, `/giveaways/dlc`, `/giveaways/entered`, `/giveaways/won`) and by `GET /giveaways/{code}` also carry fields joined from the cached game, among them `game_thumbnail` and `game_genres`. `game_genres` is the cached game's Steam genre list (possibly `[]`), or `null` when the giveaway has no `game_id`, the game is not cached, or its genres were not fetched yet. `eligibility_reason` can be `"genre_excluded"` (see Settings, Genre exclusion).
 
 ### GET /giveaways/{code}
 Get a single giveaway by code.
@@ -319,6 +327,71 @@ Trigger a manual sync of giveaways from SteamGifts.
   }
 }
 ```
+
+---
+
+## Games
+
+Cached Steam store data. Every game object (`GET /games/`, `/games/{app_id}`, `/games/search/{query}`, `/games/highly-rated`) carries `"genres": string[] | null` and `"categories": string[] | null`: the Steam `appdetails` genre and category descriptions in Steam's order (e.g. `["Action", "Indie"]`, `["Single-player", "Steam Achievements"]`), `[]` when Steam returned none, `null` when the row was cached before genres were stored and has not been refreshed yet. Store data is fetched with `l=english`, so the names are English.
+
+### GET /games/genres
+Distinct genres across all cached games (any type), with the number of games carrying each. Sorted by `count` descending, then `name` ascending. Games with `genres` `null` or `[]` contribute nothing; an empty cache returns `{"genres": []}`. No query parameters, no pagination.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "genres": [
+      { "name": "Action", "count": 2 },
+      { "name": "Indie", "count": 1 },
+      { "name": "RPG", "count": 1 }
+    ]
+  }
+}
+```
+
+### GET /games/{app_id}
+Get a game by Steam App ID, fetching it from Steam when it is not cached (or when `force_refresh=true`).
+
+**Query Parameters:**
+- `force_refresh`: `true` | `false` (default: false)
+
+**Errors:**
+- 404 `"Game with App ID {app_id} not found"` when Steam does not serve the app.
+- 429 when the app is not cached and Steam is rate limiting (see Steam cool-down below). A cached row is still returned with 200 during the cool-down.
+```json
+{
+  "error": {
+    "code": "STEAM_003",
+    "message": "Steam is rate limiting requests, retry in 120 s",
+    "details": { "app_id": 620, "retry_after_seconds": 120 }
+  }
+}
+```
+
+### POST /games/{app_id}/refresh
+Force a refresh of one game from Steam.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "refreshed": true,
+    "message": "Game data refreshed successfully",
+    "last_refreshed_at": "2026-01-12T10:00:00Z",
+    "retry_after_seconds": null
+  }
+}
+```
+
+When the refresh does not complete, `refreshed` is `false`, `last_refreshed_at` is `null` and the cached row is kept:
+- rate limited (including when `appdetails` was saved but `appreviews` was throttled): `"Steam is rate limiting requests, retry in N s"`, with `retry_after_seconds` set
+- unavailable on Steam: `"Game with App ID N not found on Steam"`
+- any other Steam failure: `"Steam request failed, cached data kept"`
+
+**Steam cool-down:** any Steam 429 (from `appdetails` or `appreviews`), or an `appdetails` reply whose body is not an object (e.g. HTTP 200 with `null`), starts a process-wide 180 s cool-down during which no Steam request is sent. Cached rows are served as is, uncached apps get no row, and `POST /games/refresh-stale` refreshes nothing.
 
 ---
 
@@ -702,6 +775,7 @@ interface Giveaway {
   is_entered: boolean;
   is_safe: boolean;
   safety_score: number | null;
+  game_genres?: string[] | null; // joined from the cached game; null = unknown
   discovered_at: string;
   entered_at: string | null;
   created_at: string;
@@ -743,6 +817,7 @@ interface Settings {
   wishlist_priority_enabled: boolean;
   ending_soon_priority_enabled: boolean;
   ending_soon_threshold_minutes: number;
+  excluded_genres: string[];
   scan_interval_minutes: number;
   max_entries_per_cycle: number | null;
   automation_enabled: boolean;
@@ -753,5 +828,17 @@ interface Settings {
   last_synced_at: string | null;
   created_at: string;
   updated_at: string;
+}
+```
+
+### GenreList
+```typescript
+interface GenreCount {
+  name: string;
+  count: number;
+}
+
+interface GenreList {
+  genres: GenreCount[];  // GET /games/genres
 }
 ```

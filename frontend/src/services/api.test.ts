@@ -119,6 +119,95 @@ describe('ApiClient', () => {
       expect(result.error).toBe('Invalid JSON');
     });
 
+    const respond = (status: number, body: unknown) =>
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => Promise.resolve(body),
+      } as Response);
+
+    it('uses the message of the documented error envelope object', async () => {
+      respond(500, {
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: 'Database is locked', details: {} },
+        meta: { timestamp: '2026-10-24T12:00:00Z' },
+      });
+
+      const result = await api.get('/api/test');
+
+      expect(result).toEqual({ success: false, data: null, error: 'Database is locked' });
+    });
+
+    it('uses the message of the exception middleware body (no success key)', async () => {
+      respond(502, { error: { code: 'STEAM_API_ERROR', message: 'Steam is down', details: {} } });
+
+      const result = await api.get('/api/test');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Steam is down');
+    });
+
+    it('uses an HTTPException detail string (settings ValueError -> 400)', async () => {
+      respond(400, { detail: 'excluded_genres accepts at most 50 items' });
+
+      const result = await api.put('/api/v1/settings', { excluded_genres: [] });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('excluded_genres accepts at most 50 items');
+    });
+
+    it('joins request-validation details with their field path (422)', async () => {
+      respond(422, {
+        detail: [
+          {
+            type: 'value_error',
+            loc: ['body', 'excluded_genres'],
+            msg: 'Value error, at most 50 genres',
+            input: [],
+          },
+          { type: 'missing', loc: ['body', 'other'], msg: 'Field required' },
+        ],
+      });
+
+      const result = await api.put('/api/v1/settings', { excluded_genres: [] });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe(
+        'excluded_genres: Value error, at most 50 genres; other: Field required'
+      );
+    });
+
+    it('falls back to the HTTP status when the error body has no message', async () => {
+      respond(503, { unexpected: true });
+
+      const result = await api.get('/api/test');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Request failed with status 503');
+    });
+
+    it('never yields "[object Object]" from getGameGenres on an envelope error', async () => {
+      respond(500, {
+        success: false,
+        error: { code: 'INTERNAL_ERROR', message: 'Genre query failed', details: {} },
+      });
+
+      const result = await api.getGameGenres();
+
+      expect(fetch).toHaveBeenCalledWith('/api/v1/games/genres', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      expect(result.error).toBe('Genre query failed');
+    });
+
+    it('returns a successful getGameGenres body unchanged', async () => {
+      const body = { success: true, data: { genres: [{ name: 'Action', count: 2 }] } };
+      respond(200, body);
+
+      expect(await api.getGameGenres()).toEqual(body);
+    });
+
     it('should handle unknown errors', async () => {
       vi.mocked(fetch).mockRejectedValueOnce('Unknown error type');
 

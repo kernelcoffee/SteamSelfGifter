@@ -1193,3 +1193,39 @@ async def test_sync_giveaways_min_copies(test_db, mock_sg_client, mock_game_serv
             dlc_only=False,
             min_copies=5,
         )
+
+
+@pytest.mark.asyncio
+async def test_enrich_sets_game_genres_from_cached_game(test_db, mock_sg_client, mock_game_service):
+    """game_genres is the cached Game.genres (list, possibly []); it stays
+    None without a game_id, for an uncached game and for unfetched genres."""
+    from models.game import Game
+
+    games = {
+        1: Game(id=1, name="Fetched", type="game", genres=["Action", "Indie"]),
+        2: Game(id=2, name="None", type="game", genres=[]),
+        3: Game(id=3, name="Legacy", type="game", genres=None),
+    }
+    mock_game_service.get_or_fetch_game = AsyncMock(side_effect=lambda app_id: games.get(app_id))
+
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+        future = utcnow() + timedelta(hours=24)
+        created = []
+        for code, game_id in [("G1", 1), ("G2", 2), ("G3", 3), ("G4", 4), ("G5", None)]:
+            created.append(await service.giveaway_repo.create(
+                code=code, url=f"https://www.steamgifts.com/giveaway/{code}/",
+                game_name=code, price=50, end_time=future, game_id=game_id,
+            ))
+        await session.commit()
+
+        enriched = await service.enrich_giveaways_with_game_data(created)
+
+    by_code = {g.code: g.game_genres for g in enriched}
+    assert by_code == {
+        "G1": ["Action", "Indie"],
+        "G2": [],
+        "G3": None,
+        "G4": None,  # game not cached / not on Steam
+        "G5": None,  # no game_id
+    }

@@ -5,12 +5,14 @@ methods for filtering eligible giveaways, tracking entries, and managing
 giveaway visibility.
 """
 
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.text import ascii_lower
 from core.time import utcnow
 from models.game import Game
 from models.giveaway import Giveaway
@@ -206,6 +208,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         limit: int | None = None,
         wishlist_priority: bool = True,
         dlc_priority: bool = False,
+        excluded_genres: Iterable[str] | None = None,
     ) -> list[Giveaway]:
         """
         Get eligible giveaways based on autojoin criteria.
@@ -214,8 +217,13 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         - Not hidden
         - Not already entered
         - Price within range
+        - Optionally: game genres not in ``excluded_genres`` (case-insensitive)
         - Optionally: minimum review score and count (requires game data)
         - Optionally: maximum game age in years
+
+        The genre exclusion is a negative filter: a giveaway without a cached
+        game, or whose game's genres are NULL (not fetched yet) or [], passes
+        it. It never requires game data on its own.
 
         When ``wishlist_priority`` is on (default), wishlist giveaways bypass
         the price and game-quality filters (the user explicitly wants those
@@ -230,6 +238,10 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             max_price: Maximum giveaway price in points, optional
             max_game_age: Maximum game age in years, optional
             limit: Maximum number to return
+            wishlist_priority: Wishlist giveaways bypass the filters
+            dlc_priority: DLC giveaways bypass the filters
+            excluded_genres: Genre names to skip, matched case-insensitively
+                against Game.genres; None or empty disables the check
 
         Returns:
             List of eligible giveaways, wishlist first, then price (highest first)
@@ -264,10 +276,18 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         if max_price is not None:
             filter_conditions.append(self.model.price <= max_price)
 
+        # ascii_lower matches SQLite's lower() applied to the stored values.
+        lowered_genres = sorted({
+            ascii_lower(genre.strip())
+            for genre in (excluded_genres or ())
+            if isinstance(genre, str) and genre.strip()
+        })
+
         needs_game_join = (
             min_score is not None or
             min_reviews is not None or
-            max_game_age is not None
+            max_game_age is not None or
+            bool(lowered_genres)
         )
 
         query = select(self.model)
@@ -277,6 +297,21 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             # Non-wishlist rows without game data fail the NULL comparisons
             # below, matching the previous inner-join semantics.
             query = query.outerjoin(Game, self.model.game_id == Game.id)
+
+            # Genre exclusion (negative filter): json_each over a NULL or []
+            # genres array yields no rows, so missing games and unfetched or
+            # empty genres pass. The subquery correlates to the joined games
+            # row. Placed in filter_conditions so the wishlist/DLC bypass
+            # branches skip it, exactly like price and quality.
+            if lowered_genres:
+                genre = func.json_each(Game.genres).table_valued("value")
+                filter_conditions.append(
+                    ~exists(
+                        select(1)
+                        .select_from(genre)
+                        .where(func.lower(genre.c.value).in_(lowered_genres))
+                    )
+                )
 
             # Game review filters (games default to score=0 when unknown)
             if min_score is not None:

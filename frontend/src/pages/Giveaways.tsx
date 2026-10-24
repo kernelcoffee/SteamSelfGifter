@@ -408,6 +408,24 @@ interface GiveawayCardProps {
   isCommenting: boolean;
 }
 
+const GENRES_SHOWN_ON_CARD = 3;
+
+function GenreLine({ genres }: { genres: string[] }) {
+  const shown = genres.slice(0, GENRES_SHOWN_ON_CARD).join(', ');
+  const rest = genres.length - GENRES_SHOWN_ON_CARD;
+  // The names truncate on their own, so the "+N" counter is never the part
+  // cut off on a narrow card.
+  return (
+    <p
+      className="flex min-w-0 text-xs text-gray-500 dark:text-gray-400"
+      title={genres.join(', ')}
+    >
+      <span className="truncate">{shown}</span>
+      {rest > 0 && <span className="shrink-0 whitespace-pre">{` +${rest}`}</span>}
+    </p>
+  );
+}
+
 function GiveawayCard({ giveaway, onEnter, onHide, onUnhide, onRemoveEntry, onCheckSafety, onHideOnSteamGifts, onComment, isEntering, isRemovingEntry, isCheckingSafety, isHidingOnSteamGifts, isCommenting }: GiveawayCardProps) {
   // Determine if giveaway has ended:
   // - If end_time is set and in the past, it's expired
@@ -440,9 +458,14 @@ function GiveawayCard({ giveaway, onEnter, onHide, onUnhide, onRemoveEntry, onCh
 
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
-          <h3 className="font-semibold text-gray-900 dark:text-white line-clamp-2">
-            {giveaway.game_name}
-          </h3>
+          <div className="min-w-0">
+            <h3 className="font-semibold text-gray-900 dark:text-white line-clamp-2">
+              {giveaway.game_name}
+            </h3>
+            {giveaway.game_genres && giveaway.game_genres.length > 0 && (
+              <GenreLine genres={giveaway.game_genres} />
+            )}
+          </div>
           <div className="flex gap-1 shrink-0 flex-wrap">
             {giveaway.is_won && (
               <Badge variant="default" size="sm" className="bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400">

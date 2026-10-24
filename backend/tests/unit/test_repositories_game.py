@@ -151,10 +151,10 @@ async def test_get_stale_games_old_data(game_repo, session):
     recent_date = utcnow() - timedelta(days=3)
 
     await game_repo.create(
-        id=730, name="CS2", type="game", last_refreshed_at=old_date
+        id=730, name="CS2", type="game", last_refreshed_at=old_date, genres=["Action"]
     )
     await game_repo.create(
-        id=570, name="Dota 2", type="game", last_refreshed_at=recent_date
+        id=570, name="Dota 2", type="game", last_refreshed_at=recent_date, genres=["Strategy"]
     )
     await session.commit()
 
@@ -467,3 +467,83 @@ async def test_search_no_results(game_repo, session):
 
     results = await game_repo.search_by_name("nonexistent")
     assert len(results) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_stale_games_genres_never_fetched(game_repo, session):
+    """A row refreshed just now but with genres NULL is stale (backfill);
+    genres [] is fetched-and-none and is not. Mirrors Game.needs_refresh."""
+    now = utcnow()
+    await game_repo.create(id=1, name="Legacy", type="game", last_refreshed_at=now)
+    await game_repo.create(id=2, name="NoGenres", type="game", last_refreshed_at=now, genres=[])
+    await game_repo.create(id=3, name="Fetched", type="game", last_refreshed_at=now, genres=["RPG"])
+    await session.commit()
+
+    stale = await game_repo.get_stale_games()
+
+    assert [g.id for g in stale] == [1]
+    for game in await game_repo.get_all():
+        assert game.needs_refresh is (game.id in {g.id for g in stale})
+
+
+@pytest.mark.asyncio
+async def test_get_stale_games_oldest_refresh_first(game_repo, session):
+    """Never-refreshed rows come first, then by oldest refresh, so a bounded
+    limit rotates through the backlog instead of repeating the same rows."""
+    now = utcnow()
+    await game_repo.create(id=10, name="Recent", type="game", last_refreshed_at=now)
+    await game_repo.create(id=11, name="Old", type="game", last_refreshed_at=now - timedelta(days=30))
+    await game_repo.create(id=12, name="Never", type="game")
+    await game_repo.create(id=13, name="Mid", type="game", last_refreshed_at=now - timedelta(days=1))
+    await session.commit()
+
+    stale = await game_repo.get_stale_games()
+
+    assert [g.id for g in stale] == [12, 11, 13, 10]
+    assert [g.id for g in await game_repo.get_stale_games(limit=2)] == [12, 11]
+
+
+@pytest.mark.asyncio
+async def test_count_genres_distinct_counts_and_order(game_repo, session):
+    """Distinct genre names with game counts, count desc then name asc;
+    NULL and [] rows contribute nothing."""
+    await game_repo.create(id=1, name="A", type="game", genres=["Action", "Indie"])
+    await game_repo.create(id=2, name="B", type="game", genres=[])
+    await game_repo.create(id=3, name="C", type="game", genres=None)
+    await game_repo.create(id=4, name="D", type="dlc", genres=["RPG", "Action"])
+    await game_repo.create(id=5, name="E", type="game", genres=["Animation & Modeling"])
+    await session.commit()
+
+    assert await game_repo.count_genres() == [
+        ("Action", 2),
+        ("Animation & Modeling", 1),
+        ("Indie", 1),
+        ("RPG", 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_count_genres_distinct_spellings_are_separate(game_repo, session):
+    """Stored names are not normalized: different casings count separately
+    and order by binary collation."""
+    await game_repo.create(id=1, name="A", type="game", genres=["Free to Play"])
+    await game_repo.create(id=2, name="B", type="game", genres=["Free To Play"])
+    await session.commit()
+
+    assert await game_repo.count_genres() == [("Free To Play", 1), ("Free to Play", 1)]
+
+
+@pytest.mark.asyncio
+async def test_count_genres_counts_games_not_occurrences(game_repo, session):
+    """A genre repeated inside one game's array counts that game once."""
+    await game_repo.create(id=1, name="A", type="game", genres=["Action", "Action"])
+    await game_repo.create(id=2, name="B", type="game", genres=["Action"])
+    await session.commit()
+
+    assert await game_repo.count_genres() == [("Action", 2)]
+
+
+@pytest.mark.asyncio
+async def test_count_genres_empty_cache(game_repo):
+    """No cached games (or none with genres) gives an empty list."""
+    assert await game_repo.count_genres() == []

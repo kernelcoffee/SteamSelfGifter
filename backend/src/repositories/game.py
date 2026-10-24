@@ -8,7 +8,7 @@ Steam game metadata.
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import distinct, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import utcnow
@@ -123,7 +123,14 @@ class GameRepository(BaseRepository[Game]):
 
         Returns games where:
         - last_refreshed_at is None (never refreshed), OR
-        - last_refreshed_at is older than days_threshold
+        - last_refreshed_at is older than days_threshold, OR
+        - genres is None (cached before genres were stored; a refresh
+          backfills them)
+
+        Keep this definition identical to Game.needs_refresh. Results are
+        ordered oldest refresh first (never refreshed before everything), so
+        a bounded ``limit`` rotates through the backlog instead of retrying
+        the same rows every cycle.
 
         Args:
             days_threshold: Number of days before data is considered stale (default: 7)
@@ -140,11 +147,16 @@ class GameRepository(BaseRepository[Game]):
         """
         cutoff_date = utcnow() - timedelta(days=days_threshold)
 
-        stmt = select(Game).where(
-            or_(
-                Game.last_refreshed_at.is_(None),
-                Game.last_refreshed_at < cutoff_date,
+        stmt = (
+            select(Game)
+            .where(
+                or_(
+                    Game.last_refreshed_at.is_(None),
+                    Game.last_refreshed_at < cutoff_date,
+                    Game.genres.is_(None),
+                )
             )
+            .order_by(Game.last_refreshed_at.asc().nulls_first(), Game.id)
         )
 
         if limit:
@@ -152,6 +164,36 @@ class GameRepository(BaseRepository[Game]):
 
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def count_genres(self) -> list[tuple[str, int]]:
+        """
+        Count how many cached games carry each Steam genre.
+
+        Expands every game's ``genres`` JSON array with SQLite's
+        ``json_each``; games whose genres are NULL or [] contribute nothing.
+        The count is of distinct games, so a name repeated inside one game's
+        array still counts that game once.
+
+        Returns:
+            (genre, game count) pairs, sorted by count descending then genre
+            name ascending (binary collation).
+
+        Example:
+            >>> await repo.count_genres()
+            [("Action", 2), ("Indie", 1), ("RPG", 1)]
+        """
+        genre = func.json_each(Game.genres).table_valued("value")
+        count = func.count(distinct(Game.id))
+        stmt = (
+            select(genre.c.value, count)
+            .select_from(Game)
+            .join(genre, true())
+            .where(genre.c.value.isnot(None))
+            .group_by(genre.c.value)
+            .order_by(count.desc(), genre.c.value)
+        )
+        result = await self.session.execute(stmt)
+        return [(str(name), int(total)) for name, total in result.all()]
 
     async def get_by_type(self, game_type: str) -> list[Game]:
         """
