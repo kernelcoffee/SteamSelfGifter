@@ -240,6 +240,8 @@ alembic upgrade head
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
+The maintainer develops this project with [Conclave](https://github.com/kernelcoffee/Conclave), an agent team for Claude Code that plans, reviews and tests each change against the project's conventions. Contributions written by hand are welcome and go through the same review.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

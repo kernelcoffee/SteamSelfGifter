@@ -2,6 +2,8 @@
 
 Thank you for considering contributing to SteamSelfGifter!
 
+The maintainer builds this project with [Conclave](https://github.com/kernelcoffee/Conclave), a Claude Code agent team that plans, reviews and tests every change against the project's conventions. You do not need it to contribute: a pull request written by hand is reviewed the same way.
+
 ## Getting Started
 
 1. Fork the repository
