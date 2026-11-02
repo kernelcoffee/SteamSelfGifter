@@ -90,7 +90,7 @@ SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
 NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
 
 
-async def get_game_service(db: DatabaseDep) -> GameService:
+async def get_game_service(db: DatabaseDep) -> AsyncGenerator[GameService]:
     """
     Get GameService dependency.
 
@@ -111,11 +111,14 @@ async def get_game_service(db: DatabaseDep) -> GameService:
             return await game_service.get_or_fetch_game(app_id)
     """
     steam_client = SteamClient()
-    await steam_client.start()
-    return GameService(db, steam_client)
+    try:
+        await steam_client.start()
+        yield GameService(db, steam_client)
+    finally:
+        await steam_client.close()
 
 
-async def get_giveaway_service(db: DatabaseDep) -> GiveawayService:
+async def get_giveaway_service(db: DatabaseDep) -> AsyncGenerator[GiveawayService]:
     """
     Get GiveawayService dependency.
 
@@ -144,19 +147,22 @@ async def get_giveaway_service(db: DatabaseDep) -> GiveawayService:
         phpsessid=settings.phpsessid or "",
         user_agent=settings.user_agent,
     )
-    await sg_client.start()
-
-    # Create Steam client for game data
+    # Both clients belong to this FastAPI request and must be closed.
     steam_client = SteamClient()
-    await steam_client.start()
+    try:
+        await sg_client.start()
+        await steam_client.start()
+        game_service = GameService(db, steam_client)
+        yield GiveawayService(db, sg_client, game_service)
+    finally:
+        await steam_client.close()
+        await sg_client.close()
 
-    # Create game service
-    game_service = GameService(db, steam_client)
 
-    return GiveawayService(db, sg_client, game_service)
-
-
-async def get_scheduler_service(db: DatabaseDep) -> SchedulerService:
+async def get_scheduler_service(
+    db: DatabaseDep,
+    giveaway_service: Annotated[GiveawayService, Depends(get_giveaway_service)],
+) -> SchedulerService:
     """
     Get SchedulerService dependency.
 
@@ -173,8 +179,8 @@ async def get_scheduler_service(db: DatabaseDep) -> SchedulerService:
         ):
             return await scheduler_service.get_scheduler_stats()
     """
-    # SchedulerService needs GiveawayService, so get that first
-    giveaway_service = await get_giveaway_service(db)
+    # Use FastAPI's cached request-scoped dependency rather than constructing
+    # an unmanaged client and leaking its HTTP connections.
     return SchedulerService(db, giveaway_service)
 
 
