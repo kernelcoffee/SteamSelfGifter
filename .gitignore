@@ -89,7 +89,7 @@ Thumbs.db
 # AI Assistant
 # ===================
 CLAUDE.md
-.claude/settings.local.json
+.claude/
 
 # Playwright
 frontend/test-results/
