@@ -5,6 +5,7 @@ automatic rate limiting, retry logic, and error handling.
 """
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -14,6 +15,21 @@ import structlog
 from core.time import utcnow
 
 logger = structlog.get_logger()
+
+# Upper bound on a review count read from Steam: far above any real app (the
+# most reviewed ones have a few million), and small enough that the service's
+# total_positive + total_negative still fits SQLite's 64-bit INTEGER.
+MAX_REVIEW_COUNT = 2**31 - 1
+
+# The query_summary fields get_app_reviews returns, each with the largest
+# value accepted (review_score is Steam's 0-9 summary bucket). Steam's other
+# fields (review_score_desc, num_reviews) are not stored.
+REVIEW_SUMMARY_LIMITS = {
+    "review_score": 9,
+    "total_positive": MAX_REVIEW_COUNT,
+    "total_negative": MAX_REVIEW_COUNT,
+    "total_reviews": MAX_REVIEW_COUNT,
+}
 
 
 class RateLimiter:
@@ -396,70 +412,61 @@ class SteamClient:
 
         return players[0] if players else None
 
-    async def get_app_reviews(self, app_id: int) -> dict[str, Any] | None:
+    async def get_app_reviews(self, app_id: int) -> dict[str, int] | None:
         """
-        Get review statistics for a Steam app.
+        Get the review summary of a Steam app.
 
-        Uses the Steam Reviews API endpoint to fetch review summary.
-        Makes a direct request to avoid rate limiting issues with the store API.
+        Calls ``IUserReviewsService/GetAppReviews`` (public, no key) through
+        ``_request``, so the shared rate limiter, the pooled client and its
+        retry and error mapping apply. Only ``appid`` and ``num_per_page: 1``
+        are sent: the summary is computed by Steam over the API's default
+        review population (English reviews by Steam purchasers).
 
         Args:
             app_id: Steam App ID
 
         Returns:
-            Review data dictionary with keys:
-                - review_score: Integer 0-10 (percentage/10)
+            Review data dictionary with keys (a field Steam omits counts as 0):
+                - review_score: Steam's summary bucket, 0 (fewer than ten
+                  reviews) to 9 (Overwhelmingly Positive)
                 - total_positive: Number of positive reviews
                 - total_negative: Number of negative reviews
                 - total_reviews: Total number of reviews
+            or None when Steam answers 200 without a ``query_summary``
+            (unknown app, or no reviews to summarise).
 
-        Example:
-            >>> reviews = await client.get_app_reviews(730)  # CS:GO
-            >>> reviews["review_score"]
-            9
-            >>> reviews["total_reviews"]
-            1234567
+        Raises:
+            SteamAPIRateLimitError: On HTTP 429
+            SteamAPINotFoundError: On HTTP 404
+            SteamAPIError: On any other non-200 answer (a redirect included),
+                a network or server error that outlives the retries, invalid
+                JSON, or a summary field that is not an integer (a boolean,
+                a float, Infinity, a string, null) or is out of range
+                (negative, a score above 9, a count above
+                ``MAX_REVIEW_COUNT``)
         """
-        url = f"https://store.steampowered.com/appreviews/{app_id}"
-        params = {"json": "1"}
+        url = f"{self.STEAM_API_BASE}/IUserReviewsService/GetAppReviews/v1/"
+        input_json = json.dumps({"appid": app_id, "num_per_page": 1})
 
         try:
-            # Make a fresh request with browser-like headers to avoid 403
-            async with httpx.AsyncClient(timeout=30, transport=self._transport) as client:
-                response = await client.get(
-                    url,
-                    params=params,
-                    headers={
-                        "User-Agent": (
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                        ),
-                        "Accept": "application/json",
-                        "Accept-Language": "en-US,en;q=0.9",
-                    }
-                )
+            body: Any = await self._request(url, {"input_json": input_json})
+        except ValueError as e:
+            raise SteamAPIError("Steam reviews: invalid JSON") from e
 
-                if response.status_code != 200:
-                    logger.warning("review_api_error", status_code=response.status_code, app_id=app_id)
-                    return None
-
-                data = response.json()
-
-            if not data.get("success"):
-                return None
-
-            query_summary = data.get("query_summary", {})
-
-            return {
-                "review_score": int(query_summary.get("review_score", 0)),
-                "total_positive": int(query_summary.get("total_positive", 0)),
-                "total_negative": int(query_summary.get("total_negative", 0)),
-                "total_reviews": int(query_summary.get("total_reviews", 0)),
-            }
-
-        except Exception as e:
-            logger.error("review_fetch_failed", app_id=app_id, error=str(e))
+        response = body.get("response") if isinstance(body, dict) else None
+        summary = response.get("query_summary") if isinstance(response, dict) else None
+        if not isinstance(summary, dict):
+            logger.warning("review_api_no_data", app_id=app_id)
             return None
+
+        reviews: dict[str, int] = {}
+        for key, maximum in REVIEW_SUMMARY_LIMITS.items():
+            value = summary.get(key, 0)
+            # bool is an int subclass; Steam sends plain JSON integers only.
+            if type(value) is not int or not 0 <= value <= maximum:
+                raise SteamAPIError(f"Steam reviews: malformed query_summary ({key})")
+            reviews[key] = value
+        return reviews
 
     async def search_games(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
         """

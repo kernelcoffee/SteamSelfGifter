@@ -10,6 +10,7 @@ This module contains comprehensive tests for the Game model, including:
 """
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -270,6 +271,27 @@ def test_needs_refresh_property_stale_data(session):
     session.commit()
 
     assert game.needs_refresh is True
+
+
+@pytest.mark.parametrize(
+    ("age", "stale"),
+    [
+        (timedelta(days=7) - timedelta(minutes=1), False),
+        (timedelta(days=7) + timedelta(minutes=1), True),
+        (timedelta(days=7, hours=23), True),
+    ],
+    ids=["just_inside_window", "just_past_window", "past_window_same_day_count"],
+)
+def test_is_stale_by_age_uses_the_get_stale_games_cutoff(age, stale):
+    """The cache window is exact (last_refreshed_at < now - STALE_AFTER_DAYS),
+    the same cut-off as GameRepository.get_stale_games; a row 7 days and
+    1 minute old is stale, not only once a whole 8th day has elapsed."""
+    now = utcnow()
+    game = Game(id=1, name="Edge", type="game", genres=["Action"], last_refreshed_at=now - age)
+
+    with patch("models.game.utcnow", return_value=now):
+        assert game.is_stale_by_age is stale
+        assert game.needs_refresh is stale
 
 
 def test_game_types(session):

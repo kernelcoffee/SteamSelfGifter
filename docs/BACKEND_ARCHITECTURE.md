@@ -187,16 +187,33 @@ is returned by `POST /scheduler/run` and broadcast with
 `automation_cycle_completed`.
 
 **Steam cool-down (`services/game_service.py::steam_cooldown`):** any Steam 429
-(from `appdetails`, from `appreviews` inside a save, or an `appdetails` body
+(from `appdetails`, from `GetAppReviews` inside a save, or an `appdetails` body
 that is not a JSON object) starts a process-wide 180 s cool-down. While it
 runs no Steam lookup is sent: cached rows are served, uncached apps get no row
 (filters needing game data report `no_game_data` until a later cycle), the
 batch refresh returns 0 and stops on the first 429, and `GET /games/{app_id}`
 answers 429 `STEAM_003` for uncached apps. Requests sent inside Steam's per-IP
 throttle extend it, hence the pause. `appdetails` is requested with
-`l=english` so genre names are one vocabulary. A failed or throttled
-`appreviews` call keeps the cached review fields (and, when throttled, the old
-`last_refreshed_at`) instead of zeroing them.
+`l=english` so genre names are one vocabulary. Review scores come from
+`GET api.steampowered.com/IUserReviewsService/GetAppReviews/v1/` (public, no
+key; `input_json` carries only `appid` and `num_per_page: 1`, so Steam's
+default languages and purchase type apply). Any non-200 answer, invalid
+JSON, or a `query_summary` field that is not a plain integer in range (score
+0–9, counts 0–2³¹−1; `REVIEW_SUMMARY_LIMITS` in `utils/steam_client.py`) is a
+failure, never "no reviews"; "no reviews" is a 200 without `query_summary`. A
+failed call keeps the cached review fields instead of zeroing them, and what
+happens to `last_refreshed_at` depends on the row:
+
+- throttled (429): unchanged, so the row is retried once the cool-down ends;
+- failed, row with cached reviews (`total_reviews > 0`): stamped now, and the
+  refresh counts as completed;
+- failed, row without cached reviews (placeholder zeros): stamped
+  `now − 7 d + REVIEW_RETRY_DELAY` (6 h), so the zeros are never served as
+  fresh, the row is due again after 6 h behind the rows already stale (rows
+  whose reviews keep failing rotate instead of holding every
+  `refresh_stale_games` slot), and `refresh_game` reports `failed`;
+- new row, reviews failed: saved with zeros and `last_refreshed_at` NULL, so
+  `refresh_stale_games` retries it first.
 
 **Safety check (separate background job, `safety_check_cycle`, every 45s):**
 

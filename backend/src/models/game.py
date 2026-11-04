@@ -1,12 +1,16 @@
 """Steam game/DLC/bundle data model."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.time import utcnow
 from models.base import Base, TimestampMixin
+
+# Cache window shared by Game.is_stale_by_age and GameRepository.get_stale_games:
+# a row last refreshed more than this many days ago is stale.
+STALE_AFTER_DAYS = 7
 
 
 class Game(Base, TimestampMixin):
@@ -211,7 +215,9 @@ class Game(Base, TimestampMixin):
         Check if cached data is outdated by age alone.
 
         True when the row was never refreshed or was last refreshed more than
-        7 days ago. This is the check the read-through path
+        ``STALE_AFTER_DAYS`` days ago (strictly: ``last_refreshed_at`` before
+        ``now - STALE_AFTER_DAYS``, the same cut-off as
+        ``GameRepository.get_stale_games``). This is the check the read-through path
         (``GameService.get_or_fetch_game``, used once per giveaway by sync and
         enrichment) uses: a row that is recent but has genres NULL is served
         from the cache there, so upgrading a database (every legacy row has
@@ -224,8 +230,7 @@ class Game(Base, TimestampMixin):
         """
         if not self.last_refreshed_at:
             return True
-        days_old = (utcnow() - self.last_refreshed_at).days
-        return days_old > 7
+        return self.last_refreshed_at < utcnow() - timedelta(days=STALE_AFTER_DAYS)
 
     @property
     def needs_refresh(self) -> bool:
@@ -236,7 +241,7 @@ class Game(Base, TimestampMixin):
         - Never refreshed (last_refreshed_at is None)
         - genres is None: the row was cached before genres were stored, so a
           refresh backfills them
-        - Older than 7 days
+        - Older than ``STALE_AFTER_DAYS`` (7) days
 
         Keep this definition identical to GameRepository.get_stale_games,
         which feeds the bounded ``refresh_stale_games(limit=...)`` run every

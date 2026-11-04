@@ -7,6 +7,7 @@ between the GameRepository and external Steam API client.
 import math
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import utcnow
 from models.game import Game
-from repositories.game import GameRepository
+from repositories.game import STALE_AFTER_DAYS, GameRepository
 from utils.steam_client import SteamAPIError, SteamAPIRateLimitError, SteamClient
 
 logger = structlog.get_logger()
@@ -25,6 +26,13 @@ logger = structlog.get_logger()
 # store throttle (429, or HTTP 200 with a null body) usually lasts a few
 # minutes; every request sent inside it extends it.
 STEAM_RATE_LIMIT_COOLDOWN_SECONDS = 180.0
+
+# How soon a row with no cached reviews is retried after its GetAppReviews
+# call failed (anything but a 429). Its placeholder zeros are not served as
+# fresh for the 7-day window, and the row still moves behind the rest of the
+# stale queue, so rows whose reviews keep failing cannot hold every
+# refresh_stale_games slot (see GameService._review_retry_at).
+REVIEW_RETRY_DELAY = timedelta(hours=6)
 
 
 class SteamCooldown:
@@ -72,7 +80,7 @@ class FetchStatus(StrEnum):
     REFRESHED = "refreshed"  # Steam answered; the row was saved
     UNAVAILABLE = "unavailable"  # Steam does not serve this app
     RATE_LIMITED = "rate_limited"  # skipped or stopped by Steam's throttle
-    FAILED = "failed"  # any other Steam API error
+    FAILED = "failed"  # any other Steam API error (or reviews failed with no cached reviews to keep)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,10 +237,14 @@ class GameService:
         Unlike ``get_or_fetch_game(force_refresh=True)``, which always hands
         back the best row it has, this tells the caller whether Steam was
         actually reached: during the rate-limit cool-down, or when this very
-        request is throttled (on appdetails, or on appreviews after the
+        request is throttled (on appdetails, or on GetAppReviews after the
         appdetails fields were saved), the status is RATE_LIMITED with the
-        seconds left, so a row is never presented as freshly refreshed when
-        part of it was not.
+        seconds left. When GetAppReviews fails otherwise, the appdetails
+        fields are saved and the status depends on what the row holds: with
+        cached reviews (``total_reviews > 0``) they are kept, the row is
+        stamped and the status is REFRESHED, as for any row whose reviews
+        are kept through a failed call; without them (placeholder zeros) the
+        row is not stamped fresh and the status is FAILED.
 
         Args:
             app_id: Steam App ID
@@ -274,14 +286,12 @@ class GameService:
                     await self.session.commit()
                 return cached_game, FetchStatus.UNAVAILABLE
 
-            game, reviews_rate_limited = await self._store_steam_data(app_id, steam_data)
+            # RATE_LIMITED or FAILED here means appdetails was saved but
+            # GetAppReviews was not, and the row was not stamped fresh, so
+            # this is not a completed refresh.
+            game, status = await self._store_steam_data(app_id, steam_data)
             await self.session.commit()
-            if reviews_rate_limited:
-                # appdetails was saved but appreviews was throttled: the
-                # reviews are not fresh and an existing row kept its old
-                # refresh time, so this is not a completed refresh.
-                return game, FetchStatus.RATE_LIMITED
-            return game, FetchStatus.REFRESHED
+            return game, status
 
         except SteamAPIRateLimitError as e:
             steam_cooldown.trip()
@@ -327,26 +337,43 @@ class GameService:
         Note:
             This is an internal method that parses Steam's API format. Use
             ``_store_steam_data`` when the caller must know whether the
-            appreviews call was rate limited.
+            GetAppReviews call succeeded.
         """
-        game, _reviews_rate_limited = await self._store_steam_data(app_id, steam_data)
+        game, _status = await self._store_steam_data(app_id, steam_data)
         return game
 
     async def _store_steam_data(
         self, app_id: int, steam_data: dict
-    ) -> tuple[Game, bool]:
+    ) -> tuple[Game, FetchStatus]:
         """
         Parse Steam API data, fetch reviews for games, and save the row.
+
+        The appdetails fields are always saved. When GetAppReviews fails, the
+        review fields of an existing row are kept. ``last_refreshed_at``:
+
+        - reviews answered (a summary, or None for "no reviews"): now;
+        - throttled (429): unchanged, so the row is retried once the
+          cool-down ends;
+        - other failure, new row: None (D4), so the row is queued at once;
+        - other failure, existing row with cached reviews
+          (``total_reviews > 0``): now, the cached reviews stay usable;
+        - other failure, existing row without (placeholder zeros, or a game
+          with no reviews): ``_review_retry_at()``, due again after
+          ``REVIEW_RETRY_DELAY`` and placed behind older stale rows.
+
+        So placeholder zeros are never served as fresh data for the 7-day
+        window, and a row whose reviews keep failing still rotates through
+        the stale queue instead of being retried first on every cycle.
 
         Args:
             app_id: Steam App ID
             steam_data: Raw ``data`` dict from Steam's appdetails
 
         Returns:
-            The saved Game and whether the appreviews call was rate limited
-            (the appdetails fields were saved, the reviews were not refreshed,
-            an existing row kept its ``last_refreshed_at`` and the shared
-            ``steam_cooldown`` was started).
+            The saved Game and the outcome: REFRESHED; RATE_LIMITED when the
+            GetAppReviews call was throttled (the shared ``steam_cooldown``
+            was started); FAILED when it failed otherwise and the row had no
+            cached reviews to keep.
         """
         # Extract basic info
         name = steam_data.get("name", "Unknown")
@@ -375,13 +402,14 @@ class GameService:
         # Check if this is a bundle
         is_bundle = game_type == "bundle"
 
-        # Fetch review data from Steam Reviews API (0 = no reviews / unknown,
-        # matching the non-nullable Game columns).
+        # Fetch review data from IUserReviewsService/GetAppReviews (0 = no
+        # reviews / unknown, matching the non-nullable Game columns).
         review_score = 0
         total_positive = 0
         total_negative = 0
-        # Set when the appreviews call raised: an existing row then keeps its
-        # cached review data instead of having it overwritten with zeros.
+        # Set when the GetAppReviews call raised: an existing row then keeps
+        # its cached review data instead of having it overwritten with zeros,
+        # and a row without cached reviews is not stamped refreshed.
         review_fetch_failed = False
         review_rate_limited = False
 
@@ -436,15 +464,29 @@ class GameService:
                 existing_game.total_reviews = total_reviews
             existing_game.genres = genres
             existing_game.categories = categories
-            if not review_rate_limited:
-                # A throttled review fetch leaves the refresh time alone, so
-                # a row that was stale by age is retried (reviews included)
-                # once the cool-down ends instead of waiting 7 more days.
+            if review_rate_limited:
+                # Leave the refresh time alone, so a row that was stale by age
+                # is retried (reviews included) once the cool-down ends
+                # instead of waiting 7 more days.
+                status = FetchStatus.RATE_LIMITED
+            elif not review_fetch_failed or existing_game.total_reviews > 0:
+                # Reviews answered, or failed with cached reviews kept above:
+                # the row stays usable until the next refresh.
                 existing_game.last_refreshed_at = utcnow()
+                status = FetchStatus.REFRESHED
+            else:
+                # Reviews failed and the row holds no reviews to keep: do not
+                # stamp the zeros fresh, but move the row behind the rest of
+                # the stale queue and retry it after REVIEW_RETRY_DELAY.
+                existing_game.last_refreshed_at = self._review_retry_at()
+                status = FetchStatus.FAILED
 
-            return existing_game, review_rate_limited
+            return existing_game, status
         else:
-            # Create new game
+            # Create new game. A failed review fetch (throttled or not)
+            # leaves last_refreshed_at unset: the zeros are not data, so the
+            # row needs_refresh and the bounded refresh_stale_games retries
+            # it instead of serving zeros for 7 days.
             game = await self.repo.create(
                 id=app_id,
                 name=name,
@@ -460,10 +502,26 @@ class GameService:
                 total_reviews=total_reviews,
                 genres=genres,
                 categories=categories,
-                last_refreshed_at=utcnow(),
+                last_refreshed_at=None if review_fetch_failed else utcnow(),
             )
 
-            return game, review_rate_limited
+            if review_rate_limited:
+                return game, FetchStatus.RATE_LIMITED
+            if review_fetch_failed:
+                return game, FetchStatus.FAILED
+            return game, FetchStatus.REFRESHED
+
+    @staticmethod
+    def _review_retry_at() -> datetime:
+        """Refresh time recorded when reviews failed on a row without cached reviews.
+
+        Back-dated so the row leaves the stale queue now and re-enters it
+        ``REVIEW_RETRY_DELAY`` from now (``get_stale_games`` selects rows
+        refreshed more than ``STALE_AFTER_DAYS`` ago). Because each failure
+        moves the time forward, the row then sorts behind every row that was
+        already stale, so repeated failures rotate through the queue.
+        """
+        return utcnow() - timedelta(days=STALE_AFTER_DAYS) + REVIEW_RETRY_DELAY
 
     async def refresh_stale_games(self, limit: int = 10) -> int:
         """
@@ -472,8 +530,10 @@ class GameService:
         Fetches stale games (older than CACHE_DAYS, or whose genres were
         never fetched) oldest first and updates them from Steam API. A game
         Steam no longer serves is marked checked (see ``_mark_unavailable``)
-        so it rotates to the back of the queue. The batch stops at the first
-        rate-limit error, keeping what was already saved: retrying the rest
+        so it rotates to the back of the queue; a game whose GetAppReviews
+        call fails with no cached reviews to keep is not counted and is due
+        again after ``REVIEW_RETRY_DELAY`` (see ``_store_steam_data``), so it
+        rotates too. The batch stops at the first rate-limit error, keeping what was already saved: retrying the rest
         inside a throttled window only extends it; it also starts the shared
         ``steam_cooldown``, during which this method returns 0 at once.
 
@@ -511,13 +571,19 @@ class GameService:
                 self._mark_unavailable(game)
                 continue
 
-            _saved, reviews_rate_limited = await self._store_steam_data(game.id, steam_data)
-            if reviews_rate_limited:
-                # appreviews was throttled inside the save (which started the
+            _saved, status = await self._store_steam_data(game.id, steam_data)
+            if status is FetchStatus.RATE_LIMITED:
+                # GetAppReviews was throttled inside the save (which started the
                 # cool-down): keep the appdetails fields already stored and
                 # stop here, as for a throttled appdetails call. The row keeps
                 # its refresh time, so it is not counted as refreshed.
                 break
+            if status is FetchStatus.FAILED:
+                # GetAppReviews failed on a row with no cached reviews: the
+                # appdetails fields (genres included) are kept and the row is
+                # due again after REVIEW_RETRY_DELAY, behind the rows already
+                # stale, so it is not counted and the batch goes on.
+                continue
             refreshed_count += 1
 
         if changed:

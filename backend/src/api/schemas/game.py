@@ -4,9 +4,18 @@ This module provides Pydantic schemas for game-related
 API requests and responses.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
+
+
+def _serialize_utc(dt: datetime | None) -> str | None:
+    """ISO 8601 UTC with a 'Z' suffix; naive datetimes are stored UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(UTC).replace(tzinfo=None)
+    return dt.isoformat() + "Z"
 
 
 class GameBase(BaseModel):
@@ -124,9 +133,14 @@ class GameResponse(GameBase):
 
     last_refreshed_at: datetime | None = Field(
         default=None,
-        description="Last time game data was refreshed from Steam",
-        examples=["2025-10-14T12:00:00"],
+        description="Last time game data was refreshed from Steam (UTC)",
+        examples=["2025-10-14T12:00:00Z"],
     )
+
+    @field_serializer("last_refreshed_at")
+    def serialize_last_refreshed_at(self, dt: datetime | None) -> str | None:
+        """Serialize the refresh time as UTC with a 'Z' suffix."""
+        return _serialize_utc(dt)
 
     model_config = {
         "from_attributes": True,  # Enable ORM mode
@@ -148,7 +162,7 @@ class GameResponse(GameBase):
                     "price": 1999,
                     "genres": ["Action", "Adventure"],
                     "categories": ["Single-player", "Steam Achievements"],
-                    "last_refreshed_at": "2025-10-14T12:00:00",
+                    "last_refreshed_at": "2025-10-14T12:00:00Z",
                 }
             ]
         },
@@ -291,8 +305,8 @@ class GameRefreshResponse(BaseModel):
     )
     last_refreshed_at: datetime | None = Field(
         default=None,
-        description="When game data was last refreshed",
-        examples=["2025-10-14T12:00:00"],
+        description="When game data was last refreshed (UTC)",
+        examples=["2025-10-14T12:00:00Z"],
     )
     retry_after_seconds: int | None = Field(
         default=None,
@@ -304,13 +318,18 @@ class GameRefreshResponse(BaseModel):
         examples=[None, 120],
     )
 
+    @field_serializer("last_refreshed_at")
+    def serialize_last_refreshed_at(self, dt: datetime | None) -> str | None:
+        """Serialize the refresh time as UTC with a 'Z' suffix."""
+        return _serialize_utc(dt)
+
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
                     "refreshed": True,
                     "message": "Game data refreshed successfully",
-                    "last_refreshed_at": "2025-10-14T12:00:00",
+                    "last_refreshed_at": "2025-10-14T12:00:00Z",
                 },
                 {
                     "refreshed": False,
