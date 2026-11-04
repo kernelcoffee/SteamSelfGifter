@@ -342,7 +342,7 @@ async def test_refresh_game_success():
 
     assert result["success"] is True
     assert result["data"]["refreshed"] is True
-    assert result["data"]["last_refreshed_at"] == mock_game.last_refreshed_at
+    assert result["data"]["last_refreshed_at"] == mock_game.last_refreshed_at.replace(tzinfo=None).isoformat() + "Z"
     assert result["data"]["retry_after_seconds"] is None
     mock_service.refresh_game.assert_called_once_with(620)
 

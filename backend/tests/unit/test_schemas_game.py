@@ -1,5 +1,6 @@
 """Unit tests for game API schemas."""
 
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -214,3 +215,27 @@ def test_genre_list_response_dump():
     response = GenreListResponse(genres=[GenreCount(name="Action", count=2)])
     assert response.model_dump() == {"genres": [{"name": "Action", "count": 2}]}
     assert GenreListResponse().model_dump() == {"genres": []}
+
+
+@pytest.mark.parametrize("schema", [GameRefreshResponse, GameResponse])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (datetime(2026, 11, 4, 23, 0, 13, 298033), "2026-11-04T23:00:13.298033Z"),
+        (datetime(2026, 11, 5, 1, 0, 13, tzinfo=timezone(timedelta(hours=2))), "2026-11-04T23:00:13Z"),
+        (None, None),
+    ],
+    ids=["naive_utc", "aware_offset", "none"],
+)
+def test_last_refreshed_at_serializes_as_utc_with_z_suffix(schema, value, expected):
+    """Convention: datetimes leave the API as UTC with a 'Z' suffix. A naive
+    value is stored UTC; an aware one is converted to UTC first."""
+    fields = (
+        {"refreshed": True, "message": "ok"}
+        if schema is GameRefreshResponse
+        else {"id": 620, "name": "Portal 2", "type": "game"}
+    )
+    response = schema(last_refreshed_at=value, **fields)
+
+    assert response.model_dump()["last_refreshed_at"] == expected
+    assert response.model_dump(mode="json")["last_refreshed_at"] == expected
