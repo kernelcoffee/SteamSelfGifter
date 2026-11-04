@@ -23,32 +23,29 @@ class Settings(Base, TimestampMixin):
             user_agent: Browser user agent string for HTTP requests
             xsrf_token: Anti-CSRF token from SteamGifts (extracted from pages)
 
-        DLC Settings:
-            dlc_priority_enabled: DLC giveaways bypass autojoin filters and are
-                entered after wishlist ones (default: False)
-
         Auto-join Settings:
             autojoin_enabled: Enable automatic giveaway entry (default: False)
             autojoin_start_at: Start entering when points >= this value (default: 350)
             autojoin_stop_at: Stop entering when points <= this value (default: 200)
             autojoin_min_price: Minimum giveaway price in points to enter (default: 10)
-            autojoin_min_score: Minimum Steam review score (0-10) required (default: 7)
-            autojoin_min_reviews: Minimum number of reviews required (default: 1000)
+            autojoin_min_score: Minimum Steam review score (0-10); None = filter
+                off, 0 still needs cached game data (default: 7)
+            autojoin_min_reviews: Minimum number of reviews; None = filter off
+                (default: 1000)
             autojoin_max_game_age: Maximum game age in years (default: None = no limit)
-            wishlist_priority_enabled: Wishlist giveaways bypass autojoin filters
-                and are entered first (default: True)
-            ending_soon_priority_enabled: Giveaways ending within the threshold
-                are entered after wishlist and DLC ones, soonest first. Affects
-                ordering only, never eligibility (default: False)
-            ending_soon_threshold_minutes: Minutes before end_time within which
-                a giveaway counts as ending soon, 5-10080 (default: 60)
             excluded_genres: Steam genre names auto-join skips, matched
-                case-insensitively against Game.genres; wishlist and (when
-                enabled) DLC giveaways bypass it (default: [])
+                case-insensitively against Game.genres (default: [])
+            included_genres: Steam genre names of which auto-join requires at
+                least one; empty = any genre, and exclusion wins (default: [])
+            autojoin_priorities: Ordered priority list, e.g.
+                [{"type": "wishlist"}, {"type": "ending_soon",
+                "threshold_minutes": 60}]; list order is entry order, and
+                wishlist/DLC items skip the filters (default: wishlist only).
+                Parsed and validated by services.eligibility.parse_priorities.
 
         Scheduler Settings:
             scan_interval_minutes: How often to scan for giveaways (default: 30 min)
-            max_entries_per_cycle: Max entries per scan cycle (None = unlimited)
+            max_entries_per_cycle: Per cycle cap on entry attempts (default: 10)
             automation_enabled: Master switch for automation (default: False)
 
         Advanced Settings:
@@ -100,13 +97,6 @@ class Settings(Base, TimestampMixin):
     )
     # NOTE: current_points is fetched dynamically from SteamGifts, not stored here
 
-    # ==================== DLC Settings ====================
-    dlc_priority_enabled: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
-        comment="DLC giveaways bypass autojoin filters and are entered after wishlist ones",
-    )
-
     # ==================== Safety Settings ====================
     safety_check_enabled: Mapped[bool] = mapped_column(
         Boolean,
@@ -140,13 +130,15 @@ class Settings(Base, TimestampMixin):
         default=10,
         comment="Minimum giveaway price in points",
     )
-    autojoin_min_score: Mapped[int] = mapped_column(
+    autojoin_min_score: Mapped[int | None] = mapped_column(
         Integer,
+        nullable=True,
         default=7,
         comment="Minimum Steam review score (0-10)",
     )
-    autojoin_min_reviews: Mapped[int] = mapped_column(
+    autojoin_min_reviews: Mapped[int | None] = mapped_column(
         Integer,
+        nullable=True,
         default=1000,
         comment="Minimum number of reviews required",
     )
@@ -156,27 +148,26 @@ class Settings(Base, TimestampMixin):
         default=None,
         comment="Maximum game age in years (None = no limit)",
     )
-    wishlist_priority_enabled: Mapped[bool] = mapped_column(
-        Boolean,
-        default=True,
-        comment="Wishlist giveaways bypass autojoin filters and are entered first",
-    )
-    ending_soon_priority_enabled: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
-        comment="Giveaways ending within the threshold are entered after wishlist and DLC ones, soonest first",
-    )
-    ending_soon_threshold_minutes: Mapped[int] = mapped_column(
-        Integer,
-        default=60,
-        comment="Minutes before end_time within which a giveaway counts as ending soon (5-10080)",
-    )
     excluded_genres: Mapped[list] = mapped_column(
         JSON,
         nullable=False,
         default=list,
         server_default="[]",
         comment="Genre names auto-join skips (case-insensitive)",
+    )
+    included_genres: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+        server_default="[]",
+        comment="Genre names auto-join requires at least one of (empty = any)",
+    )
+    autojoin_priorities: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: [{"type": "wishlist"}],
+        server_default='[{"type": "wishlist"}]',
+        comment="Ordered auto-join priority list (list order = entry order)",
     )
 
     # ==================== Scheduler Settings ====================
@@ -185,10 +176,12 @@ class Settings(Base, TimestampMixin):
         default=30,
         comment="Scan interval in minutes",
     )
-    max_entries_per_cycle: Mapped[int | None] = mapped_column(
+    max_entries_per_cycle: Mapped[int] = mapped_column(
         Integer,
-        nullable=True,
-        comment="Maximum entries per cycle (None = unlimited)",
+        nullable=False,
+        default=10,
+        server_default="10",
+        comment="Per cycle cap on entry attempts",
     )
     automation_enabled: Mapped[bool] = mapped_column(
         Boolean,

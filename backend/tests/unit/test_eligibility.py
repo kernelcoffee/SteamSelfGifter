@@ -1,57 +1,79 @@
-"""Tests for autojoin eligibility evaluation.
+"""Unit tests for the auto-join decision engine (services.eligibility).
 
-Three layers:
-1. The pure evaluator (`evaluate_eligibility`) — every reason code + precedence.
-2. Behavior-equivalence — the evaluator's ELIGIBLE set must match the existing
-   SQL filter (`GiveawayRepository.get_eligible`) exactly, so wiring it into the
-   cycle does NOT change which giveaways get entered.
-3. Persistence — a process cycle records a reason on every candidate.
-4. Entry order — `priority_sort_key` (wishlist > DLC > ending soon > rest).
+Pure tests: gates, priority match and exemption, filters and their detail,
+the include list, ordering, the cycle plan, explanations and the registry.
+Lift-and-order parity with the replaced engine is guarded separately by
+test_eligibility_golden.py; DB-backed cycle tests live in
+test_services_giveaway_service.py.
 """
 
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from typing import Any
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from core.time import utcnow
-from models.base import Base
-from models.game import Game
-from models.giveaway import Giveaway
 from services.eligibility import (
+    BUDGET_FLOOR,
+    CYCLE_CAP,
     ELIGIBLE,
     ENTERED,
     EXPIRED,
+    FILTERS,
     GAME_TOO_OLD,
+    GATES,
     GENRE_EXCLUDED,
+    GENRE_NOT_INCLUDED,
     HIDDEN,
+    MAX_PRIORITY_ITEMS,
     NO_GAME_DATA,
-    PRICE_ABOVE_MAX,
+    OUTCOMES,
+    POINTS_ACCUMULATING,
     PRICE_BELOW_MIN,
+    PRIORITY_TYPES,
     REASON_LABELS,
     REVIEWS_BELOW_MIN,
+    RULES,
     SCORE_BELOW_MIN,
     UNSAFE,
-    EligibilityCriteria,
-    evaluate_eligibility,
-    priority_sort_key,
+    AutoJoinPolicy,
+    CycleBudget,
+    Decision,
+    InvalidPolicyError,
+    PolicyFields,
+    PriorityItem,
+    decide,
+    explain,
+    fold_genres,
+    gate_of,
+    kind_of,
+    normalize_genre_list,
+    order_candidates,
+    parse_priorities,
+    plan_cycle,
+    policy_from_settings,
+    registry_as_data,
 )
-from services.game_service import GameService
-from services.giveaway_service import GiveawayService
-from services.settings_service import normalize_excluded_genres
 
 NOW = datetime(2026, 6, 17, 12, 0, 0)
 
+WISHLIST = PriorityItem("wishlist")
+DLC = PriorityItem("dlc")
 
-def _gw(**kw):
-    """A giveaway stand-in (only the attributes the evaluator reads)."""
-    base = dict(
+
+def _soon(minutes: int = 60) -> PriorityItem:
+    return PriorityItem("ending_soon", threshold_minutes=minutes)
+
+
+def _gw(**kw: Any) -> Any:
+    """A giveaway stand-in (only the attributes the engine reads)."""
+    base: dict[str, Any] = dict(
+        code="G",
         end_time=NOW + timedelta(days=1),
         is_hidden=False,
         is_entered=False,
         is_safe=None,
+        safety_score=None,
         is_wishlist=False,
         is_dlc=False,
         price=50,
@@ -61,749 +83,816 @@ def _gw(**kw):
     return SimpleNamespace(**base)
 
 
-def _game(**kw):
-    base = dict(review_score=9, total_reviews=5000, release_date="2020-01-01", genres=["Puzzle"])
+def _game(**kw: Any) -> Any:
+    base: dict[str, Any] = dict(review_score=9, total_reviews=5000, release_date="2020-01-01", genres=["Puzzle"])
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def _policy(**kw: Any) -> AutoJoinPolicy:
+    base: dict[str, Any] = dict(min_price=10, min_score=7, min_reviews=1000)
+    base.update(kw)
+    return AutoJoinPolicy(**base)
+
+
+def _settings(**kw: Any) -> Any:
+    """A settings row stand-in with every field policy_from_settings reads."""
+    base: dict[str, Any] = dict(
+        autojoin_min_price=10,
+        autojoin_min_score=7,
+        autojoin_min_reviews=1000,
+        autojoin_max_game_age=None,
+        excluded_genres=[],
+        included_genres=[],
+        autojoin_priorities=[{"type": "wishlist"}],
+        autojoin_start_at=350,
+        autojoin_stop_at=200,
+        max_entries_per_cycle=10,
+        auto_hide_unsafe=True,
+    )
     base.update(kw)
     return SimpleNamespace(**base)
 
 
 # ----------------------------------------------------------------------------
-# 1. Pure evaluator
+# Gates
 # ----------------------------------------------------------------------------
 
-def test_eligible_when_all_criteria_pass():
-    crit = EligibilityCriteria(min_price=10, min_score=7, min_reviews=1000)
-    assert evaluate_eligibility(_gw(), _game(), crit, NOW) == ELIGIBLE
+@pytest.mark.parametrize("end_time", [None, NOW, NOW - timedelta(hours=1)])
+def test_expired_gate_beats_everything(end_time: datetime | None) -> None:
+    giveaway = _gw(end_time=end_time, is_hidden=True, is_entered=True, is_wishlist=True)
+    decision = decide(giveaway, None, _policy(priorities=(WISHLIST,)), NOW)
+    assert decision == Decision(code=EXPIRED, detail={}, lifted_by=None, priority=None, rank=1)
 
 
-@pytest.mark.parametrize("end_time", [None, NOW - timedelta(hours=1)])
-def test_expired(end_time):
-    crit = EligibilityCriteria(min_price=10)
-    assert evaluate_eligibility(_gw(end_time=end_time), _game(), crit, NOW) == EXPIRED
+def test_hidden_gate_is_never_lifted_by_wishlist() -> None:
+    decision = decide(_gw(is_hidden=True, is_wishlist=True), _game(), _policy(priorities=(WISHLIST,)), NOW)
+    assert (decision.code, decision.detail, decision.lifted_by) == (HIDDEN, {}, None)
 
 
-def test_hidden():
-    crit = EligibilityCriteria(min_price=10)
-    assert evaluate_eligibility(_gw(is_hidden=True), _game(), crit, NOW) == HIDDEN
+def test_entered_gate() -> None:
+    decision = decide(_gw(is_entered=True), _game(), _policy(), NOW)
+    assert (decision.code, decision.detail) == (ENTERED, {})
 
 
-def test_entered():
-    crit = EligibilityCriteria(min_price=10)
-    assert evaluate_eligibility(_gw(is_entered=True), _game(), crit, NOW) == ENTERED
+@pytest.mark.parametrize("score", [60, 10])
+def test_unsafe_gate_records_safety_score_and_beats_wishlist(score: int) -> None:
+    giveaway = _gw(is_safe=False, safety_score=score, is_wishlist=True)
+    decision = decide(giveaway, _game(), _policy(priorities=(WISHLIST,)), NOW)
+    assert (decision.code, decision.detail, decision.lifted_by) == (UNSAFE, {"safety_score": score}, None)
 
 
-def test_unsafe_and_borderline_excluded_unchecked_passes():
-    crit = EligibilityCriteria(min_price=10)
-    # is_safe False covers both unsafe and borderline verdicts
-    assert evaluate_eligibility(_gw(is_safe=False), _game(), crit, NOW) == UNSAFE
-    # Never-checked (NULL) and safe giveaways pass
-    assert evaluate_eligibility(_gw(is_safe=None), _game(), crit, NOW) == ELIGIBLE
-    assert evaluate_eligibility(_gw(is_safe=True), _game(), crit, NOW) == ELIGIBLE
-    # Safety exclusion also applies to wishlist/DLC bypass giveaways
-    assert evaluate_eligibility(_gw(is_wishlist=True, is_safe=False), None, crit, NOW) == UNSAFE
+@pytest.mark.parametrize("is_safe", [None, True])
+def test_unchecked_or_safe_passes_the_gate(is_safe: bool | None) -> None:
+    assert decide(_gw(is_safe=is_safe), _game(), _policy(), NOW).code == ELIGIBLE
 
 
-def test_price_below_min():
-    crit = EligibilityCriteria(min_price=50)
-    assert evaluate_eligibility(_gw(price=49), _game(), crit, NOW) == PRICE_BELOW_MIN
+def test_gate_precedence_order() -> None:
+    assert [rule.code for rule in GATES] == [EXPIRED, HIDDEN, ENTERED, UNSAFE]
+    assert decide(_gw(is_hidden=True, is_entered=True, is_safe=False), _game(), _policy(), NOW).code == HIDDEN
+    assert decide(_gw(is_entered=True, is_safe=False), _game(), _policy(), NOW).code == ENTERED
 
 
-def test_price_above_max():
-    crit = EligibilityCriteria(min_price=10, max_price=100)
-    assert evaluate_eligibility(_gw(price=150), _game(), crit, NOW) == PRICE_ABOVE_MAX
-
-
-def test_no_game_data_when_criteria_need_it():
-    crit = EligibilityCriteria(min_price=10, min_score=7)
-    assert evaluate_eligibility(_gw(), None, crit, NOW) == NO_GAME_DATA
-
-
-def test_missing_game_is_fine_when_no_game_criteria():
-    # No score/reviews/age criteria → no game data required.
-    crit = EligibilityCriteria(min_price=10)
-    assert evaluate_eligibility(_gw(), None, crit, NOW) == ELIGIBLE
-
-
-def test_score_below_min_including_unknown_zero():
-    crit = EligibilityCriteria(min_price=10, min_score=7)
-    assert evaluate_eligibility(_gw(), _game(review_score=6), crit, NOW) == SCORE_BELOW_MIN
-    # Unknown score is stored as 0 → treated as a failure (intentional).
-    assert evaluate_eligibility(_gw(), _game(review_score=0), crit, NOW) == SCORE_BELOW_MIN
-
-
-def test_reviews_below_min():
-    crit = EligibilityCriteria(min_price=10, min_reviews=1000)
-    assert evaluate_eligibility(_gw(), _game(total_reviews=999), crit, NOW) == REVIEWS_BELOW_MIN
-
-
-def test_game_too_old_and_unknown_release_date():
-    crit = EligibilityCriteria(min_price=10, max_game_age=3)  # cutoff 2023-01-01
-    assert evaluate_eligibility(_gw(), _game(release_date="2010-05-01"), crit, NOW) == GAME_TOO_OLD
-    # Missing release date fails the age check (intentional).
-    assert evaluate_eligibility(_gw(), _game(release_date=None), crit, NOW) == GAME_TOO_OLD
-    # Recent enough passes.
-    assert evaluate_eligibility(_gw(), _game(release_date="2024-01-01"), crit, NOW) == ELIGIBLE
-
-
-def test_wishlist_bypasses_price_and_game_filters():
-    # Fails every filter (price, score, reviews, age, even missing game data),
-    # but is on the wishlist → eligible.
-    crit = EligibilityCriteria(min_price=100, min_score=9, min_reviews=10000, max_game_age=1)
-    assert evaluate_eligibility(_gw(is_wishlist=True, price=1), None, crit, NOW) == ELIGIBLE
-
-
-def test_dlc_bypasses_filters_when_priority_enabled():
-    # DLC listings are for owned games: with dlc_priority on, quality and
-    # price filters don't apply.
-    crit = EligibilityCriteria(min_price=100, min_score=9, min_reviews=10000, dlc_priority=True)
-    assert evaluate_eligibility(_gw(is_dlc=True, price=1), None, crit, NOW) == ELIGIBLE
-
-
-def test_dlc_no_bypass_by_default():
-    # dlc_priority defaults to off (dlc_priority_enabled setting drives it).
-    crit = EligibilityCriteria(min_price=100)
-    assert evaluate_eligibility(_gw(is_dlc=True, price=1), None, crit, NOW) == PRICE_BELOW_MIN
-
-
-def test_wishlist_no_bypass_when_priority_disabled():
-    # With the toggle off, wishlist giveaways pass the same filters as
-    # everything else.
-    crit = EligibilityCriteria(min_price=100, wishlist_priority=False)
-    assert evaluate_eligibility(_gw(is_wishlist=True, price=1), None, crit, NOW) == PRICE_BELOW_MIN
-
-
-def test_wishlist_still_respects_expired_hidden_entered():
-    crit = EligibilityCriteria(min_price=10)
-    assert evaluate_eligibility(
-        _gw(is_wishlist=True, end_time=NOW - timedelta(hours=1)), None, crit, NOW
-    ) == EXPIRED
-    assert evaluate_eligibility(_gw(is_wishlist=True, is_hidden=True), None, crit, NOW) == HIDDEN
-    assert evaluate_eligibility(_gw(is_wishlist=True, is_entered=True), None, crit, NOW) == ENTERED
-
-
-def test_precedence_hidden_beats_price_and_score():
-    crit = EligibilityCriteria(min_price=100, min_score=10)
-    gw = _gw(is_hidden=True, price=1)
-    assert evaluate_eligibility(gw, _game(review_score=0), crit, NOW) == HIDDEN
-
-
-def test_precedence_price_beats_missing_game():
-    crit = EligibilityCriteria(min_price=100, min_score=7)
-    assert evaluate_eligibility(_gw(price=1), None, crit, NOW) == PRICE_BELOW_MIN
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        (dict(end_time=None), (EXPIRED, {})),
+        (dict(is_hidden=True, is_safe=False), (HIDDEN, {})),
+        (dict(is_entered=True), (ENTERED, {})),
+        (dict(is_safe=False, safety_score=60), (UNSAFE, {"safety_score": 60})),
+        # No gate: the filters are not run (price 1 < 10 would fail them).
+        (dict(price=1, is_safe=True), None),
+    ],
+)
+def test_gate_of_runs_only_the_gates_in_order(row: dict[str, Any], expected: tuple[str, dict] | None) -> None:
+    giveaway = _gw(**row)
+    assert gate_of(giveaway, _policy(), NOW) == expected
+    if expected is not None:
+        decision = decide(giveaway, None, _policy(), NOW)
+        assert (decision.code, decision.detail) == expected
 
 
 # ----------------------------------------------------------------------------
-# 1b. Genre exclusion (pure)
+# Priority match and exemption
 # ----------------------------------------------------------------------------
 
-def test_genre_excluded_on_match():
-    crit = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
-    assert evaluate_eligibility(_gw(), _game(genres=["Indie", "Action"]), crit, NOW) == GENRE_EXCLUDED
+def _bad_giveaway(**kw: Any) -> Any:
+    """Price 1 < min 10 and (with the game below) an excluded genre."""
+    return _gw(price=1, **kw)
 
 
-@pytest.mark.parametrize("excluded, stored", [
-    ("ACTION", "Action"),
-    ("action", "ACTION"),
-    ("Action", "aCtIoN"),
-])
-def test_genre_excluded_case_insensitive(excluded, stored):
-    crit = EligibilityCriteria(min_price=10, excluded_genres=[excluded])
-    assert evaluate_eligibility(_gw(), _game(genres=[stored]), crit, NOW) == GENRE_EXCLUDED
+def test_wishlist_item_lifts_every_filter() -> None:
+    policy = _policy(priorities=(WISHLIST,), excluded_genres=frozenset({"Action"}))
+    decision = decide(_bad_giveaway(is_wishlist=True), None, policy, NOW)
+    assert decision == Decision(
+        code=ELIGIBLE,
+        detail={"priority": "wishlist", "rank": 0, "lifted_by": "wishlist"},
+        lifted_by="wishlist",
+        priority="wishlist",
+        rank=0,
+    )
+    assert decision.enter is True
 
 
-def test_genre_not_in_exclusions_passes():
-    crit = EligibilityCriteria(min_price=10, min_score=7, excluded_genres=["Action"])
-    assert evaluate_eligibility(_gw(), _game(genres=["Puzzle"]), crit, NOW) == ELIGIBLE
+@pytest.mark.parametrize("priorities", [(), (DLC,), (_soon(),)])
+def test_wishlist_without_its_item_obeys_the_filters(priorities: tuple[PriorityItem, ...]) -> None:
+    decision = decide(_bad_giveaway(is_wishlist=True), None, _policy(priorities=priorities), NOW)
+    assert (decision.code, decision.detail) == (PRICE_BELOW_MIN, {"price": 1, "min_price": 10})
+    assert decision.enter is False
+
+
+def test_dlc_item_lifts_every_filter() -> None:
+    game = _game(genres=["Action"], review_score=1)
+    policy = _policy(priorities=(DLC,), excluded_genres=frozenset({"action"}))
+    decision = decide(_bad_giveaway(is_dlc=True), game, policy, NOW)
+    assert (decision.code, decision.lifted_by, decision.priority, decision.rank) == (ELIGIBLE, "dlc", "dlc", 0)
+
+
+def test_dlc_giveaway_with_only_the_wishlist_item_obeys_the_filters() -> None:
+    decision = decide(_bad_giveaway(is_dlc=True), None, _policy(priorities=(WISHLIST,)), NOW)
+    assert decision.code == PRICE_BELOW_MIN
+
+
+def test_ending_soon_never_lifts() -> None:
+    giveaway = _gw(end_time=NOW + timedelta(minutes=30))
+    policy = _policy(priorities=(_soon(60),), excluded_genres=frozenset({"action"}))
+    decision = decide(giveaway, _game(genres=["Action"]), policy, NOW)
+    assert (decision.code, decision.detail) == (GENRE_EXCLUDED, {"genre": "Action"})
+    assert (decision.priority, decision.rank, decision.lifted_by) == ("ending_soon", 0, None)
+
+
+def test_any_exempt_match_lifts_even_when_not_first() -> None:
+    giveaway = _gw(is_wishlist=True, end_time=NOW + timedelta(minutes=30))
+    decision = decide(giveaway, _game(review_score=6), _policy(priorities=(_soon(60), WISHLIST)), NOW)
+    assert (decision.code, decision.priority, decision.rank, decision.lifted_by) == (
+        ELIGIBLE, "ending_soon", 0, "wishlist",
+    )
+    assert decision.detail == {"priority": "ending_soon", "rank": 0, "lifted_by": "wishlist"}
+
+
+def test_first_match_gives_priority_and_rank() -> None:
+    giveaway = _gw(is_wishlist=True, is_dlc=True)
+    decision = decide(giveaway, _game(), _policy(priorities=(DLC, WISHLIST)), NOW)
+    assert (decision.priority, decision.rank, decision.lifted_by) == ("dlc", 0, "dlc")
+
+
+def test_unmatched_candidate_ranks_after_the_list() -> None:
+    decision = decide(_gw(), _game(), _policy(priorities=(WISHLIST, DLC)), NOW)
+    assert decision.detail == {"priority": None, "rank": 2, "lifted_by": None}
+
+
+# ----------------------------------------------------------------------------
+# Filters: precedence and detail
+# ----------------------------------------------------------------------------
+
+def test_filter_registry_order_and_settings() -> None:
+    assert [rule.code for rule in FILTERS] == [
+        PRICE_BELOW_MIN, GENRE_EXCLUDED, GENRE_NOT_INCLUDED, NO_GAME_DATA,
+        SCORE_BELOW_MIN, REVIEWS_BELOW_MIN, GAME_TOO_OLD,
+    ]
+    assert [rule.setting for rule in FILTERS] == [
+        "autojoin_min_price", "excluded_genres", "included_genres", None,
+        "autojoin_min_score", "autojoin_min_reviews", "autojoin_max_game_age",
+    ]
+
+
+def test_price_beats_score_and_genre() -> None:
+    policy = _policy(excluded_genres=frozenset({"action"}))
+    decision = decide(_gw(price=5), _game(review_score=6, genres=["Action"]), policy, NOW)
+    assert (decision.code, decision.detail) == (PRICE_BELOW_MIN, {"price": 5, "min_price": 10})
+
+
+def test_genre_beats_score() -> None:
+    policy = _policy(excluded_genres=frozenset({"action"}))
+    decision = decide(_gw(), _game(review_score=6, genres=["Indie", "ACTION"]), policy, NOW)
+    assert (decision.code, decision.detail) == (GENRE_EXCLUDED, {"genre": "ACTION"})
+
+
+def test_missing_game_with_a_quality_threshold_is_no_game_data() -> None:
+    decision = decide(_gw(), None, _policy(), NOW)
+    assert (decision.code, decision.detail) == (NO_GAME_DATA, {})
+
+
+def test_score_beats_reviews_and_age() -> None:
+    game = _game(review_score=6, total_reviews=10, release_date="1999-01-01")
+    decision = decide(_gw(), game, _policy(max_game_age=5), NOW)
+    assert (decision.code, decision.detail) == (SCORE_BELOW_MIN, {"score": 6, "min_score": 7})
+
+
+def test_reviews_below_min_detail() -> None:
+    decision = decide(_gw(), _game(total_reviews=500), _policy(), NOW)
+    assert (decision.code, decision.detail) == (REVIEWS_BELOW_MIN, {"reviews": 500, "min_reviews": 1000})
+
+
+def test_game_too_old_detail() -> None:
+    decision = decide(_gw(), _game(release_date="2005-01-01"), _policy(max_game_age=5), NOW)
+    assert (decision.code, decision.detail) == (GAME_TOO_OLD, {"release_date": "2005-01-01", "max_game_age": 5})
+
+
+def test_game_age_cutoff_is_january_first() -> None:
+    policy = _policy(max_game_age=5)  # NOW is 2026: cutoff 2021-01-01
+    assert decide(_gw(), _game(release_date="2021-01-01"), policy, NOW).code == ELIGIBLE
+    assert decide(_gw(), _game(release_date="2020-12-31"), policy, NOW).code == GAME_TOO_OLD
+
+
+def test_all_filters_pass() -> None:
+    decision = decide(_gw(), _game(), _policy(max_game_age=10, excluded_genres=frozenset({"action"})), NOW)
+    assert decision.code == ELIGIBLE
+
+
+# ----------------------------------------------------------------------------
+# Unknown Steam data (D2: fail closed for quality, pass for exclusion)
+# ----------------------------------------------------------------------------
+
+def test_min_score_zero_still_needs_game_data() -> None:
+    assert decide(_gw(), None, _policy(min_score=0, min_reviews=None), NOW).code == NO_GAME_DATA
+
+
+def test_every_quality_filter_off_does_not_need_game_data() -> None:
+    policy = _policy(min_score=None, min_reviews=None, max_game_age=None, excluded_genres=frozenset({"action"}))
+    assert policy.needs_game_data is False
+    assert decide(_gw(), None, policy, NOW).code == ELIGIBLE
 
 
 @pytest.mark.parametrize("genres", [None, []])
-def test_unknown_or_empty_genres_pass(genres):
-    """Negative filter: unfetched (None) and empty genres never fail it."""
-    crit = EligibilityCriteria(min_price=10, min_score=7, excluded_genres=["Action"])
-    assert evaluate_eligibility(_gw(), _game(genres=genres), crit, NOW) == ELIGIBLE
+def test_unknown_or_empty_genres_pass_the_exclusion(genres: list[str] | None) -> None:
+    policy = _policy(excluded_genres=frozenset({"action"}))
+    assert decide(_gw(), _game(genres=genres), policy, NOW).code == ELIGIBLE
 
 
-def test_missing_game_passes_genre_filter_without_quality_criteria():
-    """Excluded genres alone never require game data."""
-    crit = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
-    assert crit.needs_game_data is False
-    assert evaluate_eligibility(_gw(), None, crit, NOW) == ELIGIBLE
+@pytest.mark.parametrize("score", [None, 0])
+def test_unknown_score_counts_as_zero(score: int | None) -> None:
+    decision = decide(_gw(), _game(review_score=score), _policy(min_score=1, min_reviews=None), NOW)
+    assert (decision.code, decision.detail) == (SCORE_BELOW_MIN, {"score": 0, "min_score": 1})
 
 
-def test_missing_game_with_quality_criteria_still_no_game_data():
-    crit = EligibilityCriteria(min_price=10, min_score=7, excluded_genres=["Action"])
-    assert evaluate_eligibility(_gw(), None, crit, NOW) == NO_GAME_DATA
+def test_unknown_review_count_counts_as_zero() -> None:
+    decision = decide(_gw(), _game(total_reviews=None), _policy(min_score=None, min_reviews=1), NOW)
+    assert (decision.code, decision.detail) == (REVIEWS_BELOW_MIN, {"reviews": 0, "min_reviews": 1})
 
 
-def test_empty_exclusion_list_never_excludes():
-    crit = EligibilityCriteria(min_price=10, excluded_genres=[])
-    assert evaluate_eligibility(_gw(), _game(genres=["Action"]), crit, NOW) == ELIGIBLE
+def test_unknown_release_date_fails_the_age_limit() -> None:
+    decision = decide(_gw(), _game(release_date=None), _policy(max_game_age=5), NOW)
+    assert (decision.code, decision.detail) == (GAME_TOO_OLD, {"release_date": None, "max_game_age": 5})
 
 
-def test_wishlist_bypasses_genre_exclusion_only_when_priority_on():
-    game = _game(genres=["Action"])
-    on = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
-    off = EligibilityCriteria(min_price=10, excluded_genres=["Action"], wishlist_priority=False)
-    assert evaluate_eligibility(_gw(is_wishlist=True), game, on, NOW) == ELIGIBLE
-    assert evaluate_eligibility(_gw(is_wishlist=True), game, off, NOW) == GENRE_EXCLUDED
-
-
-def test_dlc_bypasses_genre_exclusion_only_when_priority_on():
-    game = _game(genres=["Action"])
-    on = EligibilityCriteria(min_price=10, excluded_genres=["Action"], dlc_priority=True)
-    off = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
-    assert evaluate_eligibility(_gw(is_dlc=True), game, on, NOW) == ELIGIBLE
-    assert evaluate_eligibility(_gw(is_dlc=True), game, off, NOW) == GENRE_EXCLUDED
-
-
-def test_precedence_price_beats_genre():
-    game = _game(genres=["Action"])
-    below = EligibilityCriteria(min_price=100, excluded_genres=["Action"])
-    above = EligibilityCriteria(min_price=10, max_price=40, excluded_genres=["Action"])
-    assert evaluate_eligibility(_gw(price=50), game, below, NOW) == PRICE_BELOW_MIN
-    assert evaluate_eligibility(_gw(price=50), game, above, NOW) == PRICE_ABOVE_MAX
-
-
-@pytest.mark.parametrize("game_kw, crit_kw", [
-    (dict(review_score=2), dict(min_score=7)),
-    (dict(total_reviews=3), dict(min_reviews=1000)),
-    (dict(release_date="1999-01-01"), dict(max_game_age=2)),
-])
-def test_precedence_genre_beats_quality(game_kw, crit_kw):
-    crit = EligibilityCriteria(min_price=10, excluded_genres=["Action"], **crit_kw)
-    game = _game(genres=["Action"], **game_kw)
-    assert evaluate_eligibility(_gw(), game, crit, NOW) == GENRE_EXCLUDED
-
-
-@pytest.mark.parametrize("gw_kw, expected", [
-    (dict(end_time=NOW - timedelta(hours=1)), EXPIRED),
-    (dict(is_hidden=True), HIDDEN),
-    (dict(is_entered=True), ENTERED),
-    (dict(is_safe=False), UNSAFE),
-])
-def test_precedence_base_checks_beat_genre(gw_kw, expected):
-    crit = EligibilityCriteria(min_price=10, excluded_genres=["Action"])
-    assert evaluate_eligibility(_gw(**gw_kw), _game(genres=["Action"]), crit, NOW) == expected
-
-
-def test_criteria_normalizes_excluded_genres():
-    crit = EligibilityCriteria(excluded_genres=[" Action ", "", "  ", "INDIE", "indie"])
-    assert crit.excluded_genres == frozenset({"action", "indie"})
-    assert EligibilityCriteria().excluded_genres == frozenset()
-
-
-def test_genre_folding_matches_sqlite_lower():
-    """Only ASCII letters fold (SQLite's lower()), so the evaluator agrees
-    with the SQL query on non-ASCII names too."""
-    crit = EligibilityCriteria(min_price=10, excluded_genres=["ACCIÓN"])
-    assert crit.excluded_genres == frozenset({"acciÓn"})
-    assert evaluate_eligibility(_gw(), _game(genres=["Acción"]), crit, NOW) == ELIGIBLE
-    assert evaluate_eligibility(_gw(), _game(genres=["AcciÓn"]), crit, NOW) == GENRE_EXCLUDED
-
-
-def test_genre_reason_label():
-    assert GENRE_EXCLUDED == "genre_excluded"
-    assert REASON_LABELS[GENRE_EXCLUDED] == "Game genre is excluded"
+def test_score_and_reviews_none_are_off() -> None:
+    game = _game(review_score=0, total_reviews=0)
+    assert decide(_gw(), game, _policy(min_score=None, min_reviews=None), NOW).code == ELIGIBLE
 
 
 # ----------------------------------------------------------------------------
-# 4. Entry order: priority_sort_key (pure, fixed NOW)
+# Genre matching
 # ----------------------------------------------------------------------------
 
-def _priority_pool():
-    """Candidate pool in the repository's price-descending order."""
-    return [
-        _gw(code="far", price=900, end_time=NOW + timedelta(days=3)),
-        _gw(code="past_thr", price=500, end_time=NOW + timedelta(minutes=61)),
-        _gw(code="noend", price=300, end_time=None),
-        _gw(code="wish2", price=40, end_time=NOW + timedelta(days=3), is_wishlist=True),
-        _gw(code="dlc2", price=30, end_time=NOW + timedelta(days=3), is_dlc=True),
-        _gw(code="soon5", price=20, end_time=NOW + timedelta(minutes=5)),
-        _gw(code="dlc", price=15, end_time=NOW + timedelta(minutes=10), is_dlc=True),
-        _gw(code="at_thr", price=10, end_time=NOW + timedelta(minutes=60)),
-        _gw(code="wish", price=5, end_time=NOW + timedelta(minutes=10), is_wishlist=True),
+@pytest.mark.parametrize("excluded, stored", [("ACTION", "Action"), ("action", "ACTION"), (" Action ", "aCtIoN")])
+def test_genre_exclusion_is_case_insensitive(excluded: str, stored: str) -> None:
+    policy = _policy(excluded_genres=fold_genres([excluded]))
+    assert decide(_gw(), _game(genres=[stored]), policy, NOW).detail == {"genre": stored}
+
+
+def test_genre_folding_is_ascii_only() -> None:
+    policy = _policy(excluded_genres=frozenset({"ACCIÓN"}))
+    assert policy.excluded_genres == frozenset({"acciÓn"})
+    assert decide(_gw(), _game(genres=["Acción"]), policy, NOW).code == ELIGIBLE
+    assert decide(_gw(), _game(genres=["AcciÓn"]), policy, NOW).code == GENRE_EXCLUDED
+
+
+def test_fold_genres_strips_and_drops_empties_and_non_strings() -> None:
+    assert fold_genres([" Action ", "", "  ", "INDIE", "indie", 3]) == frozenset({"action", "indie"})
+
+
+def test_normalized_exclusions_match_each_listed_spelling() -> None:
+    """The normaliser keeps spellings the matcher folds differently, so a
+    list holding both "Éducation" and "éducation" excludes "éducation"."""
+    excluded = normalize_genre_list(["Éducation", "éducation"], "excluded_genres")
+    policy = _policy(excluded_genres=frozenset(excluded))
+    assert decide(_gw(), _game(genres=["éducation"]), policy, NOW).code == GENRE_EXCLUDED
+
+
+def test_non_string_genres_are_ignored_by_the_exclusion() -> None:
+    policy = _policy(excluded_genres=frozenset({"action"}))
+    assert decide(_gw(), _game(genres=[7, None]), policy, NOW).code == ELIGIBLE
+
+
+# ----------------------------------------------------------------------------
+# Include list (D13)
+# ----------------------------------------------------------------------------
+
+def _include(*genres: str, **kw: Any) -> AutoJoinPolicy:
+    return _policy(included_genres=frozenset(genres), **kw)
+
+
+def test_include_list_match_is_ascii_case_insensitive() -> None:
+    decision = decide(_gw(), _game(genres=["Action", "indie"]), _include("RPG", "Indie"), NOW)
+    assert decision.code == ELIGIBLE
+
+
+def test_include_list_no_match_records_the_cached_genres() -> None:
+    decision = decide(_gw(), _game(genres=["Action", "Horror"]), _include("RPG", "Indie"), NOW)
+    assert (decision.code, decision.detail) == (GENRE_NOT_INCLUDED, {"genres": ["Action", "Horror"]})
+    assert explain(decision.code, decision.detail) == "None of its genres (Action, Horror) is on your included list"
+
+
+def test_include_list_fails_closed_on_empty_genres() -> None:
+    decision = decide(_gw(), _game(genres=[]), _include("RPG"), NOW)
+    assert (decision.code, decision.detail) == (GENRE_NOT_INCLUDED, {"genres": []})
+    assert explain(decision.code, decision.detail) == "It has no Steam genres, so it cannot match your included list"
+
+
+@pytest.mark.parametrize("game", [None, SimpleNamespace(genres=None, review_score=9, total_reviews=5000,
+                                                        release_date="2024-01-01")])
+def test_include_list_fails_closed_on_unknown_genres(game: Any) -> None:
+    decision = decide(_gw(), game, _include("RPG"), NOW)
+    assert (decision.code, decision.detail) == (GENRE_NOT_INCLUDED, {"genres": None})
+    assert explain(decision.code, decision.detail) == (
+        "Steam genres not cached yet; unknown genres fail your included-genre filter; checked again next cycle"
+    )
+
+
+def test_include_list_fires_before_no_game_data_even_with_quality_filters_off() -> None:
+    policy = _include("RPG", min_score=None, min_reviews=None, max_game_age=None)
+    decision = decide(_gw(), None, policy, NOW)
+    assert (decision.code, decision.detail) == (GENRE_NOT_INCLUDED, {"genres": None})
+
+
+def test_include_list_fires_before_no_game_data_with_quality_filters_on() -> None:
+    assert decide(_gw(), None, _include("RPG"), NOW).code == GENRE_NOT_INCLUDED
+
+
+def test_empty_include_list_is_inert() -> None:
+    assert decide(_gw(), _game(genres=[]), _policy(included_genres=frozenset()), NOW).code == ELIGIBLE
+
+
+@pytest.mark.parametrize("genres, expected, detail", [
+    (["Action"], GENRE_EXCLUDED, {"genre": "Action"}),
+    (["RPG"], ELIGIBLE, {"priority": None, "rank": 0, "lifted_by": None}),
+    (["Indie"], GENRE_NOT_INCLUDED, {"genres": ["Indie"]}),
+])
+def test_exclusion_wins_over_inclusion(genres: list[str], expected: str, detail: dict[str, Any]) -> None:
+    policy = _include("Action", "RPG", excluded_genres=frozenset({"action"}))
+    decision = decide(_gw(), _game(genres=genres), policy, NOW)
+    assert (decision.code, decision.detail) == (expected, detail)
+
+
+def test_include_precedence_price_first() -> None:
+    assert decide(_gw(price=5), _game(genres=["Indie"]), _include("RPG"), NOW).code == PRICE_BELOW_MIN
+
+
+def test_include_precedence_exclusion_before_inclusion() -> None:
+    policy = _include("RPG", excluded_genres=frozenset({"action"}))
+    assert decide(_gw(), _game(genres=["Action"]), policy, NOW).code == GENRE_EXCLUDED
+
+
+def test_include_precedence_inclusion_before_score() -> None:
+    decision = decide(_gw(), _game(genres=["Indie"], review_score=6), _include("RPG"), NOW)
+    assert decision.code == GENRE_NOT_INCLUDED
+
+
+@pytest.mark.parametrize("flag, item", [("is_wishlist", WISHLIST), ("is_dlc", DLC)])
+def test_exemption_skips_both_genre_lists(flag: str, item: PriorityItem) -> None:
+    policy = _include("RPG", excluded_genres=frozenset({"action"}), priorities=(item,))
+    decision = decide(_gw(**{flag: True}), _game(genres=["Action"]), policy, NOW)
+    assert (decision.code, decision.lifted_by) == (ELIGIBLE, item.type)
+
+
+def test_ending_soon_alone_does_not_skip_the_include_list() -> None:
+    policy = _include("RPG", priorities=(_soon(60),))
+    decision = decide(_gw(end_time=NOW + timedelta(minutes=30)), _game(genres=["Indie"]), policy, NOW)
+    assert decision.code == GENRE_NOT_INCLUDED
+
+
+def test_include_label_lists_at_most_six_genres() -> None:
+    genres = ["A", "B", "C", "D", "E", "F", "G", "H"]
+    decision = decide(_gw(), _game(genres=genres), _include("RPG"), NOW)
+    assert explain(decision.code, decision.detail) == "None of its genres (A, B, C, D, E, F, …) is on your included list"
+
+
+def test_include_label_with_exactly_six_genres_is_not_cut() -> None:
+    label = explain(GENRE_NOT_INCLUDED, {"genres": ["A", "B", "C", "D", "E", "F"]})
+    assert label == "None of its genres (A, B, C, D, E, F) is on your included list"
+
+
+# ----------------------------------------------------------------------------
+# Ordering
+# ----------------------------------------------------------------------------
+
+def _order(pool: list[Any], policy: AutoJoinPolicy, game: Any = None) -> list[str]:
+    decided = [(g, decide(g, game, policy, NOW)) for g in pool]
+    return [g.code for g, _ in order_candidates(decided, policy, NOW)]
+
+
+def test_order_follows_the_list_with_groups() -> None:
+    soon = NOW + timedelta(minutes=30)
+    pool = [  # price descending, one flag each
+        _gw(code="rich", price=900),
+        _gw(code="soon_late", price=500, end_time=NOW + timedelta(minutes=50)),
+        _gw(code="wish_hi", price=400, is_wishlist=True),
+        _gw(code="dlc_hi", price=300, is_dlc=True),
+        _gw(code="soon_early", price=200, end_time=NOW + timedelta(minutes=10)),
+        _gw(code="mid", price=100),
+        _gw(code="wish_lo", price=40, is_wishlist=True, end_time=soon),
+        _gw(code="dlc_lo", price=30, is_dlc=True),
+    ]
+    policy = AutoJoinPolicy(priorities=(DLC, WISHLIST, _soon(60)))
+    assert _order(pool, policy) == [
+        "dlc_hi", "dlc_lo", "wish_hi", "wish_lo", "soon_early", "soon_late", "rich", "mid",
     ]
 
 
-def _ordered_codes(pool, criteria, now=NOW):
-    return [g.code for g in sorted(pool, key=lambda g: priority_sort_key(g, criteria, now))]
+def test_later_exempt_match_breaks_ties_inside_a_group() -> None:
+    """As in the replaced engine: inside the wishlist group, giveaways also
+    matching the dlc item come first; price order otherwise."""
+    pool = [
+        _gw(code="wish_hi", price=400, is_wishlist=True),
+        _gw(code="both_lo", price=10, is_wishlist=True, is_dlc=True),
+    ]
+    assert _order(pool, AutoJoinPolicy(priorities=(WISHLIST, DLC))) == ["both_lo", "wish_hi"]
+    assert _order(pool, AutoJoinPolicy(priorities=(WISHLIST,))) == ["wish_hi", "both_lo"]
 
 
-def _legacy_key(g, criteria):
-    """The two-element key evaluate_and_get_eligible used before ending-soon."""
-    return (
-        not (criteria.wishlist_priority and g.is_wishlist),
-        not (criteria.dlc_priority and g.is_dlc),
-    )
+def test_ending_soon_after_an_exempt_match_does_not_reorder_its_group() -> None:
+    pool = [
+        _gw(code="wish_far", price=400, is_wishlist=True),
+        _gw(code="wish_soon", price=10, is_wishlist=True, end_time=NOW + timedelta(minutes=5)),
+    ]
+    assert _order(pool, AutoJoinPolicy(priorities=(WISHLIST, _soon(60)))) == ["wish_far", "wish_soon"]
 
 
-@pytest.mark.parametrize("wishlist, dlc, ending_soon, expected", [
-    (False, False, False,
-     ["far", "past_thr", "noend", "wish2", "dlc2", "soon5", "dlc", "at_thr", "wish"]),
-    (True, False, False,
-     ["wish2", "wish", "far", "past_thr", "noend", "dlc2", "soon5", "dlc", "at_thr"]),
-    (False, True, False,
-     ["dlc2", "dlc", "far", "past_thr", "noend", "wish2", "soon5", "at_thr", "wish"]),
-    (True, True, False,
-     ["wish2", "wish", "dlc2", "dlc", "far", "past_thr", "noend", "soon5", "at_thr"]),
-    # Lifts off: wishlist/DLC rows ending in 10 min are plain and join the
-    # ending-soon group; dlc and wish share an end_time so price order holds.
-    (False, False, True,
-     ["soon5", "dlc", "wish", "at_thr", "far", "past_thr", "noend", "wish2", "dlc2"]),
-    (True, False, True,
-     ["wish2", "wish", "soon5", "dlc", "at_thr", "far", "past_thr", "noend", "dlc2"]),
-    (False, True, True,
-     ["dlc2", "dlc", "soon5", "wish", "at_thr", "far", "past_thr", "noend", "wish2"]),
-    (True, True, True,
-     ["wish2", "wish", "dlc2", "dlc", "soon5", "at_thr", "far", "past_thr", "noend"]),
-])
-def test_priority_sort_key_all_lift_combinations(wishlist, dlc, ending_soon, expected):
-    criteria = EligibilityCriteria(
-        wishlist_priority=wishlist,
-        dlc_priority=dlc,
-        ending_soon_priority=ending_soon,
-        ending_soon_threshold_minutes=60,
-    )
-    pool = _priority_pool()
-    order = _ordered_codes(pool, criteria)
-
-    assert order == expected
-    # Lifted wishlist/DLC groups keep price order even though the cheaper
-    # row in each ends sooner.
-    if wishlist:
-        assert order.index("wish2") < order.index("wish")
-    if dlc:
-        assert order.index("dlc2") < order.index("dlc")
-    # threshold + 1 minute and end_time None are never lifted: they keep
-    # their price position among the rest, after the expensive "far" row.
-    assert order.index("far") < order.index("past_thr") < order.index("noend")
-    if ending_soon:
-        # Exactly at the threshold counts; soonest first inside the group.
-        assert order.index("soon5") < order.index("at_thr") < order.index("far")
-    else:
-        # Toggle off: identical to the previous two-element key.
-        legacy = [g.code for g in sorted(pool, key=lambda g: _legacy_key(g, criteria))]
-        assert order == legacy
+def test_ending_soon_boundary() -> None:
+    at = _gw(code="at", price=10, end_time=NOW + timedelta(minutes=60))
+    past = _gw(code="past", price=20, end_time=NOW + timedelta(minutes=61))
+    policy = AutoJoinPolicy(priorities=(_soon(60),))
+    assert decide(at, None, policy, NOW).priority == "ending_soon"
+    assert decide(past, None, policy, NOW).priority is None
+    assert _order([past, at], policy) == ["at", "past"]
 
 
-@pytest.mark.parametrize("wishlist", [False, True])
-@pytest.mark.parametrize("dlc", [False, True])
-@pytest.mark.parametrize("threshold", [5, 60, 10080])
-def test_priority_sort_key_toggle_off_matches_legacy_key(wishlist, dlc, threshold):
-    criteria = EligibilityCriteria(
-        wishlist_priority=wishlist, dlc_priority=dlc,
-        ending_soon_priority=False, ending_soon_threshold_minutes=threshold,
-    )
-    pool = _priority_pool()
-    for g in pool:
-        key = priority_sort_key(g, criteria, NOW)
-        assert key[:2] == _legacy_key(g, criteria)
-        assert key[2:] == (True, datetime.min)
+def test_ending_soon_matcher_never_matches_an_unknown_end_time() -> None:
+    matches = PRIORITY_TYPES["ending_soon"].matches
+    assert matches(_gw(end_time=None), _soon(10080), NOW) is False
+    assert matches(_gw(end_time=NOW + timedelta(minutes=1)), PriorityItem("ending_soon"), NOW) is False
 
 
-def test_priority_sort_key_threshold_boundary():
-    criteria = EligibilityCriteria(ending_soon_priority=True, ending_soon_threshold_minutes=60)
-    at = _gw(end_time=NOW + timedelta(minutes=60))
-    past = _gw(end_time=NOW + timedelta(minutes=61))
-    none = _gw(end_time=None)
-    assert priority_sort_key(at, criteria, NOW) == (True, True, False, at.end_time)
-    assert priority_sort_key(past, criteria, NOW) == (True, True, True, datetime.min)
-    assert priority_sort_key(none, criteria, NOW) == (True, True, True, datetime.min)
+def test_end_time_none_is_expired_before_ordering() -> None:
+    decision = decide(_gw(end_time=None), None, AutoJoinPolicy(priorities=(_soon(60),)), NOW)
+    assert (decision.code, decision.priority) == (EXPIRED, None)
+
+
+def test_empty_list_keeps_price_order_and_wishlist_dlc_obey_filters() -> None:
+    pool = [
+        _gw(code="a", price=90),
+        _gw(code="wish_cheap", price=5, is_wishlist=True),
+        _gw(code="b", price=60, end_time=NOW + timedelta(minutes=5)),
+        _gw(code="dlc_ok", price=20, is_dlc=True),
+    ]
+    policy = AutoJoinPolicy(min_price=10)
+    assert _order(pool, policy) == ["a", "b", "dlc_ok"]
+    assert decide(pool[1], None, policy, NOW).code == PRICE_BELOW_MIN
+
+
+# ----------------------------------------------------------------------------
+# Cycle plan
+# ----------------------------------------------------------------------------
+
+def _eligible(code: str, price: int) -> tuple[Any, Decision]:
+    detail = {"priority": None, "rank": 0, "lifted_by": None}
+    return _gw(code=code, price=price), Decision(code=ELIGIBLE, detail=detail)
+
+
+def _plan_codes(plan: list[tuple[Any, str, dict[str, Any]]]) -> list[tuple[str, str, dict[str, Any]]]:
+    return [(g.code, code, detail) for g, code, detail in plan]
+
+
+def test_plan_with_unknown_points_keeps_every_candidate_eligible() -> None:
+    candidates = [_eligible("A", 60), _eligible("B", 40)]
+    plan = plan_cycle(candidates, None, AutoJoinPolicy(start_at=0, stop_at=0))
+    assert [code for _, code, _ in plan] == [ELIGIBLE, ELIGIBLE]
+    assert plan[0][2] == {"priority": None, "rank": 0, "lifted_by": None}
+
+
+def test_plan_below_start_threshold_accumulates() -> None:
+    plan = plan_cycle([_eligible("A", 60), _eligible("B", 40)], 300, AutoJoinPolicy(start_at=350, stop_at=200))
+    assert _plan_codes(plan) == [
+        ("A", POINTS_ACCUMULATING, {"points": 300, "start_at": 350}),
+        ("B", POINTS_ACCUMULATING, {"points": 300, "start_at": 350}),
+    ]
+
+
+def test_plan_budget_floor_skips_not_stops() -> None:
+    plan = plan_cycle([_eligible("A", 60), _eligible("B", 40)], 250, AutoJoinPolicy(start_at=0, stop_at=200))
+    assert _plan_codes(plan) == [
+        ("A", BUDGET_FLOOR, {"price": 60, "points": 250, "stop_at": 200}),
+        ("B", ELIGIBLE, {"priority": None, "rank": 0, "lifted_by": None}),
+    ]
+
+
+def test_plan_cycle_cap() -> None:
+    candidates = [_eligible("A", 10), _eligible("B", 10), _eligible("C", 10)]
+    plan = plan_cycle(candidates, 1000, AutoJoinPolicy(max_entries_per_cycle=2))
+    assert [code for _, code, _ in plan] == [ELIGIBLE, ELIGIBLE, CYCLE_CAP]
+    assert plan[2][2] == {"cap": 2}
+
+
+def test_plan_cap_counts_attempts_not_budget_skips() -> None:
+    candidates = [_eligible("BIG", 900), _eligible("A", 10), _eligible("B", 10), _eligible("C", 10)]
+    plan = plan_cycle(candidates, 100, AutoJoinPolicy(max_entries_per_cycle=2))
+    assert [code for _, code, _ in plan] == [BUDGET_FLOOR, ELIGIBLE, ELIGIBLE, CYCLE_CAP]
+
+
+def test_plan_tracks_the_running_balance() -> None:
+    plan = plan_cycle([_eligible("A", 60), _eligible("B", 50)], 500, AutoJoinPolicy(start_at=0, stop_at=400))
+    assert _plan_codes(plan) == [
+        ("A", ELIGIBLE, {"priority": None, "rank": 0, "lifted_by": None}),
+        ("B", BUDGET_FLOOR, {"price": 50, "points": 440, "stop_at": 400}),
+    ]
+
+
+def test_plan_at_the_start_threshold_spends() -> None:
+    plan = plan_cycle([_eligible("A", 10)], 350, AutoJoinPolicy(start_at=350, stop_at=0))
+    assert [code for _, code, _ in plan] == [ELIGIBLE]
+
+
+def test_cycle_budget_failed_attempt_spends_nothing() -> None:
+    """The entry loop's view: FIRST (60P) fails, so SECOND (50P) still fits
+    500 - 50 >= 400, though the plan priced it out assuming FIRST succeeds."""
+    budget = CycleBudget.for_cycle(500, AutoJoinPolicy(stop_at=400, max_entries_per_cycle=10))
+    assert budget.skip(60) is None
+    budget.attempt(0)
+    assert budget.skip(50) is None
+    budget.attempt(50)
+    assert (budget.points, budget.attempts) == (450, 2)
+    assert budget.skip(60) == (BUDGET_FLOOR, {"price": 60, "points": 450, "stop_at": 400})
+
+
+def test_cycle_budget_cap_counts_failed_attempts_first() -> None:
+    budget = CycleBudget.for_cycle(1000, AutoJoinPolicy(stop_at=0, max_entries_per_cycle=1))
+    budget.attempt(0)
+    # The cap wins over the floor once reached, whatever the price.
+    assert budget.skip(5000) == (CYCLE_CAP, {"cap": 1})
+
+
+def test_cycle_budget_floor_is_inclusive() -> None:
+    budget = CycleBudget.for_cycle(250, AutoJoinPolicy(stop_at=200))
+    assert budget.skip(50) is None
+    assert budget.skip(51) == (BUDGET_FLOOR, {"price": 51, "points": 250, "stop_at": 200})
+
+
+# ----------------------------------------------------------------------------
+# Priority list parsing
+# ----------------------------------------------------------------------------
+
+def test_parse_priorities_accepts_every_type_in_order() -> None:
+    items = parse_priorities([
+        {"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 120}, {"type": "wishlist"},
+    ])
+    assert items == (DLC, _soon(120), WISHLIST)
+    assert [item.to_dict() for item in items] == [
+        {"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 120}, {"type": "wishlist"},
+    ]
 
 
 @pytest.mark.parametrize("threshold", [5, 10080])
-def test_priority_sort_key_extreme_thresholds(threshold):
-    criteria = EligibilityCriteria(
-        ending_soon_priority=True, ending_soon_threshold_minutes=threshold,
-    )
-    pool = [
-        _gw(code="rich_out", price=900, end_time=NOW + timedelta(minutes=threshold + 1)),
-        _gw(code="mid_at", price=100, end_time=NOW + timedelta(minutes=threshold)),
-        _gw(code="cheap_soonest", price=10, end_time=NOW + timedelta(minutes=1)),
-        _gw(code="none", price=5, end_time=None),
-    ]
-    assert _ordered_codes(pool, criteria) == ["cheap_soonest", "mid_at", "rich_out", "none"]
+def test_parse_priorities_threshold_bounds(threshold: int) -> None:
+    assert parse_priorities([{"type": "ending_soon", "threshold_minutes": threshold}]) == (_soon(threshold),)
 
 
-def test_priority_sort_key_end_time_beats_price_and_ties_keep_price():
-    criteria = EligibilityCriteria(ending_soon_priority=True, ending_soon_threshold_minutes=60)
-    same_end = NOW + timedelta(minutes=30)
-    pool = [
-        _gw(code="rich_far", price=900, end_time=NOW + timedelta(days=2)),
-        _gw(code="soon_500", price=500, end_time=NOW + timedelta(minutes=20)),
-        _gw(code="tie_300", price=300, end_time=same_end),
-        _gw(code="tie_200", price=200, end_time=same_end),
-        _gw(code="soon_10", price=10, end_time=NOW + timedelta(minutes=2)),
-    ]
-    assert _ordered_codes(pool, criteria) == [
-        "soon_10", "soon_500", "tie_300", "tie_200", "rich_far",
-    ]
+def test_parse_priorities_empty_list() -> None:
+    assert parse_priorities([]) == ()
 
 
-# ----------------------------------------------------------------------------
-# DB-backed fixtures for layers 2 & 3
-# ----------------------------------------------------------------------------
-
-@pytest.fixture
-async def test_db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    yield maker
-    await engine.dispose()
-
-
-async def _seed(session):
-    """A mixed pool covering every reason code; returns no value."""
-    # The code under test uses the real clock (utcnow()), so seed
-    # relative to it — a fixed date would silently expire the whole pool.
-    now = utcnow()
-    future = now + timedelta(days=2)
-    past = now - timedelta(days=2)
-
-    # Games
-    session.add_all([
-        Game(id=1, name="Great", type="game", review_score=9, total_reviews=5000, release_date="2021-01-01",
-             genres=["Puzzle"]),
-        Game(id=2, name="LowScore", type="game", review_score=4, total_reviews=5000, release_date="2021-01-01"),
-        Game(id=3, name="FewReviews", type="game", review_score=9, total_reviews=10, release_date="2021-01-01"),
-        Game(id=4, name="Old", type="game", review_score=9, total_reviews=5000, release_date="2005-01-01"),
-        Game(id=5, name="Unknown", type="dlc", review_score=0, total_reviews=0, release_date=None),
-        # Genre rows: otherwise excellent so they only differ on genres
-        Game(id=6, name="ActionIndie", type="game", review_score=9, total_reviews=5000,
-             release_date="2024-01-01", genres=["Action", "Indie"]),
-        Game(id=7, name="NoGenres", type="game", review_score=9, total_reviews=5000,
-             release_date="2024-01-01", genres=[]),
-        Game(id=8, name="Unfetched", type="game", review_score=9, total_reviews=5000,
-             release_date="2024-01-01", genres=None),
-        Game(id=9, name="Accented", type="game", review_score=9, total_reviews=5000,
-             release_date="2024-01-01", genres=["Acción"]),
-    ])
-
-    def gw(code, price=50, game_id=1, end=future, hidden=False, entered=False,
-           wishlist=False, dlc=False, safe=None):
-        return Giveaway(
-            code=code, url=f"http://x/{code}", game_name=code, price=price,
-            end_time=end, game_id=game_id, is_hidden=hidden, is_entered=entered,
-            is_wishlist=wishlist, is_dlc=dlc, is_safe=safe,
-        )
-
-    session.add_all([
-        gw("good1", price=80, game_id=1),       # eligible
-        gw("good2", price=60, game_id=1),       # eligible
-        gw("lowscore", game_id=2),              # score below min
-        gw("fewrev", game_id=3),                # reviews below min
-        gw("old", game_id=4),                   # too old (only when max_game_age set)
-        gw("unknown", game_id=5),               # score/reviews 0 → fails
-        gw("nogame", game_id=999),              # game_id with no Game row → no_game_data
-        gw("nogameid", game_id=None),           # no game_id at all → no_game_data
-        gw("cheap", price=5, game_id=1),        # price below min (min_price=10)
-        gw("hidden", game_id=1, hidden=True),   # hidden
-        gw("entered", game_id=1, entered=True), # entered (excluded from candidates)
-        gw("expired", game_id=1, end=past),     # expired (excluded by active filter)
-        # Wishlist rows: bypass price/game filters even with bad or missing data
-        gw("wishbad", price=1, game_id=2, wishlist=True),      # low price + low score → still eligible
-        gw("wishnogame", game_id=None, wishlist=True),         # no game data → still eligible
-        gw("wishhidden", game_id=1, hidden=True, wishlist=True),  # hidden beats wishlist
-        # DLC row: bypasses filters only when dlc_priority is on
-        gw("dlcbad", price=1, game_id=2, dlc=True),            # fails price + score filters
-        # Safety rows: is_safe False (unsafe or borderline) is excluded even
-        # for wishlist; explicit True and NULL (unchecked) pass
-        gw("unsafegw", price=80, game_id=1, safe=False),
-        gw("wishunsafe", price=80, game_id=1, wishlist=True, safe=False),
-        gw("safegw", price=80, game_id=1, safe=True),          # eligible
-        # Genre rows: rejected only by an exclusion matching Action/Indie
-        gw("genrebad", price=65, game_id=6),                   # genres Action, Indie
-        gw("genreempty", price=65, game_id=7),                 # genres [] → passes
-        gw("genrenull", price=65, game_id=8),                  # genres NULL → passes
-        gw("genreaccent", price=65, game_id=9),                # non-ASCII genre
-        gw("wishgenre", price=65, game_id=6, wishlist=True),   # bypass iff wishlist_priority
-        gw("dlcgenre", price=65, game_id=6, dlc=True),         # bypass iff dlc_priority
-    ])
-    await session.commit()
-
-
-def _service(session):
-    game_service = GameService(session=session, steam_client=MagicMock())
-    return GiveawayService(session, MagicMock(), game_service)
-
-
-# ----------------------------------------------------------------------------
-# 2. Behavior-equivalence: evaluator ELIGIBLE set == SQL get_eligible
-# ----------------------------------------------------------------------------
-
-@pytest.mark.parametrize("crit_kwargs", [
-    dict(min_price=10, min_score=7, min_reviews=1000),                 # defaults
-    dict(min_price=10, min_score=7, min_reviews=1000, max_game_age=5), # + age
-    dict(min_price=10),                                                # no game criteria
-    dict(min_price=10, max_price=70, min_score=7, min_reviews=1000),   # + max price
-    dict(min_price=0, min_score=0, min_reviews=0),                     # zero thresholds
-    dict(min_price=10, min_score=7, min_reviews=1000, wishlist_priority=False),  # toggle off
-    dict(min_price=10, min_score=7, min_reviews=1000, dlc_priority=True),  # DLC priority on
-    # Ending-soon lift: ordering only, the eligible set must not change.
-    dict(min_price=10, min_score=7, min_reviews=1000, ending_soon_priority=True),
-    dict(min_price=10, min_score=7, min_reviews=1000, dlc_priority=True,
-         ending_soon_priority=True, ending_soon_threshold_minutes=10080),
-    # Genre exclusions (mixed case; with and without quality criteria)
-    dict(min_price=10, min_score=7, min_reviews=1000, excluded_genres=["ACTION"]),
-    dict(min_price=10, excluded_genres=["action"]),  # join forced only for genres
-    dict(min_price=10, min_score=0, min_reviews=0, excluded_genres=["indie"],
-         dlc_priority=True, wishlist_priority=False),
-    dict(min_price=10, excluded_genres=["Racing", " Indie ", ""], max_game_age=5),
-    dict(min_price=10, excluded_genres=["ACCIÓN"]),  # non-ASCII Ó not folded: no match
-    dict(min_price=10, excluded_genres=["ACCIóN"]),  # ASCII folds: matches "Acción"
-    dict(min_price=10, excluded_genres=[]),          # empty list = no genre filter
+@pytest.mark.parametrize("raw, message", [
+    ("wishlist", "must be a list"),
+    (None, "must be a list"),
+    ([{"type": "wishlist"}, {"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 60},
+      {"type": "wishlist"}], "at most 3"),
+    (["wishlist"], "must be an object"),
+    ([{}], "string 'type'"),
+    ([{"type": 3}], "string 'type'"),
+    ([{"type": "bogus"}], "unknown priority type 'bogus'"),
+    ([{"type": "wishlist"}, {"type": "wishlist"}], "duplicate priority type 'wishlist'"),
+    ([{"type": "wishlist", "threshold_minutes": 10}], "accepts only: type"),
+    ([{"type": "ending_soon"}], "requires threshold_minutes"),
+    ([{"type": "ending_soon", "threshold_minutes": 4}], "between 5 and 10080"),
+    ([{"type": "ending_soon", "threshold_minutes": 10081}], "between 5 and 10080"),
+    ([{"type": "ending_soon", "threshold_minutes": "60"}], "must be an integer"),
+    ([{"type": "ending_soon", "threshold_minutes": True}], "must be an integer"),
 ])
-@pytest.mark.asyncio
-async def test_evaluator_matches_sql_get_eligible(test_db, crit_kwargs):
-    async with test_db() as session:
-        await _seed(session)
-        service = _service(session)
-
-        # get_eligible is the SQL filter and knows nothing about entry order.
-        sql_kwargs = {
-            k: v for k, v in crit_kwargs.items()
-            if k not in ("ending_soon_priority", "ending_soon_threshold_minutes")
-        }
-        excluded = crit_kwargs.get("excluded_genres", [])
-        sql_eligible = await service.giveaway_repo.get_eligible(**sql_kwargs)
-        sql_codes = {g.code for g in sql_eligible}
-        # Guard against vacuous equivalence: every param set is chosen so the
-        # seeded pool yields at least one eligible giveaway.
-        assert sql_codes, f"seed produced no SQL-eligible giveaways for {crit_kwargs}"
-
-        criteria = EligibilityCriteria(**{
-            "min_price": crit_kwargs.get("min_price", 0),
-            "max_price": crit_kwargs.get("max_price"),
-            "min_score": crit_kwargs.get("min_score"),
-            "min_reviews": crit_kwargs.get("min_reviews"),
-            "max_game_age": crit_kwargs.get("max_game_age"),
-            "wishlist_priority": crit_kwargs.get("wishlist_priority", True),
-            "dlc_priority": crit_kwargs.get("dlc_priority", False),
-            "ending_soon_priority": crit_kwargs.get("ending_soon_priority", False),
-            "ending_soon_threshold_minutes": crit_kwargs.get("ending_soon_threshold_minutes", 60),
-            "excluded_genres": excluded,
-        })
-        evaluated = await service.evaluate_and_get_eligible(criteria)
-        eval_codes = {g.code for g in evaluated}
-
-        assert eval_codes == sql_codes, f"mismatch for {crit_kwargs}"
-        assert "wishhidden" not in eval_codes
-        if criteria.wishlist_priority:
-            # Wishlist rows bypass the filters, so they are always in the set.
-            assert {"wishbad", "wishnogame"} <= eval_codes
-        else:
-            # Toggle off: wishlist rows get no exemption from the filters.
-            assert "wishbad" not in eval_codes      # fails price + score filters
-            assert "wishnogame" not in eval_codes   # no game data
-        if criteria.dlc_priority:
-            assert "dlcbad" in eval_codes
-        elif (crit_kwargs.get("min_score") or 0) > 0:
-            # Without the priority, strict criteria reject it (price + score).
-            assert "dlcbad" not in eval_codes
-
-        # Genre rows: unknown/empty genres always pass; a matching exclusion
-        # rejects unless a priority bypass applies.
-        assert {"genreempty", "genrenull"} <= eval_codes
-        if criteria.excluded_genres & {"action", "indie"}:
-            assert "genrebad" not in eval_codes
-            assert ("wishgenre" in eval_codes) is criteria.wishlist_priority
-            assert ("dlcgenre" in eval_codes) is criteria.dlc_priority
-        else:
-            assert "genrebad" in eval_codes
-        assert ("genreaccent" in eval_codes) is ("acción" not in criteria.excluded_genres)
-
-        # Ordering: wishlist first, then DLC, then ending soon, then price
-        # desc (active priorities only) — mirror the sort key and require
-        # sortedness. All seeded rows share one end_time, so price breaks ties.
-        now = utcnow()
-        keys = [(*priority_sort_key(g, criteria, now), -g.price) for g in evaluated]
-        assert keys == sorted(keys)
+def test_parse_priorities_rejections(raw: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_priorities(raw)
 
 
-@pytest.mark.asyncio
-async def test_evaluate_and_get_eligible_lifts_ending_soon(test_db):
-    """End to end through the service: the ending-soon lift reorders the
-    eligible list (soonest first, after wishlist) without changing the set,
-    and with the toggle off the order is the legacy price order."""
-    async with test_db() as session:
-        now = utcnow()
-        session.add(Game(id=1, name="G", type="game", review_score=9,
-                         total_reviews=5000, release_date="2021-01-01"))
-
-        def gw(code, price, end, wishlist=False):
-            return Giveaway(code=code, url=f"http://x/{code}", game_name=code,
-                            price=price, end_time=end, game_id=1, is_wishlist=wishlist)
-
-        session.add_all([
-            gw("rich_far", 900, now + timedelta(days=3)),
-            gw("wish_far", 5, now + timedelta(days=3), wishlist=True),
-            gw("soon_mid", 500, now + timedelta(minutes=30)),
-            gw("soon_cheap", 10, now + timedelta(minutes=5)),
-        ])
-        await session.commit()
-        service = _service(session)
-
-        on = EligibilityCriteria(min_price=0, ending_soon_priority=True,
-                                 ending_soon_threshold_minutes=60)
-        off = EligibilityCriteria(min_price=0)
-        on_codes = [g.code for g in await service.evaluate_and_get_eligible(on)]
-        off_codes = [g.code for g in await service.evaluate_and_get_eligible(off)]
-
-        assert on_codes == ["wish_far", "soon_cheap", "soon_mid", "rich_far"]
-        assert off_codes == ["wish_far", "rich_far", "soon_mid", "soon_cheap"]
-        # limit is applied after the sort: the cheap soon row wins the slot.
-        limited = await service.evaluate_and_get_eligible(
-            EligibilityCriteria(min_price=0, wishlist_priority=False,
-                                ending_soon_priority=True), limit=1)
-        assert [g.code for g in limited] == ["soon_cheap"]
-
-
-@pytest.mark.asyncio
-async def test_ending_soon_lift_never_bypasses_filters(test_db):
-    """Rows ending within the threshold that fail a filter stay ineligible with
-    their filter reason recorded; the eligible set is identical with the lift
-    on and off, only the order differs."""
-    async with test_db() as session:
-        now = utcnow()
-        soon = now + timedelta(minutes=10)
-        far = now + timedelta(days=3)
-        session.add_all([
-            Game(id=1, name="Great", type="game", review_score=9,
-                 total_reviews=5000, release_date="2021-01-01"),
-            Game(id=2, name="Bad", type="game", review_score=3,
-                 total_reviews=5000, release_date="2021-01-01"),
-        ])
-
-        def gw(code, price, end, game_id=1, **kw):
-            return Giveaway(code=code, url=f"http://x/{code}", game_name=code,
-                            price=price, end_time=end, game_id=game_id, **kw)
-
-        session.add_all([
-            gw("far_ok", 300, far),
-            gw("soon_ok", 20, soon),
-            gw("soon_cheap", 5, soon),                    # price below min
-            gw("soon_lowscore", 50, soon, game_id=2),     # score below min
-            gw("soon_hidden", 50, soon, is_hidden=True),  # hidden
-            gw("soon_unsafe", 50, soon, is_safe=False),   # unsafe
-            gw("soon_nogame", 50, soon, game_id=None),    # no game data
-        ])
-        await session.commit()
-        service = _service(session)
-
-        base = dict(min_price=10, min_score=7, min_reviews=1000)
-        on = await service.evaluate_and_get_eligible(EligibilityCriteria(
-            **base, ending_soon_priority=True, ending_soon_threshold_minutes=60))
-        on_codes = [g.code for g in on]
-        off_codes = [g.code for g in await service.evaluate_and_get_eligible(
-            EligibilityCriteria(**base))]
-
-        assert set(on_codes) == set(off_codes) == {"far_ok", "soon_ok"}
-        assert on_codes == ["soon_ok", "far_ok"]
-        assert off_codes == ["far_ok", "soon_ok"]
-
-        # The SQL filter agrees with the evaluator's set.
-        sql_codes = {g.code for g in await service.giveaway_repo.get_eligible(**base)}
-        assert sql_codes == set(on_codes)
-
-        reasons = {
-            g.code: g.eligibility_reason
-            for g in await service.giveaway_repo.get_active_unentered()
-        }
-        assert reasons["soon_cheap"] == PRICE_BELOW_MIN
-        assert reasons["soon_lowscore"] == SCORE_BELOW_MIN
-        assert reasons["soon_hidden"] == HIDDEN
-        assert reasons["soon_unsafe"] == UNSAFE
-        assert reasons["soon_nogame"] == NO_GAME_DATA
+def test_max_priority_items_is_the_number_of_types() -> None:
+    assert MAX_PRIORITY_ITEMS == len(PRIORITY_TYPES) == 3
 
 
 # ----------------------------------------------------------------------------
-# 3. Persistence: every candidate gets a recorded reason
+# Policy builder
 # ----------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_reasons_persisted_for_all_candidates(test_db):
-    async with test_db() as session:
-        await _seed(session)
-        service = _service(session)
-
-        criteria = EligibilityCriteria(min_price=10, min_score=7, min_reviews=1000)
-        await service.evaluate_and_get_eligible(criteria)
-
-        # Reload and check stored reasons (entered/expired are not candidates).
-        reasons = {
-            g.code: g.eligibility_reason
-            for g in await service.giveaway_repo.get_all()
-        }
-
-        assert reasons["good1"] == ELIGIBLE
-        assert reasons["good2"] == ELIGIBLE
-        assert reasons["lowscore"] == SCORE_BELOW_MIN
-        assert reasons["fewrev"] == REVIEWS_BELOW_MIN
-        assert reasons["unknown"] == SCORE_BELOW_MIN
-        assert reasons["nogame"] == NO_GAME_DATA
-        assert reasons["nogameid"] == NO_GAME_DATA
-        assert reasons["cheap"] == PRICE_BELOW_MIN
-        assert reasons["hidden"] == HIDDEN
-        # 'old' is only too-old when max_game_age is set; here it's eligible.
-        assert reasons["old"] == ELIGIBLE
-        # Entered and expired giveaways aren't in the active candidate pool.
-        assert reasons["entered"] is None
-        assert reasons["expired"] is None
-
-        # checked_at recorded for everything that was evaluated.
-        checked = {
-            g.code: g.eligibility_checked_at
-            for g in await service.giveaway_repo.get_all()
-        }
-        assert checked["good1"] is not None
-        assert checked["entered"] is None
-
-
-def test_normalized_exclusions_match_each_listed_spelling():
-    """normalize_excluded_genres must not merge spellings that the matcher
-    folds differently: a user listing both "Éducation" and "éducation" still
-    excludes a game tagged "éducation"."""
-    excluded = normalize_excluded_genres(["Éducation", "éducation"])
-    criteria = EligibilityCriteria(excluded_genres=excluded)
-    giveaway = SimpleNamespace(
-        end_time=utcnow() + timedelta(hours=5), is_hidden=False, is_entered=False,
-        is_safe=True, is_wishlist=False, is_dlc=False, price=50,
+def test_policy_from_settings_reads_every_field() -> None:
+    settings = _settings(
+        autojoin_min_price=None, autojoin_min_score=None, autojoin_min_reviews=0, autojoin_max_game_age=3,
+        excluded_genres=[" Action "], included_genres=["RPG"],
+        autojoin_priorities=[{"type": "ending_soon", "threshold_minutes": 90}, {"type": "dlc"}],
+        autojoin_start_at=None, autojoin_stop_at=None, max_entries_per_cycle=None, auto_hide_unsafe=False,
     )
-    game = SimpleNamespace(genres=["éducation"], review_score=9, total_reviews=5000,
-                           release_date="2024-01-01")
+    assert policy_from_settings(settings) == AutoJoinPolicy(
+        min_price=0, min_score=None, min_reviews=0, max_game_age=3,
+        excluded_genres=frozenset({"action"}), included_genres=frozenset({"rpg"}),
+        priorities=(_soon(90), DLC), start_at=0, stop_at=0, max_entries_per_cycle=10, auto_hide_unsafe=False,
+    )
 
-    assert evaluate_eligibility(giveaway, game, criteria, utcnow()) == GENRE_EXCLUDED
+
+def test_policy_from_settings_tolerates_null_genre_lists() -> None:
+    policy = policy_from_settings(_settings(excluded_genres=None, included_genres=None))
+    assert (policy.excluded_genres, policy.included_genres) == (frozenset(), frozenset())
 
 
-@pytest.mark.asyncio
-async def test_genre_reasons_persisted_and_excluded_rows_not_returned(test_db):
-    """A cycle with an exclusion list stores genre_excluded on the matching
-    candidates (so the UI can say why), keeps them out of the entry list,
-    and records ELIGIBLE for unknown/empty genres and for rows without a
-    game when no quality criteria need game data."""
-    async with test_db() as session:
-        await _seed(session)
-        service = _service(session)
+@pytest.mark.parametrize("stored", [[{"type": "bogus"}], [{"type": "dlc"}, {"type": "dlc"}],
+                                    [{"type": "ending_soon", "threshold_minutes": 4}]])
+def test_policy_from_settings_fails_closed_on_a_bad_stored_list(stored: list[dict[str, Any]]) -> None:
+    with pytest.raises(ValueError):
+        policy_from_settings(_settings(autojoin_priorities=stored))
 
-        criteria = EligibilityCriteria(min_price=10, excluded_genres=["INDIE"])
-        evaluated = await service.evaluate_and_get_eligible(criteria)
-        eval_codes = {g.code for g in evaluated}
 
-        reasons = {
-            g.code: g.eligibility_reason
-            for g in await service.giveaway_repo.get_all()
-        }
-        assert reasons["genrebad"] == GENRE_EXCLUDED
-        assert reasons["dlcgenre"] == GENRE_EXCLUDED      # dlc_priority off
-        assert reasons["wishgenre"] == ELIGIBLE          # wishlist bypass
-        assert reasons["genreempty"] == ELIGIBLE
-        assert reasons["genrenull"] == ELIGIBLE
-        # No min_score/min_reviews/max_game_age: a missing game is not a reason
-        assert reasons["nogame"] == ELIGIBLE
-        assert reasons["nogameid"] == ELIGIBLE
-        assert reasons["cheap"] == PRICE_BELOW_MIN       # price wins over genre
-        assert "genrebad" not in eval_codes
-        assert "dlcgenre" not in eval_codes
-        assert {"wishgenre", "genreempty", "genrenull", "nogame"} <= eval_codes
+def _fields(**kw: Any) -> PolicyFields:
+    base: dict[str, Any] = dict(
+        autojoin_min_price=0, autojoin_min_score=3, autojoin_min_reviews=None, autojoin_max_game_age=None,
+        excluded_genres=["Horror"], included_genres=[], autojoin_priorities=[{"type": "dlc"}],
+    )
+    base.update(kw)
+    return PolicyFields(**base)
+
+
+def test_policy_override_replaces_the_seven_fields_and_keeps_the_budget() -> None:
+    settings = _settings(autojoin_priorities=[{"type": "bogus"}], autojoin_start_at=400, autojoin_stop_at=100,
+                         max_entries_per_cycle=4, auto_hide_unsafe=False)
+    policy = policy_from_settings(settings, _fields())
+    assert policy == AutoJoinPolicy(
+        min_price=0, min_score=3, min_reviews=None, max_game_age=None,
+        excluded_genres=frozenset({"horror"}), included_genres=frozenset(), priorities=(DLC,),
+        start_at=400, stop_at=100, max_entries_per_cycle=4, auto_hide_unsafe=False,
+    )
+
+
+def test_policy_override_with_a_bad_list_raises() -> None:
+    with pytest.raises(ValueError, match="unknown priority type"):
+        policy_from_settings(_settings(), _fields(autojoin_priorities=[{"type": "bogus"}]))
+
+
+def test_policy_from_settings_names_a_bad_priority_list() -> None:
+    with pytest.raises(InvalidPolicyError) as raised:
+        policy_from_settings(_settings(autojoin_priorities=[{"type": "bogus"}]))
+    assert raised.value.setting == "autojoin_priorities"
+    assert str(raised.value) == "Auto-join priorities setting is invalid: unknown priority type 'bogus'"
+
+
+@pytest.mark.parametrize("field", ["excluded_genres", "included_genres"])
+@pytest.mark.parametrize("corrupt, message", [
+    ("Action", "must be a list of strings"),
+    (5, "must be a list of strings"),
+    (["Action", 3], "must be a list of strings"),
+    (["x" * 65], "at most 64 characters"),
+    ([f"Genre {i}" for i in range(51)], "at most 50 genres"),
+])
+def test_policy_from_settings_fails_closed_on_a_corrupt_stored_genre_list(
+    field: str, corrupt: Any, message: str
+) -> None:
+    """A hand-edited genre column is refused like a bad priority list (the
+    worker logs and enters nothing; previews return CONFIG_002), never read
+    as single letters nor crashing with TypeError."""
+    with pytest.raises(InvalidPolicyError, match=message) as raised:
+        policy_from_settings(_settings(**{field: corrupt}))
+    assert raised.value.setting == field
+    assert str(raised.value).startswith("Genre list setting is invalid: ")
+    assert field in raised.value.problem
+
+
+def test_excluded_genre_stored_as_a_string_never_lets_the_genre_through() -> None:
+    """Before the check, 'Action' folded into {'a','c','t','i','o','n'} and an
+    Action game became an enter candidate."""
+    with pytest.raises(InvalidPolicyError):
+        policy_from_settings(_settings(excluded_genres="Action", autojoin_priorities=[]))
+
+
+def test_policy_override_does_not_read_the_stored_genre_lists() -> None:
+    settings = _settings(excluded_genres="Action", included_genres=5)
+    policy = policy_from_settings(settings, _fields(excluded_genres=["Action"]))
+    assert policy.excluded_genres == frozenset({"action"})
+
+
+# ----------------------------------------------------------------------------
+# Explanations, kinds, registry
+# ----------------------------------------------------------------------------
+
+@pytest.mark.parametrize("code, detail, label", [
+    (ELIGIBLE, {"priority": "wishlist", "rank": 0, "lifted_by": "wishlist"}, "Joinable"),
+    (ELIGIBLE, None, "Joinable"),
+    (EXPIRED, {}, "Giveaway has ended"),
+    (HIDDEN, {}, "Hidden"),
+    (ENTERED, {}, "Already entered"),
+    (UNSAFE, {"safety_score": 10}, "Flagged unsafe or borderline by the safety check"),
+    (PRICE_BELOW_MIN, {"price": 5, "min_price": 10}, "Price 5P is below your minimum 10P"),
+    (GENRE_EXCLUDED, {"genre": "Action"}, "Genre Action is on your excluded list"),
+    (GENRE_NOT_INCLUDED, None, "No genre on your included list"),
+    (NO_GAME_DATA, {}, "No Steam data cached yet; unknown data never passes the score, reviews or age filters; "
+                       "checked again next cycle"),
+    (NO_GAME_DATA, None, "No Steam game data cached"),
+    (SCORE_BELOW_MIN, {"score": 6, "min_score": 7}, "Review score 6 is below your minimum 7"),
+    (SCORE_BELOW_MIN, None, "Review score below minimum"),
+    (SCORE_BELOW_MIN, {}, "Review score below minimum"),
+    (REVIEWS_BELOW_MIN, {"reviews": 500, "min_reviews": 1000}, "500 reviews is below your minimum 1000"),
+    (GAME_TOO_OLD, {"release_date": "2005-01-01", "max_game_age": 5},
+     "Released 2005-01-01, older than your 5-year limit"),
+    (GAME_TOO_OLD, {"release_date": None, "max_game_age": 5},
+     "Release date unknown; games with unknown age fail your 5-year limit"),
+    (BUDGET_FLOOR, {"price": 50, "points": 230, "stop_at": 200},
+     "Not entered last cycle: 50P would leave 180P, below your 200P floor"),
+    (BUDGET_FLOOR, {"price": "50", "points": 230, "stop_at": 200}, "Not entered last cycle: points floor"),
+    (CYCLE_CAP, {"cap": 10}, "Not entered last cycle: the 10 per cycle cap was reached"),
+    (POINTS_ACCUMULATING, {"points": 300, "start_at": 350},
+     "Not entered last cycle: 300P is below your 350P start threshold"),
+    (POINTS_ACCUMULATING, None, "Not entered last cycle: accumulating points"),
+])
+def test_explain(code: str, detail: dict[str, Any] | None, label: str) -> None:
+    assert explain(code, detail) == label
+
+
+def test_explain_null_and_unknown_codes() -> None:
+    assert explain(None, None) is None
+    assert explain(None, {"score": 1}) is None
+    assert explain("bogus", None) == "bogus"
+    assert explain("price_above_max", {"price": 5}) == "price_above_max"
+
+
+@pytest.mark.parametrize("code, kind", [
+    (ELIGIBLE, "enter"),
+    *[(rule.code, "gate") for rule in GATES],
+    *[(rule.code, "filter") for rule in FILTERS],
+    (BUDGET_FLOOR, "budget"), (CYCLE_CAP, "budget"), (POINTS_ACCUMULATING, "budget"),
+    (None, None), ("bogus", None),
+])
+def test_kind_of(code: str | None, kind: str | None) -> None:
+    assert kind_of(code) == kind
+
+
+def test_price_above_max_is_gone() -> None:
+    assert "price_above_max" not in REASON_LABELS
+    assert "price_above_max" not in RULES
+    assert "price_above_max" not in str(registry_as_data())
+
+
+def test_reason_labels_cover_every_rule() -> None:
+    assert REASON_LABELS == {rule.code: rule.label for rule in (*GATES, *FILTERS, *OUTCOMES)}
+    assert GENRE_NOT_INCLUDED in REASON_LABELS
+    assert len(REASON_LABELS) == 15
+
+
+def test_registry_as_data_matches_the_contract() -> None:
+    assert registry_as_data() == {
+        "gates": [
+            {"code": "expired", "label": "Giveaway has ended"},
+            {"code": "hidden", "label": "Hidden"},
+            {"code": "entered", "label": "Already entered"},
+            {"code": "unsafe", "label": "Flagged unsafe or borderline by the safety check"},
+        ],
+        "filters": [
+            {"code": "price_below_min", "label": "Price below minimum", "setting": "autojoin_min_price"},
+            {"code": "genre_excluded", "label": "Game genre is excluded", "setting": "excluded_genres"},
+            {"code": "genre_not_included", "label": "No genre on your included list", "setting": "included_genres"},
+            {"code": "no_game_data", "label": "No Steam game data cached", "setting": None},
+            {"code": "score_below_min", "label": "Review score below minimum", "setting": "autojoin_min_score"},
+            {"code": "reviews_below_min", "label": "Too few reviews", "setting": "autojoin_min_reviews"},
+            {"code": "game_too_old", "label": "Game older than allowed (or release date unknown)",
+             "setting": "autojoin_max_game_age"},
+        ],
+        "outcomes": [
+            {"code": "eligible", "label": "Joinable"},
+            {"code": "budget_floor", "label": "Not entered last cycle: points floor"},
+            {"code": "cycle_cap", "label": "Not entered last cycle: per cycle cap"},
+            {"code": "points_accumulating", "label": "Not entered last cycle: accumulating points"},
+        ],
+        "priority_types": [
+            {"type": "wishlist", "label": "Wishlist", "description": "Games on your Steam wishlist",
+             "exempt_from_filters": True, "params": []},
+            {"type": "dlc", "label": "DLC", "description": "DLC for games you own, from the DLC listing",
+             "exempt_from_filters": True, "params": []},
+            {"type": "ending_soon", "label": "Ending soon",
+             "description": "Giveaways ending within the threshold, soonest first", "exempt_from_filters": False,
+             "params": [{"name": "threshold_minutes", "min": 5, "max": 10080, "default": 60}]},
+        ],
+        "limits": {"genre_max_items": 50, "genre_max_length": 64, "max_priority_items": 3},
+    }
+
+
+def test_registry_as_data_is_built_from_the_rule_objects() -> None:
+    """Relabelling a rule object changes the served registry: no literal copy."""
+    data = registry_as_data()
+    assert [g["label"] for g in data["gates"]] == [rule.label for rule in GATES]
+    assert [f["label"] for f in data["filters"]] == [rule.label for rule in FILTERS]
+    assert [o["label"] for o in data["outcomes"]] == [rule.label for rule in OUTCOMES]
+    assert [p["exempt_from_filters"] for p in data["priority_types"]] == [
+        pt.exempt_from_filters for pt in PRIORITY_TYPES.values()
+    ]

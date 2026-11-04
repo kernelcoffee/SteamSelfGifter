@@ -1,6 +1,7 @@
 """Giveaway processor worker.
 
-Enters eligible giveaways automatically based on the configured criteria.
+Enters the candidates the auto-join engine (services.eligibility) selects for
+the cycle, within the points budget and the per-cycle cap.
 
 ``_process_entries`` is the single entry loop, shared by the scheduled
 ``automation_cycle`` and the manual ``/process`` trigger (``process_giveaways``).
@@ -9,6 +10,7 @@ unsafe → enter) so unsafe giveaways are never entered.
 """
 
 import asyncio
+import functools
 import random
 from datetime import UTC, datetime
 from typing import Any
@@ -16,8 +18,18 @@ from typing import Any
 import structlog
 
 from core.events import event_manager
+from core.time import utcnow
+from models.giveaway import Giveaway
 from models.settings import Settings
-from services.eligibility import EligibilityCriteria
+from services.eligibility import (
+    BUDGET_FLOOR,
+    ELIGIBLE,
+    CycleBudget,
+    Detail,
+    InvalidPolicyError,
+    gate_of,
+    policy_from_settings,
+)
 from services.giveaway_service import GiveawayService
 from services.notification_service import NotificationService
 from workers.context import automation_context
@@ -84,15 +96,22 @@ async def _process_entries(
     """
     Internal entry processing logic.
 
-    Shared by :func:`process_giveaways` and ``automation_cycle``. Fetches
-    eligible giveaways and enters them with human-like delays. When
+    Shared by :func:`process_giveaways` and ``automation_cycle``. Builds the
+    auto-join policy, fetches the points balance, decides and records the
+    whole candidate pool (``decide_cycle``, even when nothing will be
+    entered, so stored decisions never go stale), then walks the enter
+    candidates in entry order, entering them one at a time with human-like
+    delays, and records what it did for each. When
     ``settings.safety_check_enabled`` is set, each entry is vetted inline and
     unsafe giveaways are hidden instead of entered.
 
-    Enforces the points budget: the cycle only spends once the balance has
-    accumulated past ``autojoin_start_at``, and no entry may draw it below
-    ``autojoin_stop_at``. If the balance can't be fetched it reads as 0 and
-    the cycle is skipped rather than spending blindly.
+    Fails closed: an invalid stored priority or genre list, or an unavailable
+    points balance, enters nothing. Enforces the points budget and the cap
+    through :class:`services.eligibility.CycleBudget` with the balance
+    actually spent: nothing is entered below ``autojoin_start_at``, no entry
+    may draw the running balance below ``autojoin_stop_at``, at most
+    ``max_entries_per_cycle`` attempts are made, and a failed attempt spends
+    nothing, so a later candidate it would have priced out is still tried.
 
     Args:
         giveaway_service: GiveawayService instance
@@ -104,11 +123,30 @@ async def _process_entries(
     """
     start_time = datetime.now(UTC)
 
-    # Points budget: spend only once the balance has accumulated past
-    # autojoin_start_at, and never draw it below autojoin_stop_at.
-    start_at = settings.autojoin_start_at or 0
-    stop_at = settings.autojoin_stop_at or 0
-    points = await giveaway_service.get_current_points()
+    try:
+        policy = policy_from_settings(settings)
+    except InvalidPolicyError as e:
+        reason = f"invalid_{e.setting}"
+        logger.error("entry_processing_skipped", reason=reason, error=str(e))
+        await notification_service.log_error(error_type="entry", message=str(e))
+        return _skipped_stats(reason)
+
+    start_at = policy.start_at
+    points = await giveaway_service.fetch_points()
+
+    # Decide and record the whole pool first, whatever the balance.
+    result = await giveaway_service.decide_cycle(policy, points)
+
+    if points is None:
+        logger.warning("entry_processing_skipped", reason="points_unavailable")
+        await notification_service.log_error(
+            error_type="entry",
+            message="Points balance unavailable; no entries this cycle",
+        )
+        skip_stats = _skipped_stats("points_unavailable")
+        skip_stats["decisions"] = result.counts
+        skip_stats["candidates"] = result.total
+        return skip_stats
 
     if points < start_at:
         logger.info(
@@ -121,51 +159,45 @@ async def _process_entries(
             level="info",
             event_type="entry",
             message=f"Accumulating points: {points}P is below the {start_at}P start threshold",
+            details={"points": points, "start_at": start_at, "decisions": result.counts},
         )
         skip_stats = _skipped_stats("points_below_start_threshold")
         skip_stats["points_available"] = points
+        skip_stats["decisions"] = result.counts
+        skip_stats["candidates"] = result.total
         return skip_stats
 
-    # Evaluate the candidate pool: this both selects the eligible giveaways and
-    # records a per-giveaway eligibility reason for the ones that didn't qualify.
-    max_entries = settings.max_entries_per_cycle or 10
-    criteria = EligibilityCriteria(
-        min_price=settings.autojoin_min_price or 0,
-        max_price=None,
-        min_score=settings.autojoin_min_score,
-        min_reviews=settings.autojoin_min_reviews,
-        max_game_age=settings.autojoin_max_game_age,
-        wishlist_priority=bool(settings.wishlist_priority_enabled),
-        dlc_priority=bool(settings.dlc_priority_enabled),
-        ending_soon_priority=bool(settings.ending_soon_priority_enabled),
-        ending_soon_threshold_minutes=settings.ending_soon_threshold_minutes or 60,
-        excluded_genres=frozenset(settings.excluded_genres or []),
-    )
-    eligible = await giveaway_service.evaluate_and_get_eligible(criteria, limit=max_entries)
+    candidates = result.candidates
 
     stats: dict[str, Any] = {
-        "eligible": len(eligible),
+        "eligible": len(candidates),
         "entered": 0,
         "failed": 0,
         "points_spent": 0,
         "points_available": points,
         "skipped_budget": 0,
         "skipped": False,
+        "decisions": result.counts,
+        "candidates": result.total,
     }
 
-    if not eligible:
+    if not candidates:
         logger.info("no_eligible_giveaways")
         await notification_service.log_activity(
             level="info",
             event_type="entry",
-            message="Processing completed: No eligible giveaways found"
+            message="Processing completed: No eligible giveaways found",
+            details={"decisions": result.counts},
         )
         return stats
 
     # Enter with inline safety check when enabled, otherwise enter directly.
     safety_enabled = getattr(settings, "safety_check_enabled", False)
     enter = (
-        giveaway_service.enter_giveaway_with_safety_check
+        functools.partial(
+            giveaway_service.enter_giveaway_with_safety_check,
+            hide_on_steamgifts=policy.auto_hide_unsafe,
+        )
         if safety_enabled
         else giveaway_service.enter_giveaway
     )
@@ -174,23 +206,29 @@ async def _process_entries(
     delay_min = settings.entry_delay_min or 5
     delay_max = settings.entry_delay_max or 15
 
-    for giveaway in eligible:
-        # Budget floor: entering must not take the balance below stop_at.
-        # Eligible is ordered by priority group then price descending; a
-        # cheaper giveaway later in the list may still fit, so skip, don't stop.
-        if points - giveaway.price < stop_at:
-            stats["skipped_budget"] += 1
-            logger.debug(
-                "entry_skipped_budget",
-                code=giveaway.code,
-                price=giveaway.price,
-                points=points,
-                stop_at=stop_at,
-            )
+    # The budget follows the balance actually spent: a failed attempt spends
+    # nothing, so a cheaper candidate the plan priced out is still tried.
+    budget = CycleBudget.for_cycle(points, policy)
+    # What the loop did for each candidate, in order; recorded after the loop.
+    outcomes: list[tuple[Giveaway, str, Detail]] = []
+
+    for candidate in candidates:
+        giveaway = candidate.giveaway
+
+        # Per-cycle cap, then budget floor: entering must not take the
+        # balance below stop_at. A cheaper giveaway later in the list may
+        # still fit, so skip, don't stop.
+        skip = budget.skip(giveaway.price)
+        if skip is not None:
+            code, detail = skip
+            outcomes.append((giveaway, code, detail))
+            if code == BUDGET_FLOOR:
+                stats["skipped_budget"] += 1
+            logger.debug("entry_skipped", code=giveaway.code, reason=code, **detail)
             continue
 
         # Apply delay between entry attempts (except before the first one)
-        if stats["entered"] + stats["failed"] > 0:
+        if budget.attempts > 0:
             delay = random.uniform(delay_min, delay_max)
             logger.debug("entry_delay", delay=delay)
             await asyncio.sleep(delay)
@@ -202,13 +240,18 @@ async def _process_entries(
         else:
             entry_type = "auto"
 
+        # Points this attempt spent; a failed or crashed attempt spends none.
+        spent = 0
+        # What to record for this attempt: eligible unless it entered nothing
+        # because a gate now stops it (see below).
+        outcome: tuple[str, Detail] = (ELIGIBLE, candidate.decision.detail)
         try:
             entry = await enter(giveaway.code, entry_type=entry_type)
 
             if entry:
+                spent = entry.points_spent
                 stats["entered"] += 1
                 stats["points_spent"] += entry.points_spent
-                points -= entry.points_spent
 
                 await event_manager.broadcast_event(
                     "entry_success",
@@ -235,6 +278,12 @@ async def _process_entries(
                     reason="entry_returned_none",
                 )
 
+                # The inline safety check may just have flagged the giveaway
+                # (is_safe False, or hidden): record that gate, not eligible.
+                gate = gate_of(giveaway, policy, utcnow())
+                if gate is not None:
+                    outcome = gate
+
         except Exception as e:
             stats["failed"] += 1
 
@@ -258,6 +307,12 @@ async def _process_entries(
                     "error": str(e),
                 }
             )
+
+        budget.attempt(spent)
+        outcomes.append((giveaway, *outcome))
+
+    await giveaway_service.record_outcomes(outcomes)
+    stats["decisions"] = result.counts_after(outcomes)
 
     # Calculate processing time
     end_time = datetime.now(UTC)

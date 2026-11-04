@@ -5,6 +5,9 @@ import pytest
 from pydantic import ValidationError
 
 from api.schemas.giveaway import (
+    AutojoinRegistryResponse,
+    CandidatePreviewResponse,
+    DecisionResponse,
     GiveawayBase,
     GiveawayEntryRequest,
     GiveawayEntryResponse,
@@ -14,8 +17,11 @@ from api.schemas.giveaway import (
     GiveawayScanRequest,
     GiveawayScanResponse,
     GiveawayStats,
+    LensGiveawaysResponse,
+    PolicyPreviewResponse,
 )
 from core.time import utcnow
+from services.eligibility import FILTERS, GATES, registry_as_data
 
 
 def test_giveaway_base():
@@ -261,3 +267,92 @@ def test_giveaway_stats():
     assert stats.active == 75
     assert stats.entered == 25
     assert stats.hidden == 5
+
+
+def _response(**kw):
+    base = dict(id=1, code="AbCd1", url="https://www.steamgifts.com/giveaway/AbCd1/", game_name="Portal 2",
+                price=50, discovered_at=utcnow())
+    base.update(kw)
+    return GiveawayResponse(**base)
+
+
+@pytest.mark.parametrize("reason, detail, label, kind", [
+    (None, None, None, None),
+    ("eligible", {"priority": "wishlist", "rank": 0, "lifted_by": "wishlist"}, "Joinable", "enter"),
+    ("score_below_min", None, "Review score below minimum", "filter"),
+    ("score_below_min", {"score": 6, "min_score": 7}, "Review score 6 is below your minimum 7", "filter"),
+    ("genre_not_included", {"genres": ["Action"]}, "None of its genres (Action) is on your included list", "filter"),
+    ("budget_floor", {"price": 50, "points": 230, "stop_at": 200},
+     "Not entered last cycle: 50P would leave 180P, below your 200P floor", "budget"),
+    ("cycle_cap", {"cap": 10}, "Not entered last cycle: the 10 per cycle cap was reached", "budget"),
+    ("points_accumulating", {"points": 300, "start_at": 350},
+     "Not entered last cycle: 300P is below your 350P start threshold", "budget"),
+    ("hidden", {}, "Hidden", "gate"),
+    ("unsafe", {"safety_score": 10}, "Flagged unsafe or borderline by the safety check", "gate"),
+    ("price_above_max", None, "price_above_max", None),
+])
+def test_giveaway_response_eligibility_label_and_kind(reason, detail, label, kind):
+    response = _response(eligibility_reason=reason, eligibility_detail=detail)
+    assert response.eligibility_label == label
+    assert response.eligibility_kind == kind
+    dumped = response.model_dump()
+    assert (dumped["eligibility_label"], dumped["eligibility_kind"], dumped["eligibility_detail"]) == (
+        label, kind, detail,
+    )
+
+
+def test_eligibility_label_and_kind_are_not_fields():
+    """Computed on read: never accepted as input, never a column."""
+    assert "eligibility_label" not in GiveawayResponse.model_fields
+    assert "eligibility_kind" not in GiveawayResponse.model_fields
+    assert "eligibility_detail" in GiveawayResponse.model_fields
+
+
+def test_eligibility_checked_at_keeps_the_z_suffix():
+    from datetime import datetime
+
+    response = _response(eligibility_reason="hidden", eligibility_checked_at=datetime(2026, 11, 1, 12, 0, 0))
+    assert response.model_dump()["eligibility_checked_at"] == "2026-11-01T12:00:00Z"
+
+
+def test_candidate_preview_response_from_a_row():
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(**{name: None for name in GiveawayResponse.model_fields})
+    row.__dict__.update(id=3, code="Cand1", url="https://www.steamgifts.com/giveaway/Cand1/", game_name="G",
+                        price=20, copies=1, entries=0, is_hidden=False, is_entered=False, is_wishlist=True,
+                        is_dlc=False, is_won=False, discovered_at=utcnow())
+    decision = DecisionResponse(
+        code="eligible", label="Joinable", detail={"priority": "wishlist", "rank": 0, "lifted_by": "wishlist"},
+        priority="wishlist", rank=0, lifted_by="wishlist",
+    )
+
+    candidate = CandidatePreviewResponse(
+        decision=decision, **{name: getattr(row, name) for name in GiveawayResponse.model_fields}
+    )
+
+    dumped = candidate.model_dump()
+    assert dumped["code"] == "Cand1"
+    assert dumped["eligibility_reason"] is None and dumped["eligibility_label"] is None
+    assert dumped["decision"]["lifted_by"] == "wishlist"
+    with pytest.raises(ValidationError):
+        CandidatePreviewResponse(**{name: getattr(row, name) for name in GiveawayResponse.model_fields})
+
+
+def test_policy_preview_and_lens_responses_never_apply_the_budget():
+    preview = PolicyPreviewResponse(candidates=[], count=0, pool=0, counts={})
+    lens = LensGiveawaysResponse(giveaways=[], count=0, lens="autojoin")
+    assert preview.model_dump() == {"candidates": [], "count": 0, "pool": 0, "counts": {}, "budget_applied": False}
+    assert lens.model_dump() == {"giveaways": [], "count": 0, "lens": "autojoin", "budget_applied": False}
+    with pytest.raises(ValidationError):
+        PolicyPreviewResponse(candidates=[], count=0, pool=0, counts={}, budget_applied=True)
+    with pytest.raises(ValidationError):
+        LensGiveawaysResponse(giveaways=[], count=0, lens="other")
+
+
+def test_registry_response_round_trips_the_registry():
+    data = registry_as_data()
+    registry = AutojoinRegistryResponse.model_validate(data)
+    assert registry.model_dump() == data
+    assert [g.code for g in registry.gates] == [rule.code for rule in GATES]
+    assert [f.setting for f in registry.filters] == [rule.setting for rule in FILTERS]

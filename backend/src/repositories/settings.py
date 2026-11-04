@@ -164,31 +164,6 @@ class SettingsRepository(BaseRepository[Settings]):
         phpsessid = await self.get_phpsessid()
         return phpsessid is not None and phpsessid.strip() != ""
 
-    async def get_autojoin_config(self) -> dict:
-        """
-        Get autojoin configuration as a dictionary.
-
-        Convenience method to retrieve all autojoin-related settings
-        in a single dictionary for easy access.
-
-        Returns:
-            Dictionary with autojoin configuration fields
-
-        Example:
-            >>> config = await repo.get_autojoin_config()
-            >>> if config['enabled']:
-            ...     print(f"Autojoin starts at {config['start_at']} points")
-        """
-        settings = await self.get_settings()
-        return {
-            "enabled": settings.autojoin_enabled,
-            "start_at": settings.autojoin_start_at,
-            "stop_at": settings.autojoin_stop_at,
-            "min_price": settings.autojoin_min_price,
-            "min_score": settings.autojoin_min_score,
-            "min_reviews": settings.autojoin_min_reviews,
-        }
-
     async def get_scheduler_config(self) -> dict:
         """
         Get scheduler configuration as a dictionary.

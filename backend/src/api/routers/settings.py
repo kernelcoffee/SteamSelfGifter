@@ -36,6 +36,10 @@ async def get_settings(settings_service: SettingsServiceDep) -> dict[str, Any]:
     Returns:
         Success response with settings data
 
+    Raises:
+        ConfigurationError: 500 envelope (CONFIG_002) when a stored policy
+            column cannot be parsed; the message names it and the repair path.
+
     Example response:
         {
             "success": true,
@@ -50,7 +54,7 @@ async def get_settings(settings_service: SettingsServiceDep) -> dict[str, Any]:
             }
         }
     """
-    settings = await settings_service.get_settings()
+    settings = await settings_service.get_valid_settings()
 
     # Convert to schema for validation
     settings_data = SettingsResponse.model_validate(settings)
@@ -79,6 +83,8 @@ async def update_settings(
 
     Raises:
         HTTPException: 400 if validation fails
+        ConfigurationError: 500 envelope (CONFIG_002), nothing written, when a
+            stored policy column cannot be parsed and the body does not replace it
 
     Example request:
         {
@@ -88,8 +94,10 @@ async def update_settings(
         }
     """
     try:
-        # Get only non-None fields from update
-        update_dict = update_data.model_dump(exclude_none=True)
+        # Only the fields the client sent: omitted = unchanged, an explicit
+        # null is a value the service accepts (nullable columns), ignores
+        # (autojoin_priorities) or rejects with 400 (NOT NULL columns).
+        update_dict = update_data.model_dump(exclude_unset=True)
 
         if not update_dict:
             raise HTTPException(

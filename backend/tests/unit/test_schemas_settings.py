@@ -5,11 +5,16 @@ import pytest
 from pydantic import ValidationError
 
 from api.schemas.settings import (
+    AutojoinPolicyFields,
     ConfigurationValidation,
+    DlcPriority,
+    EndingSoonPriority,
+    PolicyPreviewRequest,
     SettingsBase,
     SettingsResponse,
     SettingsUpdate,
     SteamGiftsCredentials,
+    WishlistPriority,
 )
 from core.time import utcnow
 
@@ -21,69 +26,163 @@ def test_settings_base_defaults():
     )
 
     assert settings.phpsessid is None
-    assert settings.dlc_priority_enabled is False
     assert settings.autojoin_enabled is False
     assert settings.autojoin_start_at == 350
     assert settings.autojoin_stop_at == 200
     assert settings.automation_enabled is False
-    assert settings.ending_soon_priority_enabled is False
-    assert settings.ending_soon_threshold_minutes == 60
+    assert settings.autojoin_min_score == 7
+    assert settings.autojoin_min_reviews == 1000
+    assert settings.max_entries_per_cycle == 10
+    assert settings.autojoin_priorities == [WishlistPriority(type="wishlist")]
     assert settings.excluded_genres == []
+    assert settings.included_genres == []
+    dumped = settings.model_dump()
+    assert dumped["autojoin_priorities"] == [{"type": "wishlist"}]
+    for removed in ("wishlist_priority_enabled", "dlc_priority_enabled",
+                    "ending_soon_priority_enabled", "ending_soon_threshold_minutes"):
+        assert removed not in dumped
 
 
-def test_excluded_genres_update_normalizes():
+GENRE_FIELDS = ["excluded_genres", "included_genres"]
+
+
+@pytest.mark.parametrize("field", GENRE_FIELDS)
+def test_genre_list_update_normalizes(field):
     """Strip, drop empties, dedupe case-insensitively keeping the first spelling."""
-    update = SettingsUpdate(excluded_genres=[" Action", "action", "Indie", "", "  "])
-    assert update.excluded_genres == ["Action", "Indie"]
+    update = SettingsUpdate(**{field: [" Action", "action", "Indie", "", "  "]})
+    assert getattr(update, field) == ["Action", "Indie"]
 
 
-@pytest.mark.parametrize("value", [
-    [f"Genre {i}" for i in range(51)],
-    ["x" * 65],
-    ["  " + "x" * 65],
-    "Action",
-    [1, 2],
+@pytest.mark.parametrize("field", GENRE_FIELDS)
+@pytest.mark.parametrize("value, message", [
+    ([f"Genre {i}" for i in range(51)], "{field} accepts at most 50 genres"),
+    (["x" * 65], "each {field} item must be at most 64 characters"),
+    (["  " + "x" * 65], "each {field} item must be at most 64 characters"),
+    ("Action", "list"),
+    ([1, 2], "string"),
 ])
-def test_excluded_genres_update_rejects_invalid(value):
-    """51 items, a 65-character item (after strip) and non-lists fail (422)."""
-    with pytest.raises(ValidationError):
-        SettingsUpdate(excluded_genres=value)
+def test_genre_list_rejects_invalid(field, value, message):
+    """51 items, a 65-character item (after strip) and non-lists fail (422)
+    in the update, the base and the preview schemas, naming the field."""
+    for build in (
+        lambda: SettingsUpdate(**{field: value}),
+        lambda: SettingsBase(user_agent="ua", **{field: value}),
+        lambda: AutojoinPolicyFields(**{field: value}),
+    ):
+        with pytest.raises(ValidationError, match=message.format(field=field)):
+            build()
 
 
-def test_excluded_genres_update_accepts_bounds():
+@pytest.mark.parametrize("field", GENRE_FIELDS)
+def test_genre_list_update_accepts_bounds(field):
     fifty = [f"Genre {i}" for i in range(50)]
-    assert SettingsUpdate(excluded_genres=fifty).excluded_genres == fifty
-    assert SettingsUpdate(excluded_genres=["x" * 64]).excluded_genres == ["x" * 64]
+    assert getattr(SettingsUpdate(**{field: fifty}), field) == fifty
+    assert getattr(SettingsUpdate(**{field: ["x" * 64]}), field) == ["x" * 64]
 
 
-def test_excluded_genres_empty_list_survives_exclude_none():
-    """[] clears the list, so the router's exclude_none dump must keep it;
-    None (unchanged) is dropped."""
-    assert SettingsUpdate(excluded_genres=[]).model_dump(exclude_none=True) == {"excluded_genres": []}
-    assert SettingsUpdate(excluded_genres=None).model_dump(exclude_none=True) == {}
+def test_overlapping_genre_lists_are_accepted():
+    update = SettingsUpdate(excluded_genres=["Action"], included_genres=["Action"])
+    assert (update.excluded_genres, update.included_genres) == (["Action"], ["Action"])
+
+
+def test_update_dump_keeps_explicit_nulls_and_drops_omitted_fields():
+    """The router dumps with exclude_unset: an explicit null is sent on to the
+    service, an omitted field never is; [] is a value."""
+    update = SettingsUpdate.model_validate(
+        {"autojoin_min_score": None, "excluded_genres": [], "autojoin_priorities": None}
+    )
+    assert update.model_dump(exclude_unset=True) == {
+        "autojoin_min_score": None, "excluded_genres": [], "autojoin_priorities": None,
+    }
+    assert SettingsUpdate().model_dump(exclude_unset=True) == {}
+
+
+def test_priority_list_round_trips_in_order():
+    items = [{"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 120}, {"type": "wishlist"}]
+    update = SettingsUpdate(autojoin_priorities=items)
+    assert update.autojoin_priorities == [
+        DlcPriority(type="dlc"), EndingSoonPriority(type="ending_soon", threshold_minutes=120),
+        WishlistPriority(type="wishlist"),
+    ]
+    assert update.model_dump(exclude_unset=True) == {"autojoin_priorities": items}
+    assert SettingsUpdate(autojoin_priorities=[]).autojoin_priorities == []
 
 
 @pytest.mark.parametrize("value", [5, 10080])
 def test_ending_soon_threshold_accepts_bounds(value):
-    """5 and 10080 minutes are the inclusive bounds for both schemas."""
-    assert SettingsUpdate(ending_soon_threshold_minutes=value).ending_soon_threshold_minutes == value
-    base = SettingsBase(user_agent="ua", ending_soon_threshold_minutes=value)
-    assert base.ending_soon_threshold_minutes == value
+    item = {"type": "ending_soon", "threshold_minutes": value}
+    assert SettingsUpdate(autojoin_priorities=[item]).model_dump(exclude_unset=True) == {
+        "autojoin_priorities": [item]
+    }
+    assert SettingsBase(user_agent="ua", autojoin_priorities=[item]).autojoin_priorities[0].threshold_minutes == value
 
 
-@pytest.mark.parametrize("value", [4, 10081])
-def test_ending_soon_threshold_rejects_out_of_range(value):
-    """Values just outside 5..10080 fail validation in both schemas."""
+@pytest.mark.parametrize("value", [
+    [{"type": "bogus"}],
+    [{"type": "wishlist"}, {"type": "wishlist"}],
+    [{"type": "ending_soon"}],
+    [{"type": "ending_soon", "threshold_minutes": 4}],
+    [{"type": "ending_soon", "threshold_minutes": 10081}],
+    [{"type": "wishlist", "threshold_minutes": 10}],
+    "wishlist",
+    [{"type": "wishlist"}, {"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 60}, {"type": "dlc"}],
+])
+def test_bad_priority_lists_are_rejected_everywhere(value):
+    """Unknown or duplicate type, missing or out-of-range threshold, extra
+    keys, a non-list or too many items fail (422) in all three schemas."""
+    for build in (
+        lambda: SettingsUpdate(autojoin_priorities=value),
+        lambda: SettingsBase(user_agent="ua", autojoin_priorities=value),
+        lambda: AutojoinPolicyFields(autojoin_priorities=value),
+    ):
+        with pytest.raises(ValidationError):
+            build()
+
+
+@pytest.mark.parametrize("field, value", [
+    ("autojoin_min_score", None), ("autojoin_min_score", 0), ("autojoin_min_reviews", None),
+    ("autojoin_min_reviews", 0),
+])
+def test_quality_thresholds_accept_null_and_zero(field, value):
+    assert getattr(SettingsBase(user_agent="ua", **{field: value}), field) == value
+    assert getattr(SettingsUpdate(**{field: value}), field) == value
+
+
+def _preview_body(**overrides):
+    body = {
+        "autojoin_min_price": 10, "autojoin_min_score": 7, "autojoin_min_reviews": None,
+        "autojoin_max_game_age": None, "excluded_genres": [], "included_genres": [],
+        "autojoin_priorities": [{"type": "wishlist"}],
+    }
+    body.update(overrides)
+    return body
+
+
+@pytest.mark.parametrize("missing", list(_preview_body()))
+def test_preview_request_requires_all_seven_fields(missing):
+    body = _preview_body()
+    del body[missing]
+    with pytest.raises(ValidationError, match=missing):
+        PolicyPreviewRequest(**body)
+
+
+def test_preview_request_accepts_a_full_body_and_ignores_extra_keys():
+    request = PolicyPreviewRequest(**_preview_body(autojoin_enabled=True, included_genres=[" RPG", "rpg"]))
+    assert request.included_genres == ["RPG"]
+    assert set(request.model_dump()) == set(_preview_body())
+
+
+@pytest.mark.parametrize("overrides", [
+    {"included_genres": ["x" * 65]},
+    {"autojoin_priorities": [{"type": "dlc"}, {"type": "dlc"}]},
+    {"autojoin_priorities": [{"type": "ending_soon", "threshold_minutes": 4}]},
+    {"autojoin_min_score": 11},
+    {"autojoin_min_price": -1},
+    {"autojoin_max_game_age": 0},
+])
+def test_preview_request_runs_the_shared_validators(overrides):
     with pytest.raises(ValidationError):
-        SettingsUpdate(ending_soon_threshold_minutes=value)
-    with pytest.raises(ValidationError):
-        SettingsBase(user_agent="ua", ending_soon_threshold_minutes=value)
-
-
-def test_ending_soon_explicit_false_survives_exclude_none():
-    """An explicit False is kept by the router's exclude_none dump."""
-    update = SettingsUpdate(ending_soon_priority_enabled=False)
-    assert update.model_dump(exclude_none=True) == {"ending_soon_priority_enabled": False}
+        PolicyPreviewRequest(**_preview_body(**overrides))
 
 
 def test_settings_base_custom_values():
@@ -166,7 +265,6 @@ def test_settings_response_from_dict():
         "id": 1,
         "user_agent": "Mozilla/5.0",
         "phpsessid": "abc123",
-        "dlc_priority_enabled": True,
         "autojoin_enabled": True,
         "autojoin_start_at": 350,
         "autojoin_stop_at": 200,
@@ -195,14 +293,14 @@ def test_settings_update_all_optional():
     """Test SettingsUpdate with all fields optional."""
     # Empty update is valid
     update = SettingsUpdate()
-    assert update.model_dump(exclude_none=True) == {}
+    assert update.model_dump(exclude_unset=True) == {}
 
     # Partial update
     update = SettingsUpdate(
         autojoin_enabled=True,
         autojoin_min_price=50
     )
-    dumped = update.model_dump(exclude_none=True)
+    dumped = update.model_dump(exclude_unset=True)
     assert dumped == {"autojoin_enabled": True, "autojoin_min_price": 50}
 
 
@@ -319,9 +417,11 @@ def test_settings_base_validates_minimum_values():
     with pytest.raises(ValidationError):
         SettingsBase(user_agent="Test", max_scan_pages=0)
 
-    # max_entries_per_cycle must be >= 1 (if not None)
+    # max_entries_per_cycle must be >= 1 and is never null
     with pytest.raises(ValidationError):
         SettingsBase(user_agent="Test", max_entries_per_cycle=0)
+    with pytest.raises(ValidationError):
+        SettingsBase(user_agent="Test", max_entries_per_cycle=None)
 
 
 def test_settings_response_orm_mode():

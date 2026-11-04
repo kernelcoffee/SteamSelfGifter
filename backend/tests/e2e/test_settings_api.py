@@ -2,6 +2,9 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from repositories.settings import SettingsRepository
 
 
 @pytest.mark.asyncio
@@ -22,9 +25,14 @@ async def test_get_settings_creates_default(test_client: AsyncClient):
     assert settings["autojoin_enabled"] is False  # Default is False
     assert settings["autojoin_min_price"] == 10  # Default is 10
     assert settings["autojoin_min_score"] == 7  # Default is 7
-    assert settings["ending_soon_priority_enabled"] is False
-    assert settings["ending_soon_threshold_minutes"] == 60
+    assert settings["autojoin_min_reviews"] == 1000
+    assert settings["max_entries_per_cycle"] == 10
+    assert settings["autojoin_priorities"] == [{"type": "wishlist"}]
     assert settings["excluded_genres"] == []
+    assert settings["included_genres"] == []
+    for removed in ("wishlist_priority_enabled", "dlc_priority_enabled",
+                    "ending_soon_priority_enabled", "ending_soon_threshold_minutes"):
+        assert removed not in settings
 
 
 @pytest.mark.asyncio
@@ -320,75 +328,141 @@ async def test_update_multiple_settings(test_client: AsyncClient):
     assert data["max_scan_pages"] == 5
 
 
+async def _settings(test_client: AsyncClient) -> dict:
+    return (await test_client.get("/api/v1/settings")).json()["data"]
+
+
 @pytest.mark.asyncio
-async def test_update_ending_soon_settings_round_trip(test_client: AsyncClient):
-    """PUT both ending-soon fields, then GET reflects them."""
-    response = await test_client.put(
-        "/api/v1/settings",
-        json={"ending_soon_priority_enabled": True, "ending_soon_threshold_minutes": 120},
-    )
+async def test_update_priority_list_round_trips_in_order(test_client: AsyncClient):
+    priorities = [{"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 120}, {"type": "wishlist"}]
+
+    response = await test_client.put("/api/v1/settings", json={"autojoin_priorities": priorities})
+
     assert response.status_code == 200
-    assert response.json()["data"]["ending_soon_priority_enabled"] is True
-    assert response.json()["data"]["ending_soon_threshold_minutes"] == 120
-
-    settings = (await test_client.get("/api/v1/settings")).json()["data"]
-    assert settings["ending_soon_priority_enabled"] is True
-    assert settings["ending_soon_threshold_minutes"] == 120
+    assert response.json()["data"]["autojoin_priorities"] == priorities
+    assert (await _settings(test_client))["autojoin_priorities"] == priorities
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("value", [4, 10081, "abc", 60.5])
-async def test_update_ending_soon_threshold_invalid_leaves_row_unchanged(
-    test_client: AsyncClient, value
-):
-    """Out-of-range or non-integer thresholds are 422 and nothing is written."""
-    await test_client.put("/api/v1/settings", json={"ending_soon_threshold_minutes": 90})
+async def test_update_priority_list_empty(test_client: AsyncClient):
+    response = await test_client.put("/api/v1/settings", json={"autojoin_priorities": []})
 
-    response = await test_client.put(
-        "/api/v1/settings", json={"ending_soon_threshold_minutes": value}
-    )
-    assert response.status_code == 422
-
-    settings = (await test_client.get("/api/v1/settings")).json()["data"]
-    assert settings["ending_soon_threshold_minutes"] == 90
+    assert response.status_code == 200
+    assert (await _settings(test_client))["autojoin_priorities"] == []
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("value", [5, 10080])
-async def test_update_ending_soon_threshold_bounds_accepted(test_client: AsyncClient, value):
-    """The inclusive bounds are accepted even with the toggle off."""
-    response = await test_client.put(
-        "/api/v1/settings", json={"ending_soon_threshold_minutes": value}
-    )
-    assert response.status_code == 200
+async def test_update_priority_threshold_bounds_accepted(test_client: AsyncClient, value):
+    item = {"type": "ending_soon", "threshold_minutes": value}
 
-    settings = (await test_client.get("/api/v1/settings")).json()["data"]
-    assert settings["ending_soon_threshold_minutes"] == value
-    assert settings["ending_soon_priority_enabled"] is False
+    response = await test_client.put("/api/v1/settings", json={"autojoin_priorities": [item]})
+
+    assert response.status_code == 200
+    assert (await _settings(test_client))["autojoin_priorities"] == [item]
 
 
 @pytest.mark.asyncio
-async def test_update_ending_soon_explicit_false_is_applied(test_client: AsyncClient):
-    """An explicit false alone is a valid update and is persisted."""
-    await test_client.put("/api/v1/settings", json={"ending_soon_priority_enabled": True})
+@pytest.mark.parametrize("value", [
+    [{"type": "bogus"}],
+    [{"type": "wishlist"}, {"type": "wishlist"}],
+    [{"type": "ending_soon"}],
+    [{"type": "ending_soon", "threshold_minutes": 4}],
+    [{"type": "ending_soon", "threshold_minutes": 10081}],
+    [{"type": "ending_soon", "threshold_minutes": "abc"}],
+    [{"type": "wishlist", "threshold_minutes": 10}],
+    "wishlist",
+    [{"type": "wishlist"}, {"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 60}, {"type": "dlc"}],
+])
+async def test_update_bad_priority_list_is_422_and_writes_nothing(test_client: AsyncClient, value):
+    await test_client.put("/api/v1/settings", json={"autojoin_priorities": [{"type": "dlc"}]})
 
     response = await test_client.put(
-        "/api/v1/settings", json={"ending_soon_priority_enabled": False}
+        "/api/v1/settings", json={"autojoin_priorities": value, "autojoin_min_price": 99}
     )
-    assert response.status_code == 200
 
-    settings = (await test_client.get("/api/v1/settings")).json()["data"]
-    assert settings["ending_soon_priority_enabled"] is False
+    assert response.status_code == 422
+    settings = await _settings(test_client)
+    assert settings["autojoin_priorities"] == [{"type": "dlc"}]
+    assert settings["autojoin_min_price"] == 10
 
 
 @pytest.mark.asyncio
-async def test_update_ending_soon_all_null_is_rejected(test_client: AsyncClient):
-    """Nulls are dropped by exclude_none, leaving an empty update (400)."""
-    response = await test_client.put(
-        "/api/v1/settings",
-        json={"ending_soon_priority_enabled": None, "ending_soon_threshold_minutes": None},
-    )
+async def test_update_null_priority_list_means_unchanged(test_client: AsyncClient):
+    await test_client.put("/api/v1/settings", json={"autojoin_priorities": [{"type": "dlc"}]})
+
+    response = await test_client.put("/api/v1/settings", json={"autojoin_priorities": None})
     assert response.status_code == 400
+    assert response.json()["detail"] == "No fields provided for update"
+
+    response = await test_client.put(
+        "/api/v1/settings", json={"autojoin_priorities": None, "autojoin_enabled": True}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["autojoin_priorities"] == [{"type": "dlc"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["autojoin_min_score", "autojoin_min_reviews", "autojoin_max_game_age"])
+async def test_update_explicit_null_turns_a_filter_off(test_client: AsyncClient, field):
+    await test_client.put("/api/v1/settings", json={field: 3})
+
+    response = await test_client.put("/api/v1/settings", json={field: None})
+
+    assert response.status_code == 200
+    assert (await _settings(test_client))[field] is None
+
+
+@pytest.mark.asyncio
+async def test_update_omitted_threshold_is_unchanged_and_zero_is_stored(test_client: AsyncClient):
+    await test_client.put("/api/v1/settings", json={"autojoin_min_score": None})
+
+    await test_client.put("/api/v1/settings", json={"autojoin_enabled": True})
+    assert (await _settings(test_client))["autojoin_min_score"] is None
+
+    response = await test_client.put("/api/v1/settings", json={"autojoin_min_score": 0})
+    assert response.status_code == 200
+    assert (await _settings(test_client))["autojoin_min_score"] == 0
+
+    response = await test_client.put("/api/v1/settings", json={"autojoin_min_score": 11})
+    assert response.status_code == 422
+    assert (await _settings(test_client))["autojoin_min_score"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", [
+    "excluded_genres", "included_genres", "user_agent", "max_entries_per_cycle", "autojoin_start_at",
+])
+async def test_update_null_for_a_not_null_field_is_400(test_client: AsyncClient, field):
+    before = await _settings(test_client)
+
+    response = await test_client.put("/api/v1/settings", json={field: None, "autojoin_min_price": 99})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"{field} cannot be null"
+    after = await _settings(test_client)
+    assert after[field] == before[field]
+    assert after["autojoin_min_price"] == 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [0, -1])
+async def test_update_cap_below_one_is_422(test_client: AsyncClient, value):
+    response = await test_client.put("/api/v1/settings", json={"max_entries_per_cycle": value})
+
+    assert response.status_code == 422
+    assert (await _settings(test_client))["max_entries_per_cycle"] == 10
+
+
+@pytest.mark.asyncio
+async def test_removed_flag_fields_are_ignored(test_client: AsyncClient):
+    response = await test_client.put(
+        "/api/v1/settings", json={"wishlist_priority_enabled": False, "autojoin_min_price": 20}
+    )
+
+    assert response.status_code == 200
+    assert "wishlist_priority_enabled" not in response.json()["data"]
+    assert response.json()["data"]["autojoin_priorities"] == [{"type": "wishlist"}]
 
 
 @pytest.mark.asyncio
@@ -438,32 +512,74 @@ async def test_update_excluded_genres_bounds_accepted(test_client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_update_excluded_genres_empty_clears_and_null_keeps(test_client: AsyncClient):
-    """[] clears the list; null or omitted leaves it unchanged."""
-    await test_client.put("/api/v1/settings", json={"excluded_genres": ["Sports", "Racing"]})
-
-    response = await test_client.put(
-        "/api/v1/settings", json={"excluded_genres": None, "autojoin_min_price": 20}
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["excluded_genres"] == ["Sports", "Racing"]
+@pytest.mark.parametrize("field", ["excluded_genres", "included_genres"])
+async def test_update_genre_list_empty_clears_and_omitted_keeps(test_client: AsyncClient, field):
+    """[] clears the list; omitted leaves it unchanged."""
+    await test_client.put("/api/v1/settings", json={field: ["Sports", "Racing"]})
 
     response = await test_client.put("/api/v1/settings", json={"autojoin_min_price": 30})
-    assert response.json()["data"]["excluded_genres"] == ["Sports", "Racing"]
+    assert response.json()["data"][field] == ["Sports", "Racing"]
 
-    response = await test_client.put("/api/v1/settings", json={"excluded_genres": []})
+    response = await test_client.put("/api/v1/settings", json={field: []})
     assert response.status_code == 200
-    assert response.json()["data"]["excluded_genres"] == []
+    assert response.json()["data"][field] == []
 
 
 @pytest.mark.asyncio
-async def test_reset_clears_excluded_genres(test_client: AsyncClient):
-    await test_client.put("/api/v1/settings", json={"excluded_genres": ["Sports"]})
+async def test_update_included_genres_normalizes(test_client: AsyncClient):
+    response = await test_client.put("/api/v1/settings", json={"included_genres": [" RPG", "rpg", "Indie", ""]})
+
+    assert response.status_code == 200
+    assert (await _settings(test_client))["included_genres"] == ["RPG", "Indie"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value, message", [
+    (["x" * 65], "64"),
+    ([f"Genre {i}" for i in range(51)], "50"),
+    ("RPG", None),
+    ([1], None),
+])
+async def test_update_included_genres_invalid_is_422_naming_the_field(test_client: AsyncClient, value, message):
+    await test_client.put("/api/v1/settings", json={"included_genres": ["RPG"]})
+
+    response = await test_client.put("/api/v1/settings", json={"included_genres": value})
+
+    assert response.status_code == 422
+    body = str(response.json())
+    assert "included_genres" in body
+    if message:
+        assert message in body
+    assert (await _settings(test_client))["included_genres"] == ["RPG"]
+
+
+@pytest.mark.asyncio
+async def test_update_overlapping_genre_lists_is_legal(test_client: AsyncClient):
+    response = await test_client.put(
+        "/api/v1/settings", json={"excluded_genres": ["Action"], "included_genres": ["Action"]}
+    )
+
+    assert response.status_code == 200
+    settings = await _settings(test_client)
+    assert (settings["excluded_genres"], settings["included_genres"]) == (["Action"], ["Action"])
+
+
+@pytest.mark.asyncio
+async def test_reset_restores_the_auto_join_defaults(test_client: AsyncClient):
+    await test_client.put("/api/v1/settings", json={
+        "excluded_genres": ["Sports"], "included_genres": ["RPG"], "autojoin_priorities": [],
+        "max_entries_per_cycle": 3, "autojoin_min_score": None, "autojoin_min_reviews": None,
+    })
 
     response = await test_client.post("/api/v1/settings/reset")
 
     assert response.status_code == 200
-    assert response.json()["data"]["excluded_genres"] == []
+    data = response.json()["data"]
+    assert data["excluded_genres"] == []
+    assert data["included_genres"] == []
+    assert data["autojoin_priorities"] == [{"type": "wishlist"}]
+    assert data["max_entries_per_cycle"] == 10
+    assert (data["autojoin_min_score"], data["autojoin_min_reviews"]) == (7, 1000)
 
 
 @pytest.mark.asyncio
@@ -508,3 +624,115 @@ async def test_update_excluded_genres_51_after_dedupe_rejected(test_client: Asyn
     assert body.get("success") is not True
     settings = (await test_client.get("/api/v1/settings")).json()["data"]
     assert settings["excluded_genres"] == ["Sports"]
+
+
+async def _corrupt_stored_column(async_engine, field: str, value: object) -> None:
+    """Simulate a manual database edit no API write can produce."""
+    maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    async with maker() as session:
+        settings = await SettingsRepository(session).get_settings()
+        setattr(settings, field, value)
+        await session.commit()
+
+
+def _assert_config_error(response, *fragments: str) -> str:
+    assert response.status_code == 500
+    error = response.json()["error"]
+    assert error["code"] == "CONFIG_002"
+    for fragment in fragments:
+        assert fragment in error["message"]
+    return error["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value", "problem"),
+    [
+        ("autojoin_priorities", [{"type": "bogus"}], "unknown priority type 'bogus'"),
+        ("excluded_genres", ["x" * 65], "each excluded_genres item must be at most 64 characters"),
+        ("included_genres", [f"genre {i}" for i in range(51)], "included_genres accepts at most 50 genres"),
+    ],
+)
+async def test_get_settings_with_a_corrupt_stored_column_names_it(
+    test_client: AsyncClient, async_engine, field, value, problem
+):
+    await test_client.put("/api/v1/settings", json={"phpsessid": "secret-session"})
+    await _corrupt_stored_column(async_engine, field, value)
+
+    response = await test_client.get("/api/v1/settings")
+
+    message = _assert_config_error(response, problem, "POST /api/v1/settings/reset")
+    assert "secret-session" not in response.text
+    assert "secret-session" not in message
+
+
+@pytest.mark.asyncio
+async def test_put_over_a_corrupt_list_writes_nothing_unless_it_replaces_it(test_client: AsyncClient, async_engine):
+    await _corrupt_stored_column(async_engine, "autojoin_priorities", [{"type": "bogus"}])
+
+    refused = await test_client.put("/api/v1/settings", json={"autojoin_min_price": 99})
+    _assert_config_error(refused, "unknown priority type 'bogus'")
+
+    repaired = await test_client.put("/api/v1/settings", json={"autojoin_priorities": [{"type": "dlc"}]})
+    assert repaired.status_code == 200
+    assert repaired.json()["data"]["autojoin_priorities"] == [{"type": "dlc"}]
+    assert repaired.json()["data"]["autojoin_min_price"] == 10
+    assert (await test_client.get("/api/v1/settings")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_credentials_over_a_corrupt_list_write_nothing_and_reset_repairs(
+    test_client: AsyncClient, async_engine
+):
+    await test_client.put("/api/v1/settings", json={"phpsessid": "old-session"})
+    await _corrupt_stored_column(async_engine, "autojoin_priorities", [{"type": "bogus"}])
+
+    refused = await test_client.post("/api/v1/settings/credentials", json={"phpsessid": "new-session"})
+    _assert_config_error(refused, "unknown priority type 'bogus'")
+    assert "new-session" not in refused.text
+    assert "old-session" not in refused.text
+
+    reset = await test_client.post("/api/v1/settings/reset")
+    assert reset.status_code == 200
+    data = reset.json()["data"]
+    assert data["phpsessid"] == "old-session"
+    assert data["autojoin_priorities"] == [{"type": "wishlist"}]
+
+
+# ==================== QA: contract gaps (test engineer) ====================
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["excluded_genres", "included_genres"])
+@pytest.mark.parametrize("value, message", [
+    (["x" * 65], "each {field} item must be at most 64 characters"),
+    ([f"Genre {i}" for i in range(51)], "{field} accepts at most 50 genres"),
+])
+async def test_genre_list_422_messages_name_the_list(test_client: AsyncClient, field, value, message):
+    """The 422 message names the list that broke the rule (not a generic one)."""
+    response = await test_client.put("/api/v1/settings", json={field: value})
+
+    assert response.status_code == 422
+    assert message.format(field=field) in response.text
+    other = "included_genres" if field == "excluded_genres" else "excluded_genres"
+    assert f"{other} accepts" not in response.text and f"each {other} item" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_null_genre_list_with_a_valid_other_list_writes_neither(test_client: AsyncClient):
+    await test_client.put("/api/v1/settings", json={"excluded_genres": ["Sports"], "included_genres": ["RPG"]})
+
+    response = await test_client.put("/api/v1/settings", json={"included_genres": None, "excluded_genres": ["Racing"]})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "included_genres cannot be null"
+    settings = await _settings(test_client)
+    assert (settings["excluded_genres"], settings["included_genres"]) == (["Sports"], ["RPG"])
+
+
+@pytest.mark.asyncio
+async def test_reset_after_a_saved_include_list_empties_it(test_client: AsyncClient):
+    await test_client.put("/api/v1/settings", json={"included_genres": ["RPG", "Indie"]})
+
+    await test_client.post("/api/v1/settings/reset")
+
+    assert (await _settings(test_client))["included_genres"] == []

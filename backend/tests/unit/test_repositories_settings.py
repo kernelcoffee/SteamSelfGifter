@@ -73,9 +73,9 @@ async def test_get_settings_creates_if_missing(settings_repo, session):
     assert settings is not None
     assert settings.id == 1
     assert settings.autojoin_enabled is False  # default value
-    assert settings.dlc_priority_enabled is False  # default value
-    assert settings.ending_soon_priority_enabled is False  # default value
-    assert settings.ending_soon_threshold_minutes == 60  # default value
+    assert settings.autojoin_priorities == [{"type": "wishlist"}]  # default value
+    assert settings.max_entries_per_cycle == 10  # default value
+    assert settings.included_genres == []  # default value
 
 
 @pytest.mark.asyncio
@@ -212,50 +212,6 @@ async def test_is_authenticated_false_empty(settings_repo, session):
 
 
 @pytest.mark.asyncio
-async def test_get_autojoin_config(settings_repo, session):
-    """Test getting autojoin configuration as dictionary."""
-    # GIVEN: Settings with custom autojoin values
-    # WHEN: Autojoin config is retrieved
-    # THEN: All autojoin fields should be in the dictionary
-
-    await settings_repo.update_settings(
-        autojoin_enabled=True,
-        autojoin_start_at=400,
-        autojoin_stop_at=150,
-        autojoin_min_price=25,
-        autojoin_min_score=8,
-        autojoin_min_reviews=2000,
-    )
-    await session.commit()
-
-    config = await settings_repo.get_autojoin_config()
-
-    assert config["enabled"] is True
-    assert config["start_at"] == 400
-    assert config["stop_at"] == 150
-    assert config["min_price"] == 25
-    assert config["min_score"] == 8
-    assert config["min_reviews"] == 2000
-
-
-@pytest.mark.asyncio
-async def test_get_autojoin_config_defaults(settings_repo):
-    """Test getting autojoin config with default values."""
-    # GIVEN: Settings with default values
-    # WHEN: Autojoin config is retrieved
-    # THEN: Default values should be in the dictionary
-
-    config = await settings_repo.get_autojoin_config()
-
-    assert config["enabled"] is False
-    assert config["start_at"] == 350
-    assert config["stop_at"] == 200
-    assert config["min_price"] == 10
-    assert config["min_score"] == 7
-    assert config["min_reviews"] == 1000
-
-
-@pytest.mark.asyncio
 async def test_get_scheduler_config(settings_repo, session):
     """Test getting scheduler configuration as dictionary."""
     # GIVEN: Settings with custom scheduler values
@@ -293,7 +249,7 @@ async def test_get_scheduler_config_defaults(settings_repo):
 
     assert config["automation_enabled"] is False
     assert config["scan_interval_minutes"] == 30
-    assert config["max_entries_per_cycle"] is None
+    assert config["max_entries_per_cycle"] == 10
     assert config["entry_delay_min"] == 8
     assert config["entry_delay_max"] == 12
     assert config["max_scan_pages"] == 3

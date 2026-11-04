@@ -63,8 +63,11 @@ def create_mock_giveaway(
     mock.game_review_score = None
     mock.game_total_reviews = None
     mock.game_review_summary = None
+    mock.is_dlc = False
+    mock.entries = 0
     mock.eligibility_reason = None
     mock.eligibility_checked_at = None
+    mock.eligibility_detail = None
     return mock
 
 
@@ -79,8 +82,7 @@ async def test_list_giveaways_serializes_game_genres():
     mock_service.enrich_giveaways_with_game_data.return_value = [with_genres, without]
 
     result = await list_giveaways(
-        giveaway_service=mock_service, min_price=None, max_price=None,
-        min_score=None, min_reviews=None, search=None, is_entered=None,
+        giveaway_service=mock_service, search=None, is_entered=None,
         active_only=False, limit=50, offset=0,
     )
 
@@ -99,10 +101,6 @@ async def test_list_giveaways_active():
 
     result = await list_giveaways(
         giveaway_service=mock_service,
-        min_price=None,
-        max_price=None,
-        min_score=None,
-        min_reviews=None,
         search=None,
         is_entered=None,
         active_only=False,
@@ -124,10 +122,6 @@ async def test_list_giveaways_search():
 
     result = await list_giveaways(
         giveaway_service=mock_service,
-        min_price=None,
-        max_price=None,
-        min_score=None,
-        min_reviews=None,
         search="Portal",
         is_entered=None,
         limit=50,
@@ -138,31 +132,25 @@ async def test_list_giveaways_search():
 
 
 @pytest.mark.asyncio
-async def test_list_giveaways_eligible():
-    """Test listing eligible (not entered) giveaways."""
+async def test_list_giveaways_not_entered_is_a_browse_filter():
+    """is_entered=false lists active, not entered, not hidden giveaways with
+    no policy applied, paginated."""
     mock_service = AsyncMock()
     mock_giveaway = create_mock_giveaway()
-    mock_service.get_eligible_giveaways.return_value = [mock_giveaway]
+    mock_service.get_unentered_giveaways.return_value = [mock_giveaway]
+    mock_service.enrich_giveaways_with_game_data.return_value = [mock_giveaway]
 
     result = await list_giveaways(
         giveaway_service=mock_service,
-        min_price=50,
-        max_price=100,
-        min_score=7,
-        min_reviews=1000,
         search=None,
         is_entered=False,
         limit=50,
+        offset=10,
     )
 
     assert result["success"] is True
-    mock_service.get_eligible_giveaways.assert_called_once_with(
-        min_price=50,
-        max_price=100,
-        min_score=7,
-        min_reviews=1000,
-        limit=50,
-    )
+    assert result["data"]["count"] == 1
+    mock_service.get_unentered_giveaways.assert_awaited_once_with(limit=50, offset=10)
 
 
 @pytest.mark.asyncio
@@ -175,6 +163,11 @@ async def test_get_active_giveaways():
 
     result = await get_active_giveaways(
         giveaway_service=mock_service,
+        settings_service=AsyncMock(),
+        min_score=None,
+        is_safe=None,
+        min_chance=None,
+        ending_within=None,
         limit=50,
         offset=0,
     )
@@ -202,23 +195,39 @@ async def test_get_expiring_giveaways():
 
 
 @pytest.mark.asyncio
-async def test_get_eligible_giveaways():
-    """Test GET /giveaways/eligible endpoint."""
-    mock_service = AsyncMock()
-    mock_giveaway = create_mock_giveaway()
-    mock_service.get_eligible_giveaways.return_value = [mock_giveaway]
+async def test_get_eligible_giveaways_previews_the_saved_policy():
+    """GET /giveaways/eligible: saved policy, preview with the limit (which
+    enriches from the cache itself), PolicyPreviewResponse envelope with the
+    live decision."""
+    from services.eligibility import AutoJoinPolicy, Decision
+    from services.giveaway_query import PolicyPreview
+
+    giveaway = create_mock_giveaway()
+    decision = Decision(code="eligible", detail={"priority": None, "rank": 1, "lifted_by": None}, rank=1)
+    policy = AutoJoinPolicy()
+    mock_service = MagicMock()
+    mock_service.saved_policy.return_value = policy
+    mock_service.preview_policy = AsyncMock(
+        return_value=PolicyPreview(candidates=[(giveaway, decision)], count=4, pool=9, counts={"eligible": 4})
+    )
+    settings_service = AsyncMock()
 
     result = await get_eligible_giveaways(
-        giveaway_service=mock_service,
-        min_price=0,
-        max_price=None,
-        min_score=None,
-        min_reviews=None,
-        limit=20,
+        giveaway_service=mock_service, settings_service=settings_service, limit=20,
     )
 
-    assert result["success"] is True
-    mock_service.get_eligible_giveaways.assert_called_once()
+    settings = settings_service.get_settings.return_value
+    mock_service.saved_policy.assert_called_once_with(settings)
+    mock_service.preview_policy.assert_awaited_once_with(policy, limit=20)
+    data = result["data"]
+    assert (data["count"], data["pool"], data["counts"], data["budget_applied"]) == (4, 9, {"eligible": 4}, False)
+    [candidate] = data["candidates"]
+    assert candidate["code"] == "TEST123"
+    assert candidate["decision"] == {
+        "code": "eligible", "label": "Joinable", "detail": {"priority": None, "rank": 1, "lifted_by": None},
+        "priority": None, "rank": 1, "lifted_by": None,
+    }
+    assert "giveaways" not in data
 
 
 @pytest.mark.asyncio

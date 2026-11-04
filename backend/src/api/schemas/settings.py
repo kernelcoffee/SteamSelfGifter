@@ -5,25 +5,140 @@ API requests and responses.
 """
 
 from datetime import datetime
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
-from services.settings_service import (
-    EXCLUDED_GENRE_MAX_LENGTH,
-    EXCLUDED_GENRES_MAX_ITEMS,
-    normalize_excluded_genres,
+from services.eligibility import (
+    GENRE_LIST_MAX_ITEMS,
+    GENRE_NAME_MAX_LENGTH,
+    MAX_PRIORITY_ITEMS,
+    THRESHOLD_MAX,
+    THRESHOLD_MIN,
+    normalize_genre_list,
 )
+from services.settings_service import normalize_priorities
 
 EXCLUDED_GENRES_DESCRIPTION = (
-    "Steam genre names auto-join skips, matched case-insensitively against the "
-    "cached game's genres. Wishlist (and, when enabled, DLC) giveaways are "
-    f"still entered. At most {EXCLUDED_GENRES_MAX_ITEMS} genres of up to "
-    f"{EXCLUDED_GENRE_MAX_LENGTH} characters; whitespace is stripped, empty "
-    "items dropped and case-insensitive duplicates removed (first spelling kept)."
+    "Steam genre names auto-join skips: a giveaway whose cached game carries any of "
+    "them is skipped (unknown genres pass). Matched case-insensitively."
+)
+INCLUDED_GENRES_DESCRIPTION = (
+    "Steam genre names of which the cached game must carry at least one; empty = any "
+    "genre. A game with no cached genres fails a non-empty included list."
+)
+GENRE_LISTS_DESCRIPTION = (
+    "Exclusion wins: a genre on both lists is skipped. Wishlist and DLC items in the "
+    "priority list skip both lists. At most "
+    f"{GENRE_LIST_MAX_ITEMS} genres of up to {GENRE_NAME_MAX_LENGTH} characters; "
+    "whitespace is stripped, empty items dropped and case-insensitive duplicates "
+    "removed (first spelling kept)."
+)
+PRIORITIES_DESCRIPTION = (
+    "Ordered auto-join priority list: matching giveaways are entered in list order, "
+    "the rest after them by price. Wishlist and DLC items skip the filters; ending "
+    f"soon obeys them. Each type at most once, at most {MAX_PRIORITY_ITEMS} items."
 )
 
 
-class SettingsBase(BaseModel):
+class WishlistPriority(BaseModel):
+    """Priority item: games on the user's Steam wishlist (skips the filters)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["wishlist"]
+
+
+class DlcPriority(BaseModel):
+    """Priority item: DLC for games the user owns (skips the filters)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["dlc"]
+
+
+class EndingSoonPriority(BaseModel):
+    """Priority item: giveaways ending within the threshold (obeys the filters)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["ending_soon"]
+    threshold_minutes: int = Field(
+        ...,
+        ge=THRESHOLD_MIN,
+        le=THRESHOLD_MAX,
+        description="Minutes before the end within which a giveaway counts as ending soon",
+        examples=[60],
+    )
+
+
+AutojoinPriorityItem = Annotated[
+    WishlistPriority | DlcPriority | EndingSoonPriority, Field(discriminator="type")
+]
+
+# The seven policy fields' types, shared by settings and the preview request
+# so both validate identically.
+MinPrice = Annotated[int, Field(ge=0)]
+MinScore = Annotated[int | None, Field(ge=0, le=10)]
+MinReviews = Annotated[int | None, Field(ge=0)]
+MaxGameAge = Annotated[int | None, Field(ge=1)]
+GenreList = list[str]
+PriorityList = list[AutojoinPriorityItem]
+
+MIN_PRICE_DESCRIPTION = "Minimum giveaway price in points"
+MIN_SCORE_DESCRIPTION = "Minimum Steam review score (0-10); null = filter off, 0 still needs cached game data"
+MIN_REVIEWS_DESCRIPTION = "Minimum number of reviews; null = filter off, 0 still needs cached game data"
+MAX_GAME_AGE_DESCRIPTION = "Maximum game age in years (null = no limit)"
+
+
+def _check_priorities(items: list[Any]) -> None:
+    """Run the registry's list rules (duplicates, item count) on parsed items."""
+    normalize_priorities([item.model_dump() for item in items])
+
+
+class AutojoinPolicyFields(BaseModel):
+    """The seven auto-join policy fields with their defaults and validators.
+
+    Shared by SettingsBase (settings responses) and PolicyPreviewRequest
+    (which makes all seven required), so the preview and PUT /settings accept
+    exactly the same values.
+    """
+
+    autojoin_min_price: MinPrice = Field(default=10, description=MIN_PRICE_DESCRIPTION, examples=[10])
+    autojoin_min_score: MinScore = Field(default=7, description=MIN_SCORE_DESCRIPTION, examples=[7])
+    autojoin_min_reviews: MinReviews = Field(default=1000, description=MIN_REVIEWS_DESCRIPTION, examples=[1000])
+    autojoin_max_game_age: MaxGameAge = Field(default=None, description=MAX_GAME_AGE_DESCRIPTION, examples=[5])
+    excluded_genres: GenreList = Field(
+        default_factory=list,
+        description=f"{EXCLUDED_GENRES_DESCRIPTION} {GENRE_LISTS_DESCRIPTION}",
+        examples=[["Sports", "Racing"]],
+    )
+    included_genres: GenreList = Field(
+        default_factory=list,
+        description=f"{INCLUDED_GENRES_DESCRIPTION} {GENRE_LISTS_DESCRIPTION}",
+        examples=[["RPG", "Strategy"]],
+    )
+    autojoin_priorities: PriorityList = Field(
+        default_factory=lambda: [WishlistPriority(type="wishlist")],
+        description=PRIORITIES_DESCRIPTION,
+        examples=[[{"type": "wishlist"}, {"type": "ending_soon", "threshold_minutes": 60}]],
+    )
+
+    @field_validator("excluded_genres", "included_genres")
+    @classmethod
+    def validate_genre_list(cls, v: list[str], info: ValidationInfo) -> list[str]:
+        """Strip, drop empties, bound and dedupe a genre list."""
+        return normalize_genre_list(v, info.field_name or "genres")
+
+    @field_validator("autojoin_priorities")
+    @classmethod
+    def validate_priorities(cls, v: list[Any]) -> list[Any]:
+        """Reject duplicate types and over-long lists."""
+        _check_priorities(v)
+        return v
+
+
+class SettingsBase(AutojoinPolicyFields):
     """
     Base settings schema with common fields.
 
@@ -45,13 +160,6 @@ class SettingsBase(BaseModel):
         default=None,
         description="Anti-CSRF token from SteamGifts",
         examples=["xyz789..."],
-    )
-
-    # DLC Settings
-    dlc_priority_enabled: bool = Field(
-        default=False,
-        description="DLC giveaways bypass autojoin filters and are entered after wishlist ones",
-        examples=[False],
     )
 
     # Safety Settings
@@ -84,56 +192,6 @@ class SettingsBase(BaseModel):
         ge=0,
         examples=[200],
     )
-    autojoin_min_price: int = Field(
-        default=10,
-        description="Minimum giveaway price in points",
-        ge=0,
-        examples=[10],
-    )
-    autojoin_min_score: int = Field(
-        default=7,
-        description="Minimum Steam review score (0-10)",
-        ge=0,
-        le=10,
-        examples=[7],
-    )
-    autojoin_min_reviews: int = Field(
-        default=1000,
-        description="Minimum number of reviews required",
-        ge=0,
-        examples=[1000],
-    )
-    autojoin_max_game_age: int | None = Field(
-        default=None,
-        description="Maximum game age in years (None = no limit)",
-        ge=1,
-        examples=[5],
-    )
-    wishlist_priority_enabled: bool = Field(
-        default=True,
-        description="Wishlist giveaways bypass autojoin filters and are entered first",
-        examples=[True],
-    )
-    ending_soon_priority_enabled: bool = Field(
-        default=False,
-        description=(
-            "Giveaways ending within ending_soon_threshold_minutes are entered "
-            "after wishlist and DLC ones but before the rest, soonest first"
-        ),
-        examples=[False],
-    )
-    ending_soon_threshold_minutes: int = Field(
-        default=60,
-        description="Minutes before the end within which a giveaway counts as ending soon",
-        ge=5,
-        le=10080,
-        examples=[60],
-    )
-    excluded_genres: list[str] = Field(
-        default_factory=list,
-        description=EXCLUDED_GENRES_DESCRIPTION,
-        examples=[["Sports", "Racing"]],
-    )
 
     # Scheduler Settings
     scan_interval_minutes: int = Field(
@@ -142,9 +200,9 @@ class SettingsBase(BaseModel):
         ge=1,
         examples=[30],
     )
-    max_entries_per_cycle: int | None = Field(
-        default=None,
-        description="Max entries per scan cycle (None = unlimited)",
+    max_entries_per_cycle: int = Field(
+        default=10,
+        description="Per cycle cap on entry attempts (never unlimited)",
         ge=1,
         examples=[10],
     )
@@ -243,16 +301,19 @@ class SettingsResponse(SettingsBase):
                     "phpsessid": "abc123...",
                     "user_agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/82.0",
                     "xsrf_token": None,
-                    "dlc_priority_enabled": False,
                     "autojoin_enabled": True,
                     "autojoin_start_at": 350,
                     "autojoin_stop_at": 200,
                     "autojoin_min_price": 10,
                     "autojoin_min_score": 7,
-                    "autojoin_min_reviews": 1000,
-                    "ending_soon_priority_enabled": False,
-                    "ending_soon_threshold_minutes": 60,
+                    "autojoin_min_reviews": None,
+                    "autojoin_max_game_age": None,
                     "excluded_genres": ["Sports", "Racing"],
+                    "included_genres": ["RPG"],
+                    "autojoin_priorities": [
+                        {"type": "wishlist"},
+                        {"type": "ending_soon", "threshold_minutes": 60},
+                    ],
                     "scan_interval_minutes": 30,
                     "max_entries_per_cycle": 10,
                     "automation_enabled": True,
@@ -295,12 +356,6 @@ class SettingsUpdate(BaseModel):
         description="Anti-CSRF token",
     )
 
-    # DLC Settings
-    dlc_priority_enabled: bool | None = Field(
-        default=None,
-        description="DLC giveaways bypass autojoin filters and are entered after wishlist ones",
-    )
-
     # Safety Settings
     safety_check_enabled: bool | None = Field(
         default=None,
@@ -331,43 +386,32 @@ class SettingsUpdate(BaseModel):
         description="Minimum giveaway price in points",
         ge=0,
     )
-    autojoin_min_score: int | None = Field(
+    autojoin_min_score: MinScore = Field(
         default=None,
-        description="Minimum Steam review score (0-10)",
-        ge=0,
-        le=10,
+        description=f"{MIN_SCORE_DESCRIPTION}. Explicit null turns the filter off; omitted = unchanged.",
     )
-    autojoin_min_reviews: int | None = Field(
+    autojoin_min_reviews: MinReviews = Field(
         default=None,
-        description="Minimum number of reviews required",
-        ge=0,
+        description=f"{MIN_REVIEWS_DESCRIPTION}. Explicit null turns the filter off; omitted = unchanged.",
     )
-    autojoin_max_game_age: int | None = Field(
+    autojoin_max_game_age: MaxGameAge = Field(
         default=None,
-        description="Maximum game age in years (None = no limit)",
-        ge=1,
+        description=f"{MAX_GAME_AGE_DESCRIPTION}. Explicit null removes the limit; omitted = unchanged.",
     )
-    wishlist_priority_enabled: bool | None = Field(
+    excluded_genres: GenreList | None = Field(
         default=None,
-        description="Wishlist giveaways bypass autojoin filters and are entered first",
-    )
-    ending_soon_priority_enabled: bool | None = Field(
-        default=None,
-        description=(
-            "Giveaways ending within ending_soon_threshold_minutes are entered "
-            "after wishlist and DLC ones but before the rest, soonest first"
-        ),
-    )
-    ending_soon_threshold_minutes: int | None = Field(
-        default=None,
-        description="Minutes before the end within which a giveaway counts as ending soon",
-        ge=5,
-        le=10080,
-    )
-    excluded_genres: list[str] | None = Field(
-        default=None,
-        description=EXCLUDED_GENRES_DESCRIPTION + " Null leaves the list unchanged; [] clears it.",
+        description=f"{EXCLUDED_GENRES_DESCRIPTION} {GENRE_LISTS_DESCRIPTION} Omitted = unchanged; [] clears it.",
         examples=[["Sports", "Racing"]],
+    )
+    included_genres: GenreList | None = Field(
+        default=None,
+        description=f"{INCLUDED_GENRES_DESCRIPTION} {GENRE_LISTS_DESCRIPTION} Omitted = unchanged; [] clears it.",
+        examples=[["RPG", "Strategy"]],
+    )
+    autojoin_priorities: PriorityList | None = Field(
+        default=None,
+        description=f"{PRIORITIES_DESCRIPTION} Omitted or null = unchanged; [] = no priorities.",
+        examples=[[{"type": "dlc"}, {"type": "wishlist"}]],
     )
 
     # Scheduler Settings
@@ -378,7 +422,7 @@ class SettingsUpdate(BaseModel):
     )
     max_entries_per_cycle: int | None = Field(
         default=None,
-        description="Max entries per scan cycle",
+        description="Per cycle cap on entry attempts (1 or more)",
         ge=1,
     )
     automation_enabled: bool | None = Field(
@@ -414,8 +458,11 @@ class SettingsUpdate(BaseModel):
                 {
                     "autojoin_enabled": True,
                     "autojoin_min_price": 50,
+                    "autojoin_min_reviews": None,
                     "max_entries_per_cycle": 15,
                     "excluded_genres": ["Sports", "Racing"],
+                    "included_genres": [],
+                    "autojoin_priorities": [{"type": "dlc"}, {"type": "wishlist"}],
                 },
                 {
                     "automation_enabled": True,
@@ -425,13 +472,42 @@ class SettingsUpdate(BaseModel):
         }
     }
 
-    @field_validator("excluded_genres")
+    @field_validator("excluded_genres", "included_genres")
     @classmethod
-    def validate_excluded_genres(cls, v: list[str] | None) -> list[str] | None:
-        """Strip, drop empties, bound and dedupe the excluded genres (None = unchanged)."""
+    def validate_genre_list(cls, v: list[str] | None, info: ValidationInfo) -> list[str] | None:
+        """Strip, drop empties, bound and dedupe a genre list (None is left to the service)."""
         if v is None:
             return None
-        return normalize_excluded_genres(v)
+        return normalize_genre_list(v, info.field_name or "genres")
+
+    @field_validator("autojoin_priorities")
+    @classmethod
+    def validate_priorities(cls, v: list[Any] | None) -> list[Any] | None:
+        """Reject duplicate types and over-long lists (None = unchanged)."""
+        if v is None:
+            return None
+        _check_priorities(v)
+        return v
+
+
+class PolicyPreviewRequest(AutojoinPolicyFields):
+    """An unsaved auto-join policy for POST /giveaways/preview.
+
+    Exactly the seven policy fields, all required; the validators are the
+    ones PUT /settings runs. Unknown keys are ignored.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    autojoin_min_price: MinPrice = Field(..., description=MIN_PRICE_DESCRIPTION, examples=[10])
+    autojoin_min_score: MinScore = Field(..., description=MIN_SCORE_DESCRIPTION, examples=[7])
+    autojoin_min_reviews: MinReviews = Field(..., description=MIN_REVIEWS_DESCRIPTION, examples=[1000])
+    autojoin_max_game_age: MaxGameAge = Field(..., description=MAX_GAME_AGE_DESCRIPTION, examples=[None])
+    excluded_genres: GenreList = Field(..., description=EXCLUDED_GENRES_DESCRIPTION, examples=[["Sports"]])
+    included_genres: GenreList = Field(..., description=INCLUDED_GENRES_DESCRIPTION, examples=[[]])
+    autojoin_priorities: PriorityList = Field(
+        ..., description=PRIORITIES_DESCRIPTION, examples=[[{"type": "wishlist"}]]
+    )
 
 
 class SteamGiftsCredentials(BaseModel):
