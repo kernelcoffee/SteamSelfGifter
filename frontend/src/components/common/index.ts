@@ -5,3 +5,4 @@ export { Toggle } from './Toggle';
 export { Badge } from './Badge';
 export { Spinner, Loading, Skeleton, CardSkeleton } from './Loading';
 export { Notifications } from './Notifications';
+export { PriorityList } from './PriorityList';

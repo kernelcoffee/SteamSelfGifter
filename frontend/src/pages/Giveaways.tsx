@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
-import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users, Package } from 'lucide-react';
+import { Link } from 'react-router';
+import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users, Package, Info, RotateCw } from 'lucide-react';
 import { SiSteam } from 'react-icons/si';
-import { Card, Button, Badge, Input, CardSkeleton } from '@/components/common';
-import { useInfiniteGiveaways, useEnterGiveaway, useHideGiveaway, useUnhideGiveaway, useRemoveEntry, useCheckGiveawaySafety, useHideOnSteamGifts, usePostComment } from '@/hooks';
+import { Card, Button, Badge, Input, CardSkeleton, Toggle } from '@/components/common';
+import { AutojoinDecisionLine } from '@/components/features/AutojoinDecisionLine';
+import { useInfiniteGiveaways, useEnterGiveaway, useHideGiveaway, useUnhideGiveaway, useRemoveEntry, useCheckGiveawaySafety, useHideOnSteamGifts, usePostComment, useSettings, useAutojoinRegistry } from '@/hooks';
 import { showSuccess, showError } from '@/stores/uiStore';
 import { useGiveawayFiltersStore } from '@/stores/giveawayFiltersStore';
-import type { Giveaway } from '@/types';
+import type { AutojoinPriorityType, AutojoinPriorityTypeInfo, Giveaway } from '@/types';
+import { ordinal } from '@/utils/numbers';
 
 // Stepped slider stops. Chance: first notch = Any, then 0.01% up to 100%.
 const CHANCE_STOPS = [0, 0.01, 0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100];
@@ -22,6 +25,9 @@ const stopIndex = (stops: number[], value: number | undefined, fallback: number)
   return idx === -1 ? fallback : idx;
 };
 
+/** Id of the line that says why the view filters are disabled in lens mode. */
+const VIEW_FILTERS_PAUSED_ID = 'view-filters-note';
+
 export type GiveawayPageStatus = 'active' | 'wishlist' | 'dlc' | 'entered';
 
 const PAGE_TITLES: Record<GiveawayPageStatus, string> = {
@@ -31,6 +37,56 @@ const PAGE_TITLES: Record<GiveawayPageStatus, string> = {
   entered: 'Entered',
 };
 
+/** Tabs whose giveaways auto-join may still enter: lens and decision line. */
+function isAutojoinTab(status: GiveawayPageStatus): boolean {
+  return status === 'active' || status === 'wishlist' || status === 'dlc';
+}
+
+/** Priority type a tab lists, for the tab's standing line. */
+const TAB_PRIORITY_TYPE: Partial<Record<GiveawayPageStatus, AutojoinPriorityType>> = {
+  wishlist: 'wishlist',
+  dlc: 'dlc',
+};
+
+/**
+ * Where this tab's giveaways stand in the saved priority order: whether they
+ * skip the filters (from the registry) and at which position (from the
+ * saved list).
+ */
+function StandingLine({ type }: { type: AutojoinPriorityType }) {
+  const settings = useSettings();
+  const registry = useAutojoinRegistry();
+
+  let text: string;
+  if (registry.isError) {
+    text = 'Could not load the auto-join registry';
+  } else if (settings.isError) {
+    text = 'Could not load your priority order';
+  } else if (!registry.data || !settings.data) {
+    text = 'Loading your priority order…';
+  } else {
+    const info = registry.data.priority_types.find((t) => t.type === type);
+    const label = info?.label ?? type;
+    const index = settings.data.autojoin_priorities.findIndex((item) => item.type === type);
+    if (index === -1) {
+      text = `${label} is not in your priority order: these giveaways obey the filters`;
+    } else {
+      const verb = info?.exempt_from_filters ? 'skip' : 'obey';
+      text = `${label} giveaways ${verb} the filters and are entered ${ordinal(index + 1)}`;
+    }
+  }
+
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 text-sm text-gray-600 dark:text-gray-300">
+      <Info size={16} className="shrink-0" aria-hidden="true" />
+      <span>{text}</span>
+      <Link to="/settings" className="text-primary-light dark:text-primary-dark underline">
+        Change in Settings
+      </Link>
+    </p>
+  );
+}
+
 /**
  * Giveaways page
  * Browse, filter, and enter giveaways. The status (active/wishlist/entered)
@@ -38,20 +94,38 @@ const PAGE_TITLES: Record<GiveawayPageStatus, string> = {
  * on the dedicated Wins page.
  */
 export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }) {
+  // The tab routes render this same component, so React Router keeps one
+  // instance across tab switches; the key gives each tab visit its own page
+  // state, so the auto-join lens starts off on every tab.
+  return <GiveawaysTab key={status} status={status} />;
+}
+
+function GiveawaysTab({ status }: { status: GiveawayPageStatus }) {
   const title = PAGE_TITLES[status];
   // Filters persist across visits (localStorage-backed store)
   const filters = useGiveawayFiltersStore((s) => s.filters);
   const setFilters = useGiveawayFiltersStore((s) => s.setFilters);
-  const [searchInput, setSearchInput] = useState('');
+  // The draft starts from the store's search so the box always shows the term
+  // the list is filtered by, including after a tab switch remounts the page.
+  const [searchInput, setSearchInput] = useState(() => filters.search ?? '');
+  // The auto-join lens is page state: off on every tab visit, never persisted.
+  const [lensOn, setLensOn] = useState(false);
+  const autojoinTab = isAutojoinTab(status);
+  const lens = autojoinTab && lensOn;
+  const standingType = TAB_PRIORITY_TYPE[status];
+  const settings = useSettings();
+  const registry = useAutojoinRegistry();
+  const priorityTypes: AutojoinPriorityTypeInfo[] | undefined = registry.data?.priority_types;
 
   const {
     data,
     isLoading,
     error,
+    refetch,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage
-  } = useInfiniteGiveaways({ ...filters, status });
+  } = useInfiniteGiveaways({ ...filters, status, lens: lens ? 'autojoin' : undefined });
   const enterGiveaway = useEnterGiveaway();
   const hideGiveaway = useHideGiveaway();
   const unhideGiveaway = useUnhideGiveaway();
@@ -62,6 +136,8 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
 
   // Flatten all pages into a single array
   const allGiveaways = data?.pages.flatMap(page => page.giveaways) ?? [];
+  // With the lens, count is the total number of candidates on the tab.
+  const lensCount = data?.pages[0]?.count ?? 0;
 
   // Ref for intersection observer
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -179,58 +255,69 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
     setFilters({ safetyFilter });
   };
 
-  if (error) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h1>
-        <Card>
-          <div className="flex items-center gap-3 text-red-500">
-            <AlertCircle size={24} />
-            <span>Failed to load giveaways. Is the backend running?</span>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h1>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h1>
+          {standingType && <StandingLine type={standingType} />}
+        </div>
 
         {/* Search */}
         <form onSubmit={handleSearch} className="flex gap-2">
           <Input
             placeholder="Search games..."
+            aria-label="Search games"
             value={searchInput}
+            disabled={lens}
+            aria-describedby={lens ? VIEW_FILTERS_PAUSED_ID : undefined}
             onChange={(e) => setSearchInput(e.target.value)}
-            className="w-64"
+            className="w-full sm:w-64"
           />
-          <Button type="submit" variant="secondary">Search</Button>
+          <Button type="submit" variant="secondary" disabled={lens}>Search</Button>
         </form>
       </div>
 
+      {autojoinTab && settings.data && !settings.data.autojoin_enabled && (
+        <p className="flex items-start gap-2 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 p-3 text-sm text-yellow-800 dark:text-yellow-200">
+          <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+          Auto-join is off: nothing is entered automatically.
+        </p>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-4">
+        {autojoinTab && (
+          <Toggle
+            label="Auto-join lens"
+            description="Show only what your saved policy would enter next cycle, in entry order"
+            checked={lensOn}
+            onChange={setLensOn}
+          />
+        )}
+
         {/* Score Filter - only show for active status */}
         {status === 'active' && (
           <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
             <Star size={16} className="text-yellow-500" />
             <span className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">
-              Min Score:
+              Show score ≥
             </span>
             <input
               type="range"
+              aria-label="Show score at least"
               min="0"
               max="10"
               value={filters.minScore || 0}
+              disabled={lens}
+              aria-describedby={lens ? VIEW_FILTERS_PAUSED_ID : undefined}
               onChange={(e) => handleScoreFilter(Number(e.target.value))}
-              className="w-24 h-2 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-light"
+              className="w-24 h-2 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-light disabled:cursor-not-allowed disabled:opacity-50"
             />
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300 w-6 text-center">
               {filters.minScore || 0}
             </span>
-            {(filters.minScore ?? 0) > 0 && (
+            {!lens && (filters.minScore ?? 0) > 0 && (
               <button
                 onClick={() => handleScoreFilter(0)}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
@@ -254,14 +341,17 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
               min="0"
               max={CHANCE_STOPS.length - 1}
               step="1"
+              aria-label="Minimum win chance"
               value={stopIndex(CHANCE_STOPS, filters.minChance, 0)}
+              disabled={lens}
+              aria-describedby={lens ? VIEW_FILTERS_PAUSED_ID : undefined}
               onChange={(e) => handleChanceFilter(CHANCE_STOPS[Number(e.target.value)])}
-              className="w-24 h-2 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-light"
+              className="w-24 h-2 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-light disabled:cursor-not-allowed disabled:opacity-50"
             />
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300 w-14 text-center">
               {formatChanceStop(filters.minChance ?? 0)}
             </span>
-            {(filters.minChance ?? 0) > 0 && (
+            {!lens && (filters.minChance ?? 0) > 0 && (
               <button
                 onClick={() => handleChanceFilter(0)}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
@@ -285,14 +375,17 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
               min="0"
               max={ENDING_STOPS.length - 1}
               step="1"
+              aria-label="Ending within"
               value={stopIndex(ENDING_STOPS, filters.endingWithin, ENDING_STOPS.length - 1)}
+              disabled={lens}
+              aria-describedby={lens ? VIEW_FILTERS_PAUSED_ID : undefined}
               onChange={(e) => handleEndingWithinFilter(ENDING_STOPS[Number(e.target.value)])}
-              className="w-24 h-2 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-light"
+              className="w-24 h-2 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-primary-light disabled:cursor-not-allowed disabled:opacity-50"
             />
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300 w-12 text-center">
               {formatEndingStop(filters.endingWithin ?? 0)}
             </span>
-            {(filters.endingWithin ?? 0) > 0 && (
+            {!lens && (filters.endingWithin ?? 0) > 0 && (
               <button
                 onClick={() => handleEndingWithinFilter(0)}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
@@ -310,9 +403,12 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
             <Shield size={16} className="text-green-500" />
             <span className="text-sm text-gray-600 dark:text-gray-400">Safety:</span>
             <select
+              aria-label="Safety"
               value={filters.safetyFilter || 'all'}
+              disabled={lens}
+              aria-describedby={lens ? VIEW_FILTERS_PAUSED_ID : undefined}
               onChange={(e) => handleSafetyFilter(e.target.value as 'all' | 'safe' | 'unsafe')}
-              className="text-sm bg-transparent border-none focus:ring-0 text-gray-700 dark:text-gray-300 cursor-pointer"
+              className="text-sm bg-transparent border-none focus:ring-0 text-gray-700 dark:text-gray-300 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="all">All</option>
               <option value="safe">Safe Only</option>
@@ -322,15 +418,48 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
         )}
       </div>
 
+      {autojoinTab && (
+        <p id={VIEW_FILTERS_PAUSED_ID} className="text-xs text-gray-500 dark:text-gray-400">
+          {lens
+            ? 'View filters are paused while the Auto-join lens is on: the list is your saved policy alone.'
+            : 'View filters change only what you see; auto-join uses Settings.'}
+        </p>
+      )}
+
       {/* Results count */}
-      {allGiveaways.length > 0 && (
+      {!error && allGiveaways.length > 0 && (
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Showing {allGiveaways.length} giveaway{allGiveaways.length !== 1 ? 's' : ''}
+          {lens
+            ? `${lensCount} ${lensCount === 1 ? 'candidate' : 'candidates'} in entry order; the points budget and per cycle cap apply at cycle time`
+            : `Showing ${allGiveaways.length} giveaway${allGiveaways.length !== 1 ? 's' : ''}`}
         </p>
       )}
 
       {/* Giveaways Grid */}
-      {isLoading ? (
+      {error ? (
+        <Card>
+          <div className="flex flex-wrap items-center gap-3 text-red-500">
+            <AlertCircle size={24} className="shrink-0" />
+            <span>
+              {lens
+                ? `Could not load the auto-join lens: ${error.message}`
+                : 'Failed to load giveaways. Is the backend running?'}
+            </span>
+            {lens && (
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={RotateCw}
+                onClick={() => {
+                  void refetch();
+                }}
+              >
+                Retry
+              </Button>
+            )}
+          </div>
+        </Card>
+      ) : isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {[...Array(10)].map((_, i) => (
             <CardSkeleton key={i} />
@@ -339,7 +468,17 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
       ) : allGiveaways.length === 0 ? (
         <Card>
           <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-            No giveaways found matching your criteria.
+            {lens ? (
+              <>
+                Nothing on this tab passes your saved auto-join policy. The budget and cap apply at
+                cycle time.{' '}
+                <Link to="/settings" className="text-primary-light dark:text-primary-dark underline">
+                  Adjust it in Settings
+                </Link>
+              </>
+            ) : (
+              'No giveaways found matching your criteria.'
+            )}
           </div>
         </Card>
       ) : (
@@ -349,6 +488,9 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
               <GiveawayCard
                 key={giveaway.id}
                 giveaway={giveaway}
+                lens={lens}
+                showAutojoin={autojoinTab}
+                priorityTypes={priorityTypes}
                 onEnter={() => handleEnter(giveaway)}
                 onHide={() => handleHide(giveaway)}
                 onUnhide={() => handleUnhide(giveaway)}
@@ -394,6 +536,11 @@ export function Giveaways({ status = 'active' }: { status?: GiveawayPageStatus }
 
 interface GiveawayCardProps {
   giveaway: Giveaway;
+  /** Lens mode: the card shows its live decision. */
+  lens: boolean;
+  /** Whether this tab shows the Auto-join line at all. */
+  showAutojoin: boolean;
+  priorityTypes?: AutojoinPriorityTypeInfo[];
   onEnter: () => void;
   onHide: () => void;
   onUnhide: () => void;
@@ -426,7 +573,7 @@ function GenreLine({ genres }: { genres: string[] }) {
   );
 }
 
-function GiveawayCard({ giveaway, onEnter, onHide, onUnhide, onRemoveEntry, onCheckSafety, onHideOnSteamGifts, onComment, isEntering, isRemovingEntry, isCheckingSafety, isHidingOnSteamGifts, isCommenting }: GiveawayCardProps) {
+function GiveawayCard({ giveaway, lens, showAutojoin, priorityTypes, onEnter, onHide, onUnhide, onRemoveEntry, onCheckSafety, onHideOnSteamGifts, onComment, isEntering, isRemovingEntry, isCheckingSafety, isHidingOnSteamGifts, isCommenting }: GiveawayCardProps) {
   // Determine if giveaway has ended:
   // - If end_time is set and in the past, it's expired
   // - If end_time is null but it's a won giveaway, treat as ended (historical)
@@ -520,6 +667,11 @@ function GiveawayCard({ giveaway, onEnter, onHide, onUnhide, onRemoveEntry, onCh
             </span>
           )}
         </div>
+
+        {/* Auto-join decision */}
+        {showAutojoin && !giveaway.is_entered && !isExpired && (
+          <AutojoinDecisionLine giveaway={giveaway} lens={lens} priorityTypes={priorityTypes} />
+        )}
 
         {/* Entries */}
         {!isExpired && (

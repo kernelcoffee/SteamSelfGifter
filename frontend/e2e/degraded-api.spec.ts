@@ -42,3 +42,27 @@ test('Analytics survives summaries without by_type or win_rate', async ({ page }
   // The by_type breakdown renders with zeroed values instead of crashing.
   await expect(page.getByText('Automatic')).toBeVisible();
 });
+
+test('Settings shows the registry error and no form when the registry fails', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/v1/giveaways/registry', (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: { message: 'Internal server error', code: 'SYS_001', details: {} },
+      }),
+    })
+  );
+
+  await page.goto('/settings');
+
+  await expect(
+    page.getByText(
+      'Could not load the auto-join registry (GET /giveaways/registry). Reload the page; if it keeps failing check the backend logs.'
+    )
+  ).toBeVisible();
+  await expect(page.getByText('Internal server error')).toBeVisible();
+  await expect(page.getByLabel('PHPSESSID', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save Changes' })).toHaveCount(0);
+});

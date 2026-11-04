@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import { api } from '@/services/api';
-import type { Giveaway, SafetyCheckResult } from '@/types';
+import type { Giveaway, LensGiveawaysResponse, SafetyCheckResult } from '@/types';
 
 /**
  * Query keys for giveaways
@@ -28,6 +28,22 @@ export interface GiveawayFilters {
   safetyFilter?: 'all' | 'safe' | 'unsafe'; // Filter by safety status
   minChance?: number; // Minimum win chance in percent (0.01-100)
   endingWithin?: number; // Only giveaways ending within this many minutes
+  // Auto-join lens (active, wishlist and DLC tabs): only what the saved
+  // policy would enter, in entry order. Page state only, never persisted.
+  lens?: 'autojoin';
+}
+
+/**
+ * The filters a request actually carries. With the auto-join lens the view
+ * filters (search, score, safety, chance, ending within, type, sort) are
+ * paused: the lens shows what the saved policy alone would enter, so only the
+ * tab, the lens and the page size reach the request and the query key.
+ */
+export function requestFilters(
+  filters: Omit<GiveawayFilters, 'page'>,
+): Omit<GiveawayFilters, 'page'> {
+  if (filters.lens !== 'autojoin') return filters;
+  return { status: filters.status, limit: filters.limit, lens: 'autojoin' };
 }
 
 /**
@@ -42,12 +58,11 @@ export interface PaginatedResponse<T> {
 }
 
 /**
- * Backend response format for giveaways
+ * Backend response format for giveaways. With lens=autojoin the items are
+ * CandidatePreview (a Giveaway plus its live decision), count is the total
+ * number of candidates, and the envelope carries lens and budget_applied.
  */
-interface GiveawaysApiResponse {
-  giveaways: Giveaway[];
-  count: number;
-}
+type GiveawaysApiResponse = { giveaways: Giveaway[]; count: number } | LensGiveawaysResponse;
 
 /**
  * Build the endpoint URL (path + query string) for a giveaways request.
@@ -102,6 +117,9 @@ function buildGiveawaysEndpoint(
   if (filters.endingWithin !== undefined && filters.endingWithin > 0) {
     params.set('ending_within', String(filters.endingWithin));
   }
+  if (filters.lens === 'autojoin') {
+    params.set('lens', 'autojoin');
+  }
 
   params.set('limit', String(limit));
   if (offset > 0) {
@@ -115,7 +133,8 @@ function buildGiveawaysEndpoint(
 /**
  * Fetch giveaways with optional filters
  */
-export function useGiveaways(filters: GiveawayFilters = {}) {
+export function useGiveaways(requested: GiveawayFilters = {}) {
+  const filters: GiveawayFilters = { ...requestFilters(requested), page: requested.page };
   return useQuery({
     queryKey: giveawayKeys.list(filters),
     queryFn: async () => {
@@ -147,7 +166,8 @@ export function useGiveaways(filters: GiveawayFilters = {}) {
 /**
  * Fetch giveaways with infinite scrolling
  */
-export function useInfiniteGiveaways(filters: Omit<GiveawayFilters, 'page'> = {}) {
+export function useInfiniteGiveaways(requested: Omit<GiveawayFilters, 'page'> = {}) {
+  const filters = requestFilters(requested);
   return useInfiniteQuery({
     queryKey: [...giveawayKeys.lists(), 'infinite', filters],
     queryFn: async ({ pageParam = 0 }) => {
@@ -162,6 +182,7 @@ export function useInfiniteGiveaways(filters: Omit<GiveawayFilters, 'page'> = {}
 
       return {
         giveaways: response.data.giveaways,
+        count: response.data.count,
         nextOffset: response.data.giveaways.length === limit ? pageParam + limit : undefined,
       };
     },
