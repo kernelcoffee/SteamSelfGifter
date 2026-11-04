@@ -48,7 +48,6 @@ Get current application settings.
     "phpsessid": "string | null",
     "user_agent": "string",
     "xsrf_token": "string | null",
-    "dlc_priority_enabled": false,
     "safety_check_enabled": true,
     "auto_hide_unsafe": true,
     "autojoin_enabled": false,
@@ -58,12 +57,11 @@ Get current application settings.
     "autojoin_min_score": 7,
     "autojoin_min_reviews": 1000,
     "autojoin_max_game_age": null,
-    "wishlist_priority_enabled": true,
-    "ending_soon_priority_enabled": false,
-    "ending_soon_threshold_minutes": 60,
+    "autojoin_priorities": [{"type": "wishlist"}],
     "excluded_genres": [],
+    "included_genres": [],
     "scan_interval_minutes": 30,
-    "max_entries_per_cycle": null,
+    "max_entries_per_cycle": 10,
     "automation_enabled": false,
     "max_scan_pages": 3,
     "entry_delay_min": 8,
@@ -84,7 +82,6 @@ Update application settings (partial updates supported).
 {
   "phpsessid": "string",
   "user_agent": "string",
-  "dlc_priority_enabled": true,
   "safety_check_enabled": true,
   "auto_hide_unsafe": true,
   "autojoin_enabled": true,
@@ -94,10 +91,9 @@ Update application settings (partial updates supported).
   "autojoin_min_score": 7,
   "autojoin_min_reviews": 1000,
   "autojoin_max_game_age": 5,
-  "wishlist_priority_enabled": true,
-  "ending_soon_priority_enabled": true,
-  "ending_soon_threshold_minutes": 60,
+  "autojoin_priorities": [{"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 60}, {"type": "wishlist"}],
   "excluded_genres": ["Sports", "Racing"],
+  "included_genres": ["RPG", "Indie"],
   "scan_interval_minutes": 30,
   "max_entries_per_cycle": 10,
   "automation_enabled": true,
@@ -108,15 +104,31 @@ Update application settings (partial updates supported).
 }
 ```
 
-`ending_soon_threshold_minutes` must be an integer from 5 to 10080 (one week); anything else returns 422 with the standard validation body and nothing is written. The threshold is stored even while `ending_soon_priority_enabled` is false. Omitted or `null` fields are ignored; a body with no non-null fields returns 400 `"No fields provided for update"`.
+**Null and omitted fields.** An omitted field is unchanged. An explicit `null` is stored as `NULL` for `phpsessid`, `xsrf_token`, `autojoin_min_score`, `autojoin_min_reviews` and `autojoin_max_game_age` (the filter is off). Explicit `null` for `autojoin_priorities` leaves it unchanged. Explicit `null` for any other field returns 400 `"<field> cannot be null"` and writes nothing. A body that reduces to nothing (`{}`) returns 400 `"No fields provided for update"`. The removed keys `wishlist_priority_enabled`, `dlc_priority_enabled`, `ending_soon_priority_enabled` and `ending_soon_threshold_minutes` are ignored if sent.
 
-`excluded_genres` is a list of Steam genre names (never `null` in responses, default `[]`). `null` or omitted leaves it unchanged; `[]` clears it. The server normalizes it in this order: strip each item, drop empty items, reject any item longer than 64 characters (422), dedupe case-insensitively keeping the first spelling, reject more than 50 items (422); on a 422 nothing is written. A non-list value or non-string items return 422. The response echoes the normalized list in the user's order, e.g. `[" Action", "action", "Indie", ""]` is stored as `["Action", "Indie"]`. `POST /settings/reset` sets it back to `[]`.
+| Field | Type | Default / reset | Validation (422 on failure, nothing written) |
+|---|---|---|---|
+| `autojoin_priorities` | ordered list of 0 to 3 items | `[{"type": "wishlist"}]` | item is `{"type": "wishlist"}`, `{"type": "dlc"}` or `{"type": "ending_soon", "threshold_minutes": 5..10080}`; no duplicate types, no extra keys |
+| `autojoin_min_score` | int 0..10 or `null` | 7 | `null` = no minimum; `0` still requires cached game data |
+| `autojoin_min_reviews` | int >= 0 or `null` | 1000 | same semantics as the score |
+| `max_entries_per_cycle` | int >= 1 | 10 | never `null` |
+| `excluded_genres`, `included_genres` | list of Steam genre names | `[]` | see below |
 
-**Genre exclusion:** auto-join rejects a giveaway whose cached game's `genres` contains any `excluded_genres` entry, compared case-insensitively, with `eligibility_reason` `"genre_excluded"` ("Game genre is excluded"). It is checked after the price filters and before the score/reviews/age filters, so a giveaway that fails on price reports the price reason. Wishlist giveaways (when `wishlist_priority_enabled`) and DLC (when `dlc_priority_enabled`) bypass it like the other filters. Unknown genres pass: a giveaway with no cached game, or a game whose `genres` is `null` (not fetched yet) or `[]`, is never excluded, and the genre list alone does not require game data. Games cached before genres were stored get them from the background stale-game refresh over the next cycles. Only Steam store genres are matched; user-voted Steam tags are not available through the store API.
+`excluded_genres` and `included_genres` are lists of Steam genre names (never `null` in responses). `[]` clears a list. The server normalizes each in this order: strip each item, drop empty items, reject any item longer than 64 characters (422), dedupe case-insensitively (ASCII) keeping the first spelling, reject more than 50 items (422). A non-list value or non-string items return 422, and the message names the field. The response echoes the normalized list in the user's order, e.g. `[" Action", "action", "Indie", ""]` is stored as `["Action", "Indie"]`. `POST /settings/reset` sets both back to `[]`. The two lists may overlap; exclusion wins at evaluation time.
+
+**Auto-join decision.** One engine, `services/eligibility.py`, decides every giveaway: it runs in the automation cycle, in the preview endpoints, in the Giveaways lens and when labelling a giveaway. The stages, in order:
+
+1. Gates, never lifted: `expired`, `hidden`, `entered`, `unsafe`.
+2. Priority match against `autojoin_priorities`: the first matching item gives the giveaway its `priority` and `rank`.
+3. Exemption: `wishlist` and `dlc` items skip the filters for a giveaway that matches any such item (`lifted_by`); `ending_soon` never skips them.
+4. Filters, first failure wins: `price_below_min`, `genre_excluded`, `genre_not_included`, `no_game_data`, `score_below_min`, `reviews_below_min`, `game_too_old`.
+5. Ordering, then the cycle budget (`budget_floor`, `cycle_cap`, `points_accumulating`).
+
+Unknown data: a giveaway with no cached game, or genres `null` or `[]`, is never excluded by `excluded_genres`. With a non-empty `included_genres`, unknown or empty genres fail (`genre_not_included`). A score, reviews or age threshold that is set requires cached game data (`no_game_data` otherwise); an unknown score or review count counts as 0, and an unknown release date fails the age limit. Games cached before genres were stored get them from the background stale-game refresh over the next cycles. Only Steam store genres are matched.
 
 **Response:** Same as GET /settings/
 
-**Entry order:** each automation cycle enters eligible giveaways in this order: wishlist giveaways (when `wishlist_priority_enabled`), then DLC (when `dlc_priority_enabled`), then, when `ending_soon_priority_enabled`, the remaining giveaways whose `end_time` is set and at most `ending_soon_threshold_minutes` from now (inclusive), soonest first with ties in price order, then everything else. Wishlist, DLC and the rest stay in price-descending order. Unlike the wishlist and DLC lifts, the ending-soon lift only reorders: those giveaways must still pass the autojoin filters, and they are entered with `entry_type` `"auto"`. `max_entries_per_cycle` and the `autojoin_stop_at` budget apply after the sort. With the toggle off the order is unchanged.
+**Entry order:** each automation cycle enters candidates by priority rank (the order of `autojoin_priorities`), first item first. Inside an `ending_soon` group the soonest `end_time` comes first (a giveaway is ending soon when `end_time - now` is at most `threshold_minutes`, inclusive); everything else, including the unmatched rest, stays in price-descending order. A giveaway that also matches a later exempt item sorts before one that does not. `max_entries_per_cycle` and the `autojoin_stop_at` budget apply after the ordering, on the points balance actually spent; giveaways skipped for points do not use a cap slot. With `autojoin_priorities` empty, wishlist and DLC giveaways obey every filter and the order is price descending.
 
 ### POST /settings/test-session
 Test if the configured PHPSESSID is valid.
@@ -207,7 +219,55 @@ List giveaways with optional filters.
 }
 ```
 
-Giveaway objects returned by the list endpoints (`/giveaways/`, `/giveaways/active`, `/giveaways/wishlist`, `/giveaways/dlc`, `/giveaways/entered`, `/giveaways/won`) and by `GET /giveaways/{code}` also carry fields joined from the cached game, among them `game_thumbnail` and `game_genres`. `game_genres` is the cached game's Steam genre list (possibly `[]`), or `null` when the giveaway has no `game_id`, the game is not cached, or its genres were not fetched yet. `eligibility_reason` can be `"genre_excluded"` (see Settings, Genre exclusion).
+Giveaway objects returned by the list endpoints (`/giveaways/`, `/giveaways/active`, `/giveaways/wishlist`, `/giveaways/dlc`, `/giveaways/entered`, `/giveaways/won`) and by `GET /giveaways/{code}` also carry fields joined from the cached game, among them `game_thumbnail` and `game_genres`. `game_genres` is the cached game's Steam genre list (possibly `[]`), or `null` when the giveaway has no `game_id`, the game is not cached, or its genres were not fetched yet. `eligibility_*` fields are described above.
+
+Every giveaway object also carries the stored result of the last automation cycle:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `eligibility_reason` | string or null | decision code, e.g. `eligible`, `price_below_min`, `genre_not_included`, `budget_floor`; null until evaluated |
+| `eligibility_detail` | object or null | small flat object with the user's values (actual versus threshold) |
+| `eligibility_label` | string or null | `eligibility_reason` rendered server-side in the user's terms; `Joinable` for an enter outcome |
+| `eligibility_kind` | `enter` \| `gate` \| `filter` \| `budget` or null | code family (not a database column) |
+| `eligibility_checked_at` | datetime (Z) or null | when the cycle recorded it |
+
+`price_above_max` is no longer produced. Stored `price_above_max` reasons were cleared by the migration.
+
+### GET /giveaways/registry
+The decision engine as data: `gates`, `filters` (each with the `setting` that drives it), `outcomes`, `priority_types` (label, description, `exempt_from_filters`, `params` with min, max and default) and `limits` (`genre_max_items` 50, `genre_max_length` 64, `max_priority_items` 3). The frontend fetches it once and holds no copy of labels or bounds. It contains no session data and is declared before `/{code}`.
+
+### POST /giveaways/preview
+Dry-run a policy without saving it. Query: `limit` (1-100, default 20). Body: exactly the seven policy fields, all required, validated like `PUT /settings/`: `autojoin_min_price`, `autojoin_min_score`, `autojoin_min_reviews`, `autojoin_max_game_age`, `excluded_genres`, `included_genres`, `autojoin_priorities`. A missing or invalid field returns 422; unknown extra keys are ignored.
+
+```json
+{
+  "success": true,
+  "data": {
+    "candidates": [
+      {
+        "code": "FDVzQ",
+        "decision": {
+          "code": "eligible", "label": "Joinable",
+          "detail": {"priority": "wishlist", "rank": 0, "lifted_by": "wishlist"},
+          "priority": "wishlist", "rank": 0, "lifted_by": "wishlist"
+        }
+      }
+    ],
+    "count": 3,
+    "pool": 120,
+    "counts": {"eligible": 3, "score_below_min": 80, "hidden": 37},
+    "budget_applied": false
+  }
+}
+```
+
+`candidates` holds full giveaway objects (shortened above) plus `decision`, in entry order, sliced to `limit`. `count` is the total number of enter candidates; `pool` is the number of active, not-entered giveaways evaluated (hidden included); `counts` maps each code to its number and sums to `pool`. Nothing is persisted, no points are fetched, no budget is applied, and nothing is sent to SteamGifts or Steam. The stored `autojoin_priorities` is not read, so a corrupt stored list does not affect this call.
+
+### GET /giveaways/eligible
+Same response as `POST /giveaways/preview`, computed from the saved settings. Query: `limit` (1-100, default 20); no other parameters. The key `giveaways` is no longer returned. A stored priority list that cannot be parsed returns the 500 envelope with code `CONFIG_002`. Stored `eligibility_*` fields are not changed.
+
+### Auto-join lens
+`GET /giveaways/active`, `/giveaways/wishlist` and `/giveaways/dlc` accept `lens=autojoin` (any other value returns 422). The pool is the tab's not-entered rows under the usual conditions and browse parameters (`min_score`, `is_safe`, `min_chance`, `ending_within` where accepted), unpaginated; the saved policy is evaluated live. Response data: `{"giveaways": [...candidates with decision, in entry order, sliced by limit/offset], "count": <enter candidates in the pool>, "lens": "autojoin", "budget_applied": false}`. Without `lens` the response is unchanged. `GET /giveaways/?is_entered=false` applies no policy and no longer accepts `min_price`, `max_price`, `min_score` or `min_reviews`.
 
 ### GET /giveaways/{code}
 Get a single giveaway by code.
@@ -799,27 +859,30 @@ interface Entry {
 
 ### Settings
 ```typescript
+type AutojoinPriorityItem =
+  | { type: "wishlist" }
+  | { type: "dlc" }
+  | { type: "ending_soon"; threshold_minutes: number };
+
 interface Settings {
   id: number;
   phpsessid: string | null;
   user_agent: string;
   xsrf_token: string | null;
-  dlc_priority_enabled: boolean;
   safety_check_enabled: boolean;
   auto_hide_unsafe: boolean;
   autojoin_enabled: boolean;
   autojoin_start_at: number;
   autojoin_stop_at: number;
   autojoin_min_price: number;
-  autojoin_min_score: number;
-  autojoin_min_reviews: number;
+  autojoin_min_score: number | null;
+  autojoin_min_reviews: number | null;
   autojoin_max_game_age: number | null;
-  wishlist_priority_enabled: boolean;
-  ending_soon_priority_enabled: boolean;
-  ending_soon_threshold_minutes: number;
+  autojoin_priorities: AutojoinPriorityItem[];
   excluded_genres: string[];
+  included_genres: string[];
   scan_interval_minutes: number;
-  max_entries_per_cycle: number | null;
+  max_entries_per_cycle: number;
   automation_enabled: boolean;
   max_scan_pages: number;
   entry_delay_min: number;
