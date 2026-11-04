@@ -387,11 +387,11 @@ Force a refresh of one game from Steam.
 ```
 
 When the refresh does not complete, `refreshed` is `false`, `last_refreshed_at` is `null` and the cached row is kept:
-- rate limited (including when `appdetails` was saved but `appreviews` was throttled): `"Steam is rate limiting requests, retry in N s"`, with `retry_after_seconds` set
+- rate limited (including when `appdetails` was saved but `GetAppReviews` was throttled): `"Steam is rate limiting requests, retry in N s"`, with `retry_after_seconds` set
 - unavailable on Steam: `"Game with App ID N not found on Steam"`
-- any other Steam failure: `"Steam request failed, cached data kept"`
+- any other Steam failure: `"Steam request failed, cached data kept"`; this includes the case where `appdetails` was saved (name, genres, release date updated) but `GetAppReviews` failed on a row with no cached reviews: the row then keeps its zeros, is not marked refreshed, and is retried by the stale refresh after 6 h
 
-**Steam cool-down:** any Steam 429 (from `appdetails` or `appreviews`), or an `appdetails` reply whose body is not an object (e.g. HTTP 200 with `null`), starts a process-wide 180 s cool-down during which no Steam request is sent. Cached rows are served as is, uncached apps get no row, and `POST /games/refresh-stale` refreshes nothing.
+**Steam cool-down:** any Steam 429 (from `appdetails` or `GetAppReviews`), or an `appdetails` reply whose body is not an object (e.g. HTTP 200 with `null`), starts a process-wide 180 s cool-down during which no Steam request is sent. Cached rows are served as is, uncached apps get no row, and `POST /games/refresh-stale` refreshes nothing.
 
 ---
 

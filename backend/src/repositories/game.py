@@ -12,7 +12,7 @@ from sqlalchemy import distinct, func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.time import utcnow
-from models.game import Game
+from models.game import STALE_AFTER_DAYS, Game
 from repositories.base import BaseRepository
 
 
@@ -116,7 +116,7 @@ class GameRepository(BaseRepository[Game]):
         return list(result.scalars().all())
 
     async def get_stale_games(
-        self, days_threshold: int = 7, limit: int | None = None
+        self, days_threshold: int = STALE_AFTER_DAYS, limit: int | None = None
     ) -> list[Game]:
         """
         Get games with stale cached data that need refreshing.

@@ -29,7 +29,7 @@ from workers.processor import _process_entries
 logger = structlog.get_logger()
 
 # Cached games refreshed from Steam per cycle. Each costs up to two Steam
-# requests (appdetails, plus appreviews for games), so 10 stays far below
+# requests (appdetails, plus GetAppReviews for games), so 10 stays far below
 # Steam's per-IP store throttle (about 200 requests per 5 minutes) while the
 # backlog, such as the genres backfill after an upgrade, drains over cycles.
 GAME_REFRESH_BATCH_SIZE = 10

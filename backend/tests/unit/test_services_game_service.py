@@ -1,14 +1,21 @@
 """Unit tests for GameService."""
 
-from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from core.time import utcnow
 from models.base import Base
-from services.game_service import FetchStatus, GameService, SteamCooldown, steam_cooldown
+from repositories.game import STALE_AFTER_DAYS
+from services.game_service import (
+    REVIEW_RETRY_DELAY,
+    FetchStatus,
+    GameService,
+    SteamCooldown,
+    steam_cooldown,
+)
 from utils.steam_client import SteamAPIError, SteamAPIRateLimitError, SteamClient
 
 # appdetails `data` fixtures (trimmed to the fields the save path reads).
@@ -792,7 +799,7 @@ async def test_cooldown_skips_refresh_stale_games_until_it_expires(test_db, mock
 
 @pytest.mark.asyncio
 async def test_review_rate_limit_starts_cooldown(test_db, mock_steam_client):
-    """A 429 from appreviews (same IP budget) also pauses Steam lookups; the
+    """A 429 from GetAppReviews (same IP budget) also pauses Steam lookups; the
     game is still saved without review data."""
     async with test_db() as session:
         service = GameService(session, mock_steam_client)
@@ -856,7 +863,7 @@ async def test_get_genre_counts_maps_rows(test_db, mock_steam_client):
 
 @pytest.mark.asyncio
 async def test_review_rate_limit_keeps_cached_reviews_on_update(test_db, mock_steam_client):
-    """A throttled appreviews call on an existing row keeps its review data and
+    """A throttled GetAppReviews call on an existing row keeps its review data and
     its refresh time (so a stale row is retried after the cool-down), while
     the genres and categories from appdetails are still stored."""
     async with test_db() as session:
@@ -908,8 +915,74 @@ async def test_review_generic_error_keeps_cached_reviews_and_marks_refreshed(
 
 
 @pytest.mark.asyncio
+async def test_review_error_on_new_row_stores_zeros_unrefreshed(test_db, mock_steam_client):
+    """A new game whose reviews request failed (D4) is created with zeros but
+    not stamped refreshed, so the bounded stale refresh retries it instead of
+    serving zeros for 7 days; a non-throttle failure starts no cool-down."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIError("Steam API error: 302"))
+
+        outcome = await service.refresh_game(367520)
+
+        assert outcome.status is FetchStatus.FAILED
+        game = outcome.game
+        assert game is not None
+        assert game.genres == ["Action", "Adventure", "Indie"]
+        assert (game.review_score, game.total_positive, game.total_negative, game.total_reviews) == (
+            0, 0, 0, 0,
+        )
+        assert game.last_refreshed_at is None
+        assert game.needs_refresh is True
+        assert not steam_cooldown.active
+        # The row is in the queue the bounded background refresh drains.
+        assert [g.id for g in await service.repo.get_stale_games(limit=10)] == [367520]
+
+
+@pytest.mark.asyncio
+async def test_review_rate_limit_on_new_row_trips_cooldown_unrefreshed(test_db, mock_steam_client):
+    """A throttled reviews request on a new game starts the shared cool-down
+    and leaves the row unrefreshed, reported as RATE_LIMITED."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIRateLimitError("429"))
+
+        outcome = await service.refresh_game(367520)
+
+        assert outcome.status is FetchStatus.RATE_LIMITED
+        assert steam_cooldown.active
+        assert outcome.game is not None
+        assert outcome.game.review_score == 0 and outcome.game.total_reviews == 0
+        assert outcome.game.last_refreshed_at is None
+        assert outcome.game.needs_refresh is True
+
+
+@pytest.mark.asyncio
+async def test_no_reviews_on_new_row_stores_zeros_and_marks_refreshed(test_db, mock_steam_client):
+    """GetAppReviews answering without a summary (None) is genuinely "no
+    reviews": zeros are data, so the new row is stamped refreshed."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(return_value=None)
+
+        outcome = await service.refresh_game(367520)
+
+        assert outcome.status is FetchStatus.REFRESHED
+        game = outcome.game
+        assert (game.review_score, game.total_positive, game.total_negative, game.total_reviews) == (
+            0, 0, 0, 0,
+        )
+        assert game.last_refreshed_at is not None
+        assert game.needs_refresh is False
+        assert not steam_cooldown.active
+
+
+@pytest.mark.asyncio
 async def test_review_success_updates_reviews_on_existing_row(test_db, mock_steam_client):
-    """Control: when appreviews answers, the existing row's reviews are replaced."""
+    """Control: when GetAppReviews answers, the existing row's reviews are replaced."""
     async with test_db() as session:
         service = GameService(session, mock_steam_client)
         await service.repo.create(
@@ -929,7 +1002,7 @@ async def test_review_success_updates_reviews_on_existing_row(test_db, mock_stea
 
 @pytest.mark.asyncio
 async def test_refresh_stale_games_stops_after_review_rate_limit(test_db, mock_steam_client):
-    """A 429 from appreviews during a batch stops it before the next appdetails call."""
+    """A 429 from GetAppReviews during a batch stops it before the next appdetails call."""
     async with test_db() as session:
         service = GameService(session, mock_steam_client)
         for app_id in (1, 2):
@@ -1006,7 +1079,7 @@ def test_steam_cooldown_remaining_seconds():
 
 @pytest.mark.asyncio
 async def test_refresh_game_review_rate_limit_is_not_reported_refreshed(test_db, mock_steam_client):
-    """appdetails succeeds but appreviews is throttled: the genres are saved,
+    """appdetails succeeds but GetAppReviews is throttled: the genres are saved,
     yet the refresh is RATE_LIMITED with the cool-down delay, not REFRESHED."""
     async with test_db() as session:
         service = GameService(session, mock_steam_client)
@@ -1118,3 +1191,260 @@ async def test_lookup_game_reports_how_the_row_was_got(test_db, mock_steam_clien
         game, status = await service.lookup_game(12345)
         assert game is None and status is FetchStatus.UNAVAILABLE
         assert await service.get_or_fetch_game(12345) is None
+
+
+# ---- Rows without cached reviews whose GetAppReviews call fails ----
+
+
+def _due_after_retry_delay() -> datetime:
+    """A moment just past REVIEW_RETRY_DELAY from now, to time-travel get_stale_games."""
+    return utcnow() + REVIEW_RETRY_DELAY + timedelta(minutes=1)
+
+
+async def _stale_ids(service: GameService, at: datetime | None = None) -> list[int]:
+    """Ids get_stale_games returns now, or at ``at`` (its clock patched)."""
+    if at is None:
+        return [g.id for g in await service.repo.get_stale_games(limit=None)]
+    with patch("repositories.game.utcnow", return_value=at):
+        return [g.id for g in await service.repo.get_stale_games(limit=None)]
+
+
+def _assert_retry_stamp(game, before: datetime) -> None:
+    """The row carries the back-dated retry stamp, not a fresh one."""
+    expected = timedelta(days=STALE_AFTER_DAYS) - REVIEW_RETRY_DELAY
+    assert game.last_refreshed_at is not None
+    assert before - expected <= game.last_refreshed_at <= utcnow() - expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_path", ["read_through", "stale_refresh"])
+async def test_placeholder_row_is_not_stamped_fresh_after_failed_retry(test_db, mock_steam_client, retry_path):
+    """D4: a row created while GetAppReviews failed holds placeholder zeros,
+    not cached data. If the next attempt (the next giveaway of the same game
+    in the same scan, a dashboard load, or refresh_stale_games) also fails,
+    the zeros must not be stamped fresh for 7 days (score_below_min and
+    reviews_below_min would skip every giveaway of the game): the row gets
+    the retry stamp, is due again after REVIEW_RETRY_DELAY, and a later
+    successful call stores the real scores."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIError("Steam API error: 302"))
+
+        game = await service.get_or_fetch_game(367520)
+        assert game is not None and game.last_refreshed_at is None
+
+        # Second attempt, reviews still failing.
+        before = utcnow()
+        if retry_path == "read_through":
+            game, status = await service.lookup_game(367520)
+            assert status is FetchStatus.FAILED
+        else:
+            # The failed retry is not counted as refreshed.
+            assert await service.refresh_stale_games(limit=10) == 0
+            game = await service.repo.get_by_id(367520)
+
+        assert game is not None
+        assert (game.review_score, game.total_reviews) == (0, 0)
+        _assert_retry_stamp(game, before)
+        assert await _stale_ids(service) == []
+        assert await _stale_ids(service, at=_due_after_retry_delay()) == [367520]
+        assert not steam_cooldown.active
+
+        # Once reviews answer, the row gets real data and a fresh stamp.
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=None, return_value={"review_score": 9, "total_positive": 900, "total_negative": 100, "total_reviews": 1000})
+        outcome = await service.refresh_game(367520)
+        assert outcome.status is FetchStatus.REFRESHED
+        assert (outcome.game.review_score, outcome.game.total_reviews) == (9, 1000)
+        assert outcome.game.last_refreshed_at >= before
+        assert await _stale_ids(service, at=_due_after_retry_delay()) == []
+
+
+@pytest.mark.asyncio
+async def test_refresh_game_new_row_with_failed_reviews_is_not_reported_refreshed(test_db, mock_steam_client):
+    """POST /games/{id}/refresh maps REFRESHED to refreshed=true and
+    "Game data refreshed successfully". A new row whose reviews failed is
+    deliberately left unrefreshed (last_refreshed_at None), so reporting it
+    REFRESHED yields refreshed=true with last_refreshed_at null, which
+    docs/API.md defines as the shape of a refresh that did not complete."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIError("Steam API error: 302"))
+
+        outcome = await service.refresh_game(367520)
+
+        assert outcome.game is not None and outcome.game.last_refreshed_at is None
+        assert outcome.status is FetchStatus.FAILED
+        assert outcome.refreshed is False
+
+
+@pytest.mark.asyncio
+async def test_refresh_stale_games_moves_past_failed_reviews_on_unrefreshed_row(test_db, mock_steam_client):
+    """A reviews failure (not a 429) on a never-refreshed row is not counted
+    and does not stop the batch: the next row is still refreshed, the first
+    row's appdetails fields are committed and it is due again after
+    REVIEW_RETRY_DELAY."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        for app_id in (1, 2):
+            await service.repo.create(id=app_id, name=f"G{app_id}", type="game", last_refreshed_at=None)
+        await session.commit()
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(
+            side_effect=[
+                SteamAPIError("Steam API error: 302"),
+                {"review_score": 7, "total_positive": 70, "total_negative": 30, "total_reviews": 100},
+            ]
+        )
+        before = utcnow()
+
+        count = await service.refresh_stale_games(limit=10)
+
+        assert count == 1
+        assert mock_steam_client.get_app_details.await_count == 2
+        await session.rollback()
+        failed, refreshed = await service.repo.get_by_id(1), await service.repo.get_by_id(2)
+        _assert_retry_stamp(failed, before)
+        assert failed.genres == ["Action", "Adventure", "Indie"]
+        assert (refreshed.review_score, refreshed.total_reviews) == (7, 100)
+        assert refreshed.last_refreshed_at >= before
+        assert await _stale_ids(service) == []
+        assert await _stale_ids(service, at=_due_after_retry_delay()) == [1]
+        assert not steam_cooldown.active
+
+
+@pytest.mark.asyncio
+async def test_failing_reviews_do_not_starve_the_stale_queue(test_db, mock_steam_client):
+    """GetAppReviews failing for every app (an outage like the deprecation
+    behind this fix) must not let placeholder rows hold every batch slot.
+    With 11 placeholders, the second cycle still reaches a row stale by age
+    and a legacy row whose genres were never fetched, so its genres are
+    backfilled and the excluded-genres filter can apply to it."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        now = utcnow()
+        for app_id in range(1, 12):
+            await service.repo.create(
+                id=app_id, name=f"Placeholder {app_id}", type="game", genres=["Action"], last_refreshed_at=None,
+            )
+        await service.repo.create(id=12, name="Legacy", type="game", genres=None, last_refreshed_at=now)
+        await service.repo.create(
+            id=13, name="Old", type="game", genres=["Action"], last_refreshed_at=now - timedelta(days=30),
+        )
+        await session.commit()
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIError("Steam API error: 302"))
+
+        def details_calls() -> list[int]:
+            return [c.args[0] for c in mock_steam_client.get_app_details.call_args_list]
+
+        assert await service.refresh_stale_games(limit=10) == 0
+        assert details_calls() == list(range(1, 11))
+
+        mock_steam_client.get_app_details.reset_mock()
+        assert await service.refresh_stale_games(limit=10) == 0
+        assert details_calls() == [11, 13, 12]
+        assert (await service.repo.get_by_id(12)).genres == ["Action", "Adventure", "Indie"]
+
+        # Every row has rotated out; nothing is sent until the retry delay passes.
+        mock_steam_client.get_app_details.reset_mock()
+        assert await service.refresh_stale_games(limit=10) == 0
+        assert details_calls() == []
+        assert len(await _stale_ids(service, at=_due_after_retry_delay())) == 13
+        assert not steam_cooldown.active
+
+
+@pytest.mark.asyncio
+async def test_review_error_on_refreshed_row_without_reviews_schedules_retry(test_db, mock_steam_client):
+    """A row refreshed before but holding no reviews (total_reviews 0) has
+    nothing to keep through a failed reviews call: it gets the retry stamp,
+    FAILED, and when due it sorts behind a row that was already stale."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        now = utcnow()
+        await service.repo.create(id=1, name="Older", type="dlc", genres=[], last_refreshed_at=now - timedelta(days=30))
+        await service.repo.create(id=2, name="Zeros", type="game", genres=[], last_refreshed_at=now - timedelta(days=9))
+        await session.commit()
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIError("Steam API error: 403"))
+
+        outcome = await service.refresh_game(2)
+
+        assert outcome.status is FetchStatus.FAILED
+        assert outcome.refreshed is False
+        _assert_retry_stamp(outcome.game, now)
+        assert await _stale_ids(service) == [1]
+        assert await _stale_ids(service, at=_due_after_retry_delay()) == [1, 2]
+        assert not steam_cooldown.active
+
+
+@pytest.mark.asyncio
+async def test_refresh_game_with_cached_reviews_and_failed_reviews_is_refreshed(test_db, mock_steam_client):
+    """A failed reviews call on a row with cached reviews keeps them and
+    stamps the row (acceptance: as for a failed fetch today), so the explicit
+    refresh reports REFRESHED with the new refresh time."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        before = utcnow()
+        await service.repo.create(
+            id=367520, name="Cached", type="game", review_score=8,
+            total_positive=900, total_negative=100, total_reviews=1000,
+            last_refreshed_at=before - timedelta(days=30),
+        )
+        await session.commit()
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIError("Steam API error: 500"))
+
+        outcome = await service.refresh_game(367520)
+
+        assert outcome.status is FetchStatus.REFRESHED
+        assert (outcome.game.review_score, outcome.game.total_reviews) == (8, 1000)
+        assert outcome.game.last_refreshed_at >= before
+
+
+@pytest.mark.asyncio
+async def test_review_rate_limit_on_unrefreshed_existing_row_stays_unrefreshed(test_db, mock_steam_client):
+    """A 429 on a row that never completed a refresh leaves it unrefreshed and
+    reports RATE_LIMITED, like the 429 on a refreshed row."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        await service.repo.create(id=367520, name="Placeholder", type="game", last_refreshed_at=None)
+        await session.commit()
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIRateLimitError("429"))
+
+        outcome = await service.refresh_game(367520)
+
+        assert outcome.status is FetchStatus.RATE_LIMITED
+        assert outcome.game is not None and outcome.game.last_refreshed_at is None
+        assert steam_cooldown.active
+
+
+@pytest.mark.asyncio
+async def test_retry_stamped_row_needs_refresh_exactly_when_get_stale_games_selects_it(test_db, mock_steam_client):
+    """Expected-failure matrix: a row with zeros whose reviews raise gets the
+    retry stamp, "needs_refresh false now and true after 6 h". needs_refresh
+    and get_stale_games must agree (one definition of stale), so the row the
+    batch picks up after REVIEW_RETRY_DELAY is also the one the model reports
+    as needing a refresh."""
+    async with test_db() as session:
+        service = GameService(session, mock_steam_client)
+        await service.repo.create(
+            id=2, name="Zeros", type="game", genres=["Action"], last_refreshed_at=utcnow() - timedelta(days=9),
+        )
+        await session.commit()
+        mock_steam_client.get_app_details = AsyncMock(return_value=STEAM_GAME_WITH_GENRES)
+        mock_steam_client.get_app_reviews = AsyncMock(side_effect=SteamAPIError("Steam API error: 403"))
+
+        outcome = await service.refresh_game(2)
+        assert outcome.status is FetchStatus.FAILED
+        game = outcome.game
+
+        assert game.needs_refresh is False
+        assert await _stale_ids(service) == []
+
+        later = _due_after_retry_delay()
+        assert await _stale_ids(service, at=later) == [2]
+        with patch("models.game.utcnow", return_value=later):
+            assert game.needs_refresh is True
