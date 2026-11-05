@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router';
-import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users, Package, Info, RotateCw } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, Gift, Clock, AlertCircle, Loader2, X, Heart, Trophy, Star, Shield, ShieldAlert, EyeOff as HideIcon, MessageSquare, Percent, Users, Package, Info, RotateCw, ScanEye, Check } from 'lucide-react';
 import { SiSteam } from 'react-icons/si';
-import { Card, Button, Badge, Input, CardSkeleton, Toggle } from '@/components/common';
+import { Card, Button, Badge, Input, CardSkeleton } from '@/components/common';
 import { AutojoinDecisionLine } from '@/components/features/AutojoinDecisionLine';
 import { useInfiniteGiveaways, useEnterGiveaway, useHideGiveaway, useUnhideGiveaway, useRemoveEntry, useCheckGiveawaySafety, useHideOnSteamGifts, usePostComment, useSettings, useAutojoinRegistry } from '@/hooks';
 import { showSuccess, showError } from '@/stores/uiStore';
@@ -288,12 +288,21 @@ function GiveawaysTab({ status }: { status: GiveawayPageStatus }) {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-4">
         {autojoinTab && (
-          <Toggle
-            label="Auto-join lens"
-            description="Show only what your saved policy would enter next cycle, in entry order"
-            checked={lensOn}
-            onChange={setLensOn}
-          />
+          // A pressed button with its explanation in the native tooltip,
+          // like the page's other controls, so it takes one slot in the row.
+          // The icon changes with the state so it shows without relying on
+          // colour.
+          <Button
+            type="button"
+            variant={lensOn ? 'primary' : 'secondary'}
+            size="sm"
+            icon={lensOn ? Check : ScanEye}
+            aria-pressed={lensOn}
+            title="Show only what your saved policy would enter next cycle, in entry order"
+            onClick={() => setLensOn((on) => !on)}
+          >
+            Auto-join lens
+          </Button>
         )}
 
         {/* Score Filter - only show for active status */}

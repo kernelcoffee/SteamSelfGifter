@@ -53,9 +53,16 @@ test.describe('Giveaways', () => {
     await expect(page.getByText('Portal Reloaded')).toBeVisible();
     expect(listRequests(calls).every((c) => !c.url.includes('lens'))).toBe(true);
 
-    const lens = page.getByRole('switch', { name: 'Auto-join lens' });
-    await expect(lens).toHaveAttribute('aria-checked', 'false');
+    const lens = page.getByRole('button', { name: 'Auto-join lens' });
+    await expect(lens).toHaveAttribute('aria-pressed', 'false');
+    // The explanation is the native tooltip, out of the layout.
+    await expect(lens).toHaveAttribute(
+      'title',
+      'Show only what your saved policy would enter next cycle, in entry order'
+    );
+    await expect(page.getByText('Show only what your saved policy would enter')).toHaveCount(0);
     await lens.click();
+    await expect(lens).toHaveAttribute('aria-pressed', 'true');
 
     await expect
       .poll(() => listRequests(calls).some((c) => c.url.includes('lens=autojoin')))
@@ -71,15 +78,15 @@ test.describe('Giveaways', () => {
   });
 
   test('lens is off after reload', async ({ page }) => {
-    await page.getByRole('switch', { name: 'Auto-join lens' }).click();
+    await page.getByRole('button', { name: 'Auto-join lens' }).click();
     await expect.poll(() => listRequests(calls).some((c) => c.url.includes('lens=autojoin'))).toBe(true);
 
     const before = calls.length;
     await page.reload();
     await expect(page.getByText('Portal Reloaded')).toBeVisible();
 
-    await expect(page.getByRole('switch', { name: 'Auto-join lens' })).toHaveAttribute(
-      'aria-checked',
+    await expect(page.getByRole('button', { name: 'Auto-join lens' })).toHaveAttribute(
+      'aria-pressed',
       'false'
     );
     const firstAfter = listRequests(calls.slice(before))[0];

@@ -176,7 +176,7 @@ describe('Giveaways page: auto-join line', () => {
     render(<Giveaways status="entered" />);
     await screen.findByRole('heading', { name: 'Hollow Knight', level: 3 });
 
-    expect(screen.queryByRole('switch', { name: 'Auto-join lens' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Auto-join lens' })).not.toBeInTheDocument();
     expect(screen.queryByText('Auto-join:')).not.toBeInTheDocument();
   });
 });
@@ -193,13 +193,22 @@ describe('Giveaways page: auto-join lens', () => {
     render(<Giveaways />);
     await screen.findByText('Review score 6 is below your minimum 7');
 
-    const toggle = screen.getByRole('switch', { name: 'Auto-join lens' });
-    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    const toggle = screen.getByRole('button', { name: 'Auto-join lens' });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(toggle.querySelector('.lucide-scan-eye')).not.toBeNull();
+    expect(toggle).toHaveAttribute(
+      'title',
+      'Show only what your saved policy would enter next cycle, in entry order',
+    );
     expect(listCalls().every((url) => !url.includes('lens'))).toBe(true);
 
     await user.click(toggle);
 
     await waitFor(() => expect(listCalls().some((url) => url.includes('lens=autojoin'))).toBe(true));
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    // The on state shows by icon as well as colour.
+    expect(toggle.querySelector('.lucide-check')).not.toBeNull();
+    expect(toggle.querySelector('.lucide-scan-eye')).toBeNull();
     expect(listCalls()[listCalls().length - 1]).toMatch(/^\/api\/v1\/giveaways\/active\?lens=autojoin/);
     expect(
       await screen.findByTitle('Joinable: Wishlist, filters skipped, 1st in your order'),
@@ -225,7 +234,7 @@ describe('Giveaways page: auto-join lens', () => {
         '/api/v1/giveaways/active?min_score=8&is_safe=true&min_chance=50&ending_within=30&limit=20',
       ),
     );
-    await user.click(await screen.findByRole('switch', { name: 'Auto-join lens' }));
+    await user.click(await screen.findByRole('button', { name: 'Auto-join lens' }));
 
     // Lens on: none of them reaches the request, so an empty result really
     // means the saved policy enters nothing here.
@@ -255,7 +264,7 @@ describe('Giveaways page: auto-join lens', () => {
     // The stored values are kept for when the lens goes off again.
     expect(useGiveawayFiltersStore.getState().filters).toMatchObject({ minScore: 8, minChance: 50 });
 
-    await user.click(screen.getByRole('switch', { name: 'Auto-join lens' }));
+    await user.click(screen.getByRole('button', { name: 'Auto-join lens' }));
     expect(screen.getByRole('slider', { name: 'Show score at least' })).toBeEnabled();
     expect(screen.getByText('View filters change only what you see; auto-join uses Settings.')).toBeInTheDocument();
   });
@@ -280,7 +289,7 @@ describe('Giveaways page: auto-join lens', () => {
     await waitFor(() => expect(listCalls().some((url) => url.includes('search=portal'))).toBe(true));
 
     await user.click(screen.getByRole('link', { name: 'Active tab' }));
-    await screen.findByRole('switch', { name: 'Auto-join lens' });
+    await screen.findByRole('button', { name: 'Auto-join lens' });
     await user.click(screen.getByRole('link', { name: 'Entered tab' }));
 
     // The list is still filtered by the stored term, and the box says so.
@@ -294,7 +303,7 @@ describe('Giveaways page: auto-join lens', () => {
     mockServer({ lensGiveaways: [candidate] });
     render(<Giveaways />);
 
-    await user.click(await screen.findByRole('switch', { name: 'Auto-join lens' }));
+    await user.click(await screen.findByRole('button', { name: 'Auto-join lens' }));
 
     expect(Object.keys(useGiveawayFiltersStore.getState().filters)).not.toContain('lens');
     const writes = vi.mocked(window.localStorage.setItem).mock.calls.map(([, value]) => String(value));
@@ -317,17 +326,17 @@ describe('Giveaways page: auto-join lens', () => {
       </>,
     );
 
-    await user.click(await screen.findByRole('switch', { name: 'Auto-join lens' }));
+    await user.click(await screen.findByRole('button', { name: 'Auto-join lens' }));
     await waitFor(() => expect(listCalls().some((url) => url.startsWith('/api/v1/giveaways/active?lens=autojoin'))).toBe(true));
 
     await user.click(screen.getByRole('link', { name: 'Wishlist tab' }));
     await screen.findByText('Wishlist giveaways skip the filters and are entered 1st');
-    expect(screen.getByRole('switch', { name: 'Auto-join lens' })).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Auto-join lens' })).toHaveAttribute('aria-pressed', 'false');
     await waitFor(() => expect(listCalls().some((url) => url.startsWith('/api/v1/giveaways/wishlist?'))).toBe(true));
     expect(listCalls().filter((url) => url.startsWith('/api/v1/giveaways/wishlist')).every((url) => !url.includes('lens'))).toBe(true);
 
     await user.click(screen.getByRole('link', { name: 'Active tab' }));
-    expect(await screen.findByRole('switch', { name: 'Auto-join lens' })).not.toBeChecked();
+    expect(await screen.findByRole('button', { name: 'Auto-join lens' })).toHaveAttribute('aria-pressed', 'false');
     window.history.pushState({}, '', '/');
   });
 
@@ -336,7 +345,7 @@ describe('Giveaways page: auto-join lens', () => {
     mockServer({ lensGiveaways: [] });
     render(<Giveaways />);
 
-    await user.click(await screen.findByRole('switch', { name: 'Auto-join lens' }));
+    await user.click(await screen.findByRole('button', { name: 'Auto-join lens' }));
 
     expect(
       await screen.findByText(/Nothing on this tab passes your saved auto-join policy\. The budget and cap apply at cycle time\./),
@@ -349,7 +358,7 @@ describe('Giveaways page: auto-join lens', () => {
     mockServer({ lensError: 'ConfigurationError: invalid autojoin_priorities' });
     render(<Giveaways />);
 
-    await user.click(await screen.findByRole('switch', { name: 'Auto-join lens' }));
+    await user.click(await screen.findByRole('button', { name: 'Auto-join lens' }));
 
     expect(
       await screen.findByText('Could not load the auto-join lens: ConfigurationError: invalid autojoin_priorities'),
@@ -358,7 +367,7 @@ describe('Giveaways page: auto-join lens', () => {
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(listCalls().length).toBe(before + 1));
 
-    await user.click(screen.getByRole('switch', { name: 'Auto-join lens' }));
+    await user.click(screen.getByRole('button', { name: 'Auto-join lens' }));
     expect(await screen.findByRole('heading', { name: 'Hollow Knight', level: 3 })).toBeInTheDocument();
   });
 
