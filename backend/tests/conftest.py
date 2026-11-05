@@ -1,6 +1,7 @@
 """Shared pytest fixtures for all tests."""
 
 import asyncio
+import time
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 import structlog
+import tzlocal
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -15,6 +17,7 @@ from sqlalchemy.pool import StaticPool
 
 from api.dependencies import get_database
 from api.main import app
+from core.config import settings as app_settings
 from db.session import get_db
 from models.base import Base
 from services.game_service import steam_cooldown
@@ -44,6 +47,27 @@ def uncached_win_check_logger(monkeypatch: pytest.MonkeyPatch) -> None:
     test sees no log entries.
     """
     monkeypatch.setattr("workers.win_check.logger", structlog.get_logger())
+
+
+@pytest.fixture
+def non_utc_host() -> Generator[None]:
+    """Run the test on a host whose local zone is Europe/Paris and whose
+    ``scheduler_timezone`` is America/New_York, then restore both.
+
+    APScheduler reads the local zone through ``tzlocal``, which caches it, so
+    the cache is reloaded after ``TZ`` changes and again after it is restored.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("TZ", "Europe/Paris")
+        mp.setattr(app_settings, "scheduler_timezone", "America/New_York")
+        time.tzset()
+        tzlocal.reload_localzone()
+        try:
+            yield
+        finally:
+            mp.undo()
+            time.tzset()
+            tzlocal.reload_localzone()
 
 
 @pytest.fixture(autouse=True)

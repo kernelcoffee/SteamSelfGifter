@@ -3,9 +3,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import SteamGiftsError
 from services.eligibility import Decision
 from services.giveaway_query import CycleCandidate, CycleResult
+from services.giveaway_service import GiveawayService
 from tests.conftest import patch_automation_context
 
 
@@ -300,3 +303,69 @@ async def test_sync_wins_only_not_authenticated():
 
     assert results["skipped"] is True
     assert results["reason"] == "not_authenticated"
+
+
+def _failing_won_page_service(session: AsyncSession) -> GiveawayService:
+    """A real GiveawayService whose /giveaways/won fetch answers 503."""
+    sg_client = MagicMock()
+    sg_client.get_won_giveaways = AsyncMock(
+        side_effect=SteamGiftsError("Failed to fetch won giveaways: 503", code="SG_002")
+    )
+    return GiveawayService(session, sg_client, MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_sync_wins_only_raises_when_won_page_fails(async_session: AsyncSession) -> None:
+    """A manual win sync whose won page cannot be fetched fails (the router
+    answers an error) instead of reporting "no new wins"."""
+    from workers.automation import sync_wins_only
+
+    settings = MagicMock()
+    settings.phpsessid = "test_session"
+    patcher, _ = patch_automation_context(
+        "workers.automation", settings, session=async_session, giveaway_service=_failing_won_page_service(async_session)
+    )
+
+    with patcher, pytest.raises(SteamGiftsError, match="Failed to fetch won giveaways: 503"):
+        await sync_wins_only()
+
+
+@pytest.mark.asyncio
+async def test_automation_cycle_records_won_page_failure_and_still_enters(async_session: AsyncSession) -> None:
+    """A won page that cannot be fetched is recorded in the cycle's wins
+    result; the cycle still syncs entered giveaways and enters eligible ones."""
+    from workers.automation import automation_cycle
+
+    giveaway = MagicMock()
+    giveaway.code = "GA1"
+    giveaway.price = 50
+    giveaway.game_name = "Test Game"
+    giveaway.is_wishlist = False
+    giveaway.is_dlc = False
+    entry = MagicMock()
+    entry.points_spent = 50
+
+    gs = AsyncMock()
+    gs.fetch_points.return_value = 500
+    gs.sync_giveaways.return_value = (0, 0)
+    gs.sync_wins.side_effect = _failing_won_page_service(async_session).sync_wins
+    gs.sync_entered_giveaways.return_value = 0
+    gs.decide_cycle.return_value = _cycle([giveaway])
+    gs.enter_giveaway.return_value = entry
+
+    patcher, _ = patch_automation_context(
+        "workers.automation", _cycle_settings(), session=async_session, giveaway_service=gs
+    )
+    with (
+        patcher,
+        patch("workers.automation.event_manager") as ev,
+        patch("workers.processor.event_manager") as ev2,
+        patch("workers.processor.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        ev.broadcast_event = AsyncMock()
+        ev2.broadcast_event = AsyncMock()
+        results = await automation_cycle()
+
+    assert results["wins"] == {"new_wins": 0, "skipped": False, "error": "Failed to fetch won giveaways: 503"}
+    gs.sync_entered_giveaways.assert_awaited_once_with(pages=1)
+    assert results["entries"]["entered"] == 1

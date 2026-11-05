@@ -6,7 +6,7 @@ and entry processing.
 """
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -18,6 +18,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from core.config import settings
+from core.time import isoformat_z
 
 logger = structlog.get_logger()
 
@@ -243,10 +244,14 @@ class SchedulerManager:
         """
         Add a job that runs once at a specific date/time.
 
+        A naive ``run_date`` is read as UTC (the codebase's stored-naive-UTC
+        convention, see ``core.time``), whatever the host's local timezone and
+        ``settings.scheduler_timezone``; an aware one keeps its own offset.
+
         Args:
             func: Async function to execute
             job_id: Unique job identifier
-            run_date: When to run the job (datetime)
+            run_date: When to run the job, naive UTC
             **kwargs: Additional arguments passed to the job function
 
         Returns:
@@ -261,7 +266,7 @@ class SchedulerManager:
             ...     run_date=run_at
             ... )
         """
-        trigger = DateTrigger(run_date=run_date)
+        trigger = DateTrigger(run_date=run_date, timezone=UTC)
 
         job = self.scheduler.add_job(
             func,
@@ -319,7 +324,8 @@ class SchedulerManager:
         Get scheduler status.
 
         Returns:
-            Dictionary with scheduler state and job information
+            Dictionary with scheduler state and job information; each job's
+            ``next_run`` is UTC ISO 8601 with a ``Z`` suffix, or None
         """
         jobs = self.get_jobs()
         job_info = []
@@ -330,7 +336,7 @@ class SchedulerManager:
                 {
                     "id": job.id,
                     "name": job.name,
-                    "next_run": next_run.isoformat() if next_run else None,
+                    "next_run": isoformat_z(next_run) if next_run else None,
                     "trigger": str(job.trigger),
                 }
             )

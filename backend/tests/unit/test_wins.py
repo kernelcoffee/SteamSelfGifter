@@ -4,8 +4,12 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import SteamGiftsError
 from core.time import utcnow
+from models.giveaway import Giveaway
 from utils import steamgifts_parser
 
 
@@ -307,3 +311,64 @@ class TestGiveawayServiceSyncWins:
         new_wins = await service.sync_wins(pages=1)
 
         assert new_wins == 0  # No new wins since already marked
+
+
+class TestGiveawayServiceSyncWinsFailure:
+    """sync_wins reports a won page it cannot fetch instead of returning 0."""
+
+    @pytest.mark.asyncio
+    async def test_sync_wins_raises_when_won_page_cannot_be_fetched(self, async_session: AsyncSession) -> None:
+        """A failed /giveaways/won fetch is raised, not turned into "no new wins"."""
+        from services.giveaway_service import GiveawayService
+
+        sg_client = MagicMock()
+        sg_client.get_won_giveaways = AsyncMock(
+            side_effect=SteamGiftsError("Failed to fetch won giveaways: 503", code="SG_002")
+        )
+        service = GiveawayService(async_session, sg_client, MagicMock())
+
+        with pytest.raises(SteamGiftsError, match="Failed to fetch won giveaways: 503"):
+            await service.sync_wins(pages=1)
+
+    @pytest.mark.asyncio
+    async def test_sync_wins_commits_earlier_pages_before_raising(self, async_session: AsyncSession) -> None:
+        """Wins found on the pages before the failing one are committed before
+        the error is raised, so they survive the caller's rollback."""
+        from services.giveaway_service import GiveawayService
+
+        async_session.add(Giveaway(code="WON01", url="/giveaway/WON01/", game_name="Won Game", price=10,
+                                   end_time=utcnow(), is_entered=True))
+        await async_session.commit()
+
+        sg_client = MagicMock()
+        sg_client.get_won_giveaways = AsyncMock(side_effect=[
+            [{"code": "WON01", "game_name": "Won Game", "won_at": datetime(2025, 1, 1)}],
+            SteamGiftsError("Failed to fetch won giveaways: 503", code="SG_002"),
+        ])
+        service = GiveawayService(async_session, sg_client, MagicMock())
+
+        with pytest.raises(SteamGiftsError):
+            await service.sync_wins(pages=2)
+        await async_session.rollback()
+
+        won = await async_session.scalar(select(Giveaway).where(Giveaway.code == "WON01"))
+        assert won is not None
+        assert won.is_won is True
+        assert won.won_at == datetime(2025, 1, 1)
+
+    @pytest.mark.asyncio
+    async def test_sync_wins_stops_paginating_after_failed_page(self, async_session: AsyncSession) -> None:
+        """A failed page ends the sync: later pages are not requested, so an
+        outage is not hammered page after page."""
+        from services.giveaway_service import GiveawayService
+
+        sg_client = MagicMock()
+        sg_client.get_won_giveaways = AsyncMock(
+            side_effect=SteamGiftsError("Failed to fetch won giveaways: 503", code="SG_002")
+        )
+        service = GiveawayService(async_session, sg_client, MagicMock())
+
+        with pytest.raises(SteamGiftsError):
+            await service.sync_wins(pages=3)
+
+        sg_client.get_won_giveaways.assert_awaited_once_with(page=1)

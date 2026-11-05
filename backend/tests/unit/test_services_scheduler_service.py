@@ -1,8 +1,9 @@
 """Unit tests for SchedulerService."""
 
 import inspect
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -242,7 +243,7 @@ def _win_check_run_time(manager: SchedulerManager) -> datetime | None:
     job = manager.get_job(WIN_CHECK_JOB_ID)
     if job is None or job.next_run_time is None:
         return None
-    return job.next_run_time.replace(tzinfo=None)
+    return job.next_run_time.astimezone(UTC).replace(tzinfo=None)
 
 
 @pytest.mark.asyncio
@@ -388,3 +389,105 @@ async def test_schedule_next_win_check_removes_job_when_nothing_pending(
         assert await service.schedule_next_win_check() is None
 
     assert fresh_scheduler_manager.get_job(WIN_CHECK_JOB_ID) is None
+
+
+@pytest.mark.asyncio
+async def test_update_win_check_for_new_entry_on_non_utc_host(
+    non_utc_host: None,
+    test_db: async_sessionmaker[AsyncSession],
+    fresh_scheduler_manager: SchedulerManager,
+) -> None:
+    """On a Europe/Paris host with a New York scheduler, a later entry leaves
+    the job alone and a sooner one moves it, both compared in UTC."""
+    fresh_scheduler_manager.start()
+    first = utcnow() + timedelta(days=1)
+
+    async with test_db() as session:
+        service = SchedulerService(session)
+        await service.update_win_check_for_new_entry(first)
+        await service.update_win_check_for_new_entry(first + timedelta(minutes=30))
+        assert _win_check_run_time(fresh_scheduler_manager) == first + timedelta(minutes=5)
+
+        await service.update_win_check_for_new_entry(first - timedelta(minutes=30))
+
+    assert _win_check_run_time(fresh_scheduler_manager) == first - timedelta(minutes=25)
+
+
+@pytest.mark.asyncio
+async def test_update_win_check_for_new_entry_moves_job_scheduled_in_western_zone(
+    non_utc_host: None,
+    test_db: async_sessionmaker[AsyncSession],
+    fresh_scheduler_manager: SchedulerManager,
+) -> None:
+    """An existing job whose next run time is expressed in a zone behind UTC
+    is still compared as UTC: an entry checked one hour sooner moves it."""
+    fresh_scheduler_manager.start()
+    existing = utcnow().replace(microsecond=0) + timedelta(days=1)
+    fresh_scheduler_manager.add_date_job(
+        func=run_win_check,
+        job_id=WIN_CHECK_JOB_ID,
+        run_date=existing.replace(tzinfo=UTC).astimezone(ZoneInfo("America/New_York")),
+    )
+
+    async with test_db() as session:
+        await SchedulerService(session).update_win_check_for_new_entry(existing - timedelta(hours=1, minutes=5))
+
+    assert _win_check_run_time(fresh_scheduler_manager) == existing - timedelta(hours=1)
+
+
+@pytest.mark.asyncio
+async def test_update_win_check_for_new_entry_keeps_job_scheduled_in_eastern_zone(
+    non_utc_host: None,
+    test_db: async_sessionmaker[AsyncSession],
+    fresh_scheduler_manager: SchedulerManager,
+) -> None:
+    """An existing job whose next run time is expressed in a zone ahead of UTC
+    is still compared as UTC: an entry checked one hour later leaves it."""
+    fresh_scheduler_manager.start()
+    existing = utcnow().replace(microsecond=0) + timedelta(days=1)
+    fresh_scheduler_manager.add_date_job(
+        func=run_win_check,
+        job_id=WIN_CHECK_JOB_ID,
+        run_date=existing.replace(tzinfo=UTC).astimezone(ZoneInfo("Asia/Tokyo")),
+    )
+
+    async with test_db() as session:
+        await SchedulerService(session).update_win_check_for_new_entry(existing + timedelta(minutes=55))
+
+    assert _win_check_run_time(fresh_scheduler_manager) == existing
+
+
+@pytest.mark.asyncio
+async def test_get_win_check_status_reports_next_check_in_utc_with_z(
+    non_utc_host: None,
+    test_db: async_sessionmaker[AsyncSession],
+    fresh_scheduler_manager: SchedulerManager,
+) -> None:
+    """next_check_at is the UTC run date in ISO 8601 with a Z suffix, even on
+    a non-UTC host with the job's time expressed in another zone."""
+    fresh_scheduler_manager.start()
+    run_date = datetime(2030, 1, 15, 12, 0, 0)
+    fresh_scheduler_manager.add_date_job(
+        func=run_win_check,
+        job_id=WIN_CHECK_JOB_ID,
+        run_date=run_date.replace(tzinfo=UTC).astimezone(ZoneInfo("Asia/Tokyo")),
+    )
+
+    async with test_db() as session:
+        status = SchedulerService(session).get_win_check_status()
+
+    assert status == {"scheduled": True, "next_check_at": "2030-01-15T12:00:00Z"}
+
+
+@pytest.mark.asyncio
+async def test_get_win_check_status_when_nothing_scheduled(
+    test_db: async_sessionmaker[AsyncSession],
+    fresh_scheduler_manager: SchedulerManager,
+) -> None:
+    """Without a win_check job the status says so and carries no time."""
+    fresh_scheduler_manager.start()
+
+    async with test_db() as session:
+        status = SchedulerService(session).get_win_check_status()
+
+    assert status == {"scheduled": False, "next_check_at": None}
