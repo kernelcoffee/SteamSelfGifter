@@ -105,3 +105,26 @@ async def test_game_response_unfetched_genres_are_null_and_empty_stays_empty(
     response = await test_client.get("/api/v1/games/21")
     assert response.status_code == 200
     assert response.json()["data"]["genres"] == []
+
+
+@pytest.mark.asyncio
+async def test_game_responses_serialize_last_refreshed_at_with_z_suffix(test_client: AsyncClient, async_engine):
+    """Convention: every datetime in an API response is UTC with a 'Z' suffix,
+    on the list and the single-game endpoint (a fresh cached row with genres,
+    so no Steam call is made)."""
+    from datetime import datetime
+
+    from core.time import utcnow
+
+    stamp = utcnow().replace(microsecond=0)
+    await _seed_games(async_engine, [
+        Game(id=30, name="Fresh", type="game", genres=["Action"], last_refreshed_at=stamp),
+    ])
+
+    for path in ("/api/v1/games/", "/api/v1/games/30"):
+        response = await test_client.get(path)
+        assert response.status_code == 200
+        data = response.json()["data"]
+        game = data["games"][0] if "games" in data else data
+        assert game["last_refreshed_at"] == stamp.isoformat() + "Z"
+        assert datetime.fromisoformat(game["last_refreshed_at"]).utcoffset().total_seconds() == 0

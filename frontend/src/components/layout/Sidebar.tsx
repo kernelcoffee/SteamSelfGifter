@@ -1,3 +1,4 @@
+import type { Ref } from 'react';
 import { NavLink } from 'react-router';
 import {
   LayoutDashboard,
@@ -64,13 +65,34 @@ function NavList({ items }: { items: NavItem[] }) {
   );
 }
 
+interface SidebarProps {
+  /** Phone-width overlay variant, opened from the Header's menu button. */
+  overlay?: boolean;
+  id?: string;
+  ref?: Ref<HTMLElement>;
+  /** Called when a link is followed (closes the overlay). */
+  onNavigate?: () => void;
+}
+
 /**
- * Sidebar navigation component
+ * Sidebar navigation component. The column is shown from the md breakpoint
+ * up; below it the same navigation opens as an overlay that starts under the
+ * sticky h-16 header, so the header's menu toggle stays reachable.
  */
-export function Sidebar() {
+export function Sidebar({ overlay = false, id, ref, onNavigate }: SidebarProps = {}) {
   return (
-    <aside className="w-64 border-r border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark min-h-[calc(100vh-4rem)]">
-      <nav className="p-4">
+    <aside
+      ref={ref}
+      id={id}
+      aria-label={overlay ? 'Main menu' : undefined}
+      className={clsx(
+        'w-64 border-r border-gray-200 dark:border-gray-700 bg-surface-light dark:bg-surface-dark',
+        overlay
+          ? 'fixed top-16 bottom-0 left-0 z-40 overflow-y-auto shadow-xl md:hidden'
+          : 'hidden md:block shrink-0 min-h-[calc(100vh-4rem)]'
+      )}
+    >
+      <nav className="p-4" onClick={onNavigate}>
         <NavList items={navItems} />
       </nav>
     </aside>

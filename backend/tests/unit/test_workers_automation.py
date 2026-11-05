@@ -4,7 +4,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.eligibility import Decision
+from services.giveaway_query import CycleCandidate, CycleResult
 from tests.conftest import patch_automation_context
+
+
+def _cycle(enter=()):
+    """A decide_cycle result whose enter candidates are ``enter`` (planned eligible)."""
+    candidates = [
+        CycleCandidate(giveaway=g, decision=Decision(code="eligible", detail={}), planned="eligible") for g in enter
+    ]
+    return CycleResult(
+        candidates=candidates, counts={"eligible": len(candidates)} if candidates else {}, total=len(candidates)
+    )
 
 
 def _cycle_settings(**overrides):
@@ -12,7 +24,6 @@ def _cycle_settings(**overrides):
     s = MagicMock()
     s.phpsessid = "test_session"
     s.max_scan_pages = 3
-    s.dlc_priority_enabled = False
     s.autojoin_enabled = True
     s.autojoin_min_price = 50
     s.autojoin_min_score = 7
@@ -20,13 +31,14 @@ def _cycle_settings(**overrides):
     s.autojoin_max_game_age = None
     s.autojoin_start_at = 0
     s.autojoin_stop_at = 0
-    s.wishlist_priority_enabled = True
-    s.ending_soon_priority_enabled = False
-    s.ending_soon_threshold_minutes = 60
+    s.autojoin_priorities = [{"type": "wishlist"}]
+    s.excluded_genres = []
+    s.included_genres = []
     s.max_entries_per_cycle = 5
     s.entry_delay_min = 0.01
     s.entry_delay_max = 0.02
     s.safety_check_enabled = False
+    s.auto_hide_unsafe = True
     for k, v in overrides.items():
         setattr(s, k, v)
     return s
@@ -66,11 +78,11 @@ async def test_automation_cycle_runs_all_steps_and_schedules_win_check():
     mock_entry.points_spent = 50
 
     gs = AsyncMock()
-    gs.get_current_points.return_value = 500
+    gs.fetch_points.return_value = 500
     gs.sync_giveaways.return_value = (5, 2)   # regular + wishlist both use this
     gs.sync_wins.return_value = 1
     gs.sync_entered_giveaways.return_value = 0
-    gs.evaluate_and_get_eligible.return_value = [mock_giveaway]
+    gs.decide_cycle.return_value = _cycle([mock_giveaway])
     gs.enter_giveaway.return_value = mock_entry
 
     patcher, ctx = patch_automation_context(
@@ -118,7 +130,7 @@ async def test_automation_cycle_skips_entries_when_autojoin_disabled():
 
     assert results["entries"]["skipped"] is True
     assert results["entries"]["reason"] == "autojoin_disabled"
-    gs.evaluate_and_get_eligible.assert_not_called()
+    gs.decide_cycle.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -132,18 +144,18 @@ async def test_automation_cycle_refreshes_stale_games_before_entries():
 
     async def entries(*args, **kwargs):
         order.append("entries")
-        return []
+        return _cycle()
 
     async def refresh(**kwargs):
         order.append("refresh")
         return 3
 
     gs = AsyncMock()
-    gs.get_current_points.return_value = 500
+    gs.fetch_points.return_value = 500
     gs.sync_giveaways.return_value = (0, 0)
     gs.sync_wins.return_value = 0
     gs.sync_entered_giveaways.return_value = 0
-    gs.evaluate_and_get_eligible = AsyncMock(side_effect=entries)
+    gs.decide_cycle = AsyncMock(side_effect=entries)
     game_service = AsyncMock()
     game_service.refresh_stale_games = AsyncMock(side_effect=refresh)
     game_service.steam_retry_after_seconds = MagicMock(return_value=0)
@@ -171,11 +183,11 @@ async def test_automation_cycle_survives_stale_refresh_failure():
 
     settings = _cycle_settings()
     gs = AsyncMock()
-    gs.get_current_points.return_value = 500
+    gs.fetch_points.return_value = 500
     gs.sync_giveaways.return_value = (0, 0)
     gs.sync_wins.return_value = 0
     gs.sync_entered_giveaways.return_value = 0
-    gs.evaluate_and_get_eligible.return_value = []
+    gs.decide_cycle.return_value = _cycle()
     game_service = AsyncMock()
     game_service.refresh_stale_games = AsyncMock(side_effect=RuntimeError("db locked"))
     game_service.steam_retry_after_seconds = MagicMock(return_value=0)
@@ -191,7 +203,7 @@ async def test_automation_cycle_survives_stale_refresh_failure():
         results = await automation_cycle()
 
     assert results["game_refresh"]["error"] == "db locked"
-    gs.evaluate_and_get_eligible.assert_awaited()
+    gs.decide_cycle.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -203,11 +215,11 @@ async def test_automation_cycle_reports_stale_refresh_skipped_during_cooldown():
 
     settings = _cycle_settings()
     gs = AsyncMock()
-    gs.get_current_points.return_value = 500
+    gs.fetch_points.return_value = 500
     gs.sync_giveaways.return_value = (0, 0)
     gs.sync_wins.return_value = 0
     gs.sync_entered_giveaways.return_value = 0
-    gs.evaluate_and_get_eligible.return_value = []
+    gs.decide_cycle.return_value = _cycle()
     game_service = AsyncMock()
     game_service.steam_retry_after_seconds = MagicMock(return_value=140)
 
@@ -228,7 +240,29 @@ async def test_automation_cycle_reports_stale_refresh_skipped_during_cooldown():
         "retry_after_seconds": 140,
     }
     game_service.refresh_stale_games.assert_not_awaited()
-    gs.evaluate_and_get_eligible.assert_awaited()
+    gs.decide_cycle.assert_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("auto_hide", [True, False])
+async def test_automation_cycle_sweep_gets_the_hide_flag(auto_hide):
+    """The safety sweep hides traps on SteamGifts only when auto_hide_unsafe is on."""
+    from workers.automation import automation_cycle
+
+    settings = _cycle_settings(safety_check_enabled=True, auto_hide_unsafe=auto_hide, autojoin_enabled=False)
+    gs = AsyncMock()
+    gs.sync_giveaways.return_value = (0, 0)
+    gs.sync_wins.return_value = 0
+    gs.sync_entered_giveaways.return_value = 0
+    gs.sweep_unchecked_safety.return_value = {"checked": 1, "safe": 0, "borderline": 0, "unsafe": 1, "errors": 0}
+
+    patcher, ctx = patch_automation_context("workers.automation", settings, giveaway_service=gs)
+    with patcher, patch("workers.automation.event_manager") as ev:
+        ev.broadcast_event = AsyncMock()
+        results = await automation_cycle()
+
+    gs.sweep_unchecked_safety.assert_awaited_once_with(limit=10, hide_on_steamgifts=auto_hide)
+    assert results["safety_sweep"]["unsafe"] == 1
 
 
 @pytest.mark.asyncio

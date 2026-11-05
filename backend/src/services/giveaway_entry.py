@@ -113,7 +113,7 @@ class GiveawayEntryMixin:
             return None
 
     async def enter_giveaway_with_safety_check(
-        self, giveaway_code: str, entry_type: str = "auto"
+        self, giveaway_code: str, entry_type: str = "auto", *, hide_on_steamgifts: bool = True
     ) -> Entry | None:
         """
         Enter a giveaway with safety check.
@@ -121,12 +121,14 @@ class GiveawayEntryMixin:
         Uses the stored safety verdict when fresh (see SAFETY_RECHECK_HOURS),
         otherwise checks the giveaway page. Outcomes: "safe" enters normally;
         "borderline" skips without hiding (left for manual review); "unsafe"
-        hides the giveaway on SteamGifts. A failing safety check skips the
+        hides the giveaway (on SteamGifts too when ``hide_on_steamgifts``,
+        otherwise in this app only). A failing safety check skips the
         giveaway this cycle (fail closed).
 
         Args:
             giveaway_code: Giveaway code to enter
             entry_type: Type of entry ("manual", "auto", "wishlist")
+            hide_on_steamgifts: The auto_hide_unsafe setting
 
         Returns:
             Entry object if successful, None if failed or unsafe
@@ -149,7 +151,7 @@ class GiveawayEntryMixin:
 
         if verdict == "unsafe":
             logger.warning("giveaway_unsafe", code=giveaway_code, details=safety["details"])
-            await self.hide_on_steamgifts(giveaway_code)
+            await self._hide_unsafe(giveaway_code, hide_on_steamgifts)
             await self._record_safety_rejection(
                 giveaway_code,
                 entry_type,
@@ -260,20 +262,26 @@ class GiveawayEntryMixin:
         return safety_result
 
     async def sweep_unchecked_safety(
-        self, limit: int = 10, delay_min: float = 1.0, delay_max: float = 3.0
+        self,
+        limit: int = 10,
+        delay_min: float = 1.0,
+        delay_max: float = 3.0,
+        *,
+        hide_on_steamgifts: bool = True,
     ) -> dict[str, int]:
         """Safety-check a batch of unchecked active giveaways (background sweep).
 
         Fetches up to ``limit`` giveaways that have never been checked
         (``is_safe`` NULL), oldest-expiring first, scores each page, and hides
-        outright traps — so most giveaways carry a stored verdict before the
-        entry loop ever considers them. A short random delay between page
-        fetches keeps the traffic pattern polite.
+        outright traps (on SteamGifts too when ``hide_on_steamgifts``, the
+        auto_hide_unsafe setting) — so most giveaways carry a stored verdict
+        before the entry loop ever considers them. A short random delay
+        between page fetches keeps the traffic pattern polite.
 
         Returns:
             Counts: ``{"checked", "safe", "borderline", "unsafe", "errors"}``.
         """
-        unchecked = await self.giveaway_repo.get_unchecked_eligible(limit=limit)
+        unchecked = await self.giveaway_repo.get_unchecked_active(limit=limit)
         counts = {"checked": 0, "safe": 0, "borderline": 0, "unsafe": 0, "errors": 0}
 
         for index, giveaway in enumerate(unchecked):
@@ -295,9 +303,24 @@ class GiveawayEntryMixin:
                 logger.warning(
                     "safety_sweep_unsafe", code=giveaway.code, details=result["details"]
                 )
-                await self.hide_on_steamgifts(giveaway.code)
+                await self._hide_unsafe(giveaway.code, hide_on_steamgifts)
 
         return counts
+
+    async def _hide_unsafe(self, giveaway_code: str, hide_on_steamgifts: bool) -> None:
+        """Hide a giveaway the safety check found unsafe.
+
+        On SteamGifts too (today's behaviour) when ``hide_on_steamgifts``;
+        otherwise in this app only, with no SteamGifts request. Either way
+        ``is_safe`` is already False, so the giveaway is gated next cycle.
+        """
+        if hide_on_steamgifts:
+            await self.hide_on_steamgifts(giveaway_code)
+            return
+        giveaway = await self.giveaway_repo.get_by_code(giveaway_code)
+        if giveaway:
+            giveaway.is_hidden = True
+            await self.session.commit()
 
     async def hide_on_steamgifts(self, giveaway_code: str) -> bool:
         """
@@ -364,23 +387,18 @@ class GiveawayEntryMixin:
             logger.error("comment_post_failed", code=giveaway_code, error=str(e))
             return False
 
-    async def get_current_points(self) -> int:
+    async def fetch_points(self) -> int | None:
         """
-        Get current user points from SteamGifts.
+        Get current user points from SteamGifts, or None when unavailable.
+
+        A failed fetch is never reported as a 0P balance, so the cycle never
+        plans or records anything against a fabricated balance.
 
         Returns:
-            Current points balance
-
-        Raises:
-            SteamGiftsError: If unable to fetch points
-
-        Example:
-            >>> points = await service.get_current_points()
-            >>> print(f"Current points: {points}P")
+            Current points balance, or None if it could not be fetched
         """
         try:
             return await self.sg_client.get_user_points()
         except SteamGiftsError as e:
-            # If we can't fetch points, return 0 rather than failing
             logger.error("points_fetch_failed", error=str(e))
-            return 0
+            return None

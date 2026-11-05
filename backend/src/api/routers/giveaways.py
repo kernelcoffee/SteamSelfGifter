@@ -4,35 +4,107 @@ This module provides REST API endpoints for giveaway operations,
 including listing, filtering, syncing, entering, and hiding giveaways.
 """
 
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from api.dependencies import GiveawayServiceDep, SchedulerServiceDep
+from api.dependencies import (
+    GiveawayReadServiceDep,
+    GiveawayServiceDep,
+    SchedulerServiceDep,
+    SettingsServiceDep,
+)
 from api.schemas.common import create_success_response
 from api.schemas.giveaway import (
+    AutojoinRegistryResponse,
+    CandidatePreviewResponse,
+    DecisionResponse,
     GiveawayEntryRequest,
     GiveawayEntryResponse,
     GiveawayResponse,
     GiveawayScanRequest,
     GiveawayScanResponse,
+    LensGiveawaysResponse,
+    PolicyPreviewResponse,
 )
+from api.schemas.settings import PolicyPreviewRequest
+from models.giveaway import Giveaway
+from services.eligibility import Decision, PolicyFields, explain, registry_as_data
+from services.giveaway_query import PolicyPreview
+from services.giveaway_service import GiveawayService
+from services.settings_service import SettingsService
 
 router = APIRouter()
+
+LENS_DESCRIPTION = (
+    "'autojoin' returns only what the saved auto-join policy would enter from this "
+    "tab's pool, in entry order, with each giveaway's live decision (budget and per "
+    "cycle cap not applied). Nothing is persisted."
+)
+LensQuery = Annotated[Literal["autojoin"] | None, Query(description=LENS_DESCRIPTION)]
+
+
+def _candidate(giveaway: Giveaway, decision: Decision) -> CandidatePreviewResponse:
+    """A giveaway row plus its live decision; never writes to the row."""
+    return CandidatePreviewResponse(
+        decision=DecisionResponse(
+            code=decision.code,
+            label=explain(decision.code, decision.detail) or decision.code,
+            detail=decision.detail,
+            priority=decision.priority,
+            rank=decision.rank,
+            lifted_by=decision.lifted_by,
+        ),
+        **{name: getattr(giveaway, name) for name in GiveawayResponse.model_fields},
+    )
+
+
+def _preview_candidates(preview: PolicyPreview) -> list[CandidatePreviewResponse]:
+    """Shape a preview's candidates (already enriched from the game cache)."""
+    return [_candidate(giveaway, decision) for giveaway, decision in preview.candidates]
+
+
+def _policy_preview_response(preview: PolicyPreview) -> dict[str, Any]:
+    """The PolicyPreviewResponse envelope shared by /preview and /eligible."""
+    data = PolicyPreviewResponse(
+        candidates=_preview_candidates(preview),
+        count=preview.count,
+        pool=preview.pool,
+        counts=preview.counts,
+    )
+    return create_success_response(data=data.model_dump())
+
+
+async def _lens_response(
+    giveaway_service: GiveawayService,
+    settings_service: SettingsService,
+    pool: list[Giveaway],
+    limit: int,
+    offset: int,
+) -> dict[str, Any]:
+    """A tab's pool through the auto-join lens (saved policy, live)."""
+    settings = await settings_service.get_settings()
+    policy = giveaway_service.saved_policy(settings)
+    preview = await giveaway_service.preview_policy(policy, limit=limit, offset=offset, pool=pool)
+    data = LensGiveawaysResponse(
+        giveaways=_preview_candidates(preview),
+        count=preview.count,
+        lens="autojoin",
+    )
+    return create_success_response(data=data.model_dump())
 
 
 @router.get(
     "",
     response_model=dict[str, Any],
     summary="List giveaways",
-    description="Get a list of giveaways with optional filtering.",
+    description=(
+        "Get a list of giveaways with optional filtering. is_entered=false lists active, "
+        "not entered, not hidden giveaways with no auto-join policy applied."
+    ),
 )
 async def list_giveaways(
     giveaway_service: GiveawayServiceDep,
-    min_price: int | None = Query(default=None, ge=0, description="Minimum price"),
-    max_price: int | None = Query(default=None, ge=0, description="Maximum price"),
-    min_score: int | None = Query(default=None, ge=0, le=10, description="Minimum review score"),
-    min_reviews: int | None = Query(default=None, ge=0, description="Minimum reviews"),
     search: str | None = Query(default=None, description="Search by game name"),
     is_entered: bool | None = Query(default=None, description="Filter by entry status"),
     active_only: bool = Query(default=False, description="Only show non-expired giveaways"),
@@ -63,14 +135,8 @@ async def list_giveaways(
             limit=limit, active_only=active_only
         )
     elif is_entered is False:
-        # Get eligible (not entered) giveaways
-        giveaways = await giveaway_service.get_eligible_giveaways(
-            min_price=min_price or 0,
-            max_price=max_price,
-            min_score=min_score,
-            min_reviews=min_reviews,
-            limit=limit,
-        )
+        # Browse filter: active, not entered, not hidden; no policy applied
+        giveaways = await giveaway_service.get_unentered_giveaways(limit=limit, offset=offset)
     else:
         # Get all giveaways (including expired) when no specific filter
         giveaways = await giveaway_service.get_all_giveaways(limit=limit, offset=offset)
@@ -99,20 +165,30 @@ async def list_giveaways(
     description="Get all active (non-expired) giveaways.",
 )
 async def get_active_giveaways(
-    giveaway_service: GiveawayServiceDep,
+    giveaway_service: GiveawayReadServiceDep,
+    settings_service: SettingsServiceDep,
     min_score: int | None = Query(default=None, ge=0, le=10, description="Minimum review score (0-10)"),
     is_safe: bool | None = Query(default=None, description="Filter by safety status (true=safe, false=unsafe)"),
     min_chance: float | None = Query(default=None, ge=0.01, le=100, description="Minimum win chance in percent"),
     ending_within: int | None = Query(default=None, ge=1, description="Only giveaways ending within this many minutes"),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
     offset: int = Query(default=0, ge=0, description="Number of records to skip"),
+    lens: LensQuery = None,
 ) -> dict[str, Any]:
     """
     Get active giveaways.
 
     Returns:
-        Success response with list of active giveaways
+        Success response with list of active giveaways (or, with
+        lens=autojoin, the saved policy's live enter candidates among them)
     """
+    if lens is not None:
+        pool = await giveaway_service.get_active_giveaways(
+            min_score=min_score, is_safe=is_safe, min_chance=min_chance,
+            ending_within_minutes=ending_within, exclude_entered=True,
+        )
+        return await _lens_response(giveaway_service, settings_service, pool, limit, offset)
+
     giveaways = await giveaway_service.get_active_giveaways(
         limit=limit, offset=offset, min_score=min_score, is_safe=is_safe,
         min_chance=min_chance, ending_within_minutes=ending_within,
@@ -141,18 +217,28 @@ async def get_active_giveaways(
     description="Get active giveaways for games on user's Steam wishlist.",
 )
 async def get_wishlist_giveaways(
-    giveaway_service: GiveawayServiceDep,
+    giveaway_service: GiveawayReadServiceDep,
+    settings_service: SettingsServiceDep,
     min_chance: float | None = Query(default=None, ge=0.01, le=100, description="Minimum win chance in percent"),
     ending_within: int | None = Query(default=None, ge=1, description="Only giveaways ending within this many minutes"),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
     offset: int = Query(default=0, ge=0, description="Number of records to skip"),
+    lens: LensQuery = None,
 ) -> dict[str, Any]:
     """
     Get wishlist giveaways.
 
     Returns:
-        Success response with list of wishlist giveaways
+        Success response with list of wishlist giveaways (or, with
+        lens=autojoin, the saved policy's live enter candidates among them)
     """
+    if lens is not None:
+        pool = await giveaway_service.giveaway_repo.get_flagged(
+            "is_wishlist", min_chance=min_chance, ending_within_minutes=ending_within,
+            exclude_entered=True,
+        )
+        return await _lens_response(giveaway_service, settings_service, pool, limit, offset)
+
     giveaways = await giveaway_service.giveaway_repo.get_flagged(
         "is_wishlist", limit=limit, offset=offset,
         min_chance=min_chance, ending_within_minutes=ending_within,
@@ -181,18 +267,28 @@ async def get_wishlist_giveaways(
     description="Get active giveaways from the DLC listing (DLC for games the user owns).",
 )
 async def get_dlc_giveaways(
-    giveaway_service: GiveawayServiceDep,
+    giveaway_service: GiveawayReadServiceDep,
+    settings_service: SettingsServiceDep,
     min_chance: float | None = Query(default=None, ge=0.01, le=100, description="Minimum win chance in percent"),
     ending_within: int | None = Query(default=None, ge=1, description="Only giveaways ending within this many minutes"),
     limit: int = Query(default=50, ge=1, le=200, description="Maximum results"),
     offset: int = Query(default=0, ge=0, description="Number of records to skip"),
+    lens: LensQuery = None,
 ) -> dict[str, Any]:
     """
     Get DLC giveaways.
 
     Returns:
-        Success response with list of DLC giveaways
+        Success response with list of DLC giveaways (or, with
+        lens=autojoin, the saved policy's live enter candidates among them)
     """
+    if lens is not None:
+        pool = await giveaway_service.giveaway_repo.get_flagged(
+            "is_dlc", min_chance=min_chance, ending_within_minutes=ending_within,
+            exclude_entered=True,
+        )
+        return await _lens_response(giveaway_service, settings_service, pool, limit, offset)
+
     giveaways = await giveaway_service.giveaway_repo.get_flagged(
         "is_dlc", limit=limit, offset=offset,
         min_chance=min_chance, ending_within_minutes=ending_within,
@@ -330,41 +426,81 @@ async def get_expiring_giveaways(
 @router.get(
     "/eligible",
     response_model=dict[str, Any],
-    summary="Get eligible giveaways",
-    description="Get giveaways that match auto-join criteria.",
+    summary="Preview the next cycle's auto-join candidates",
+    description=(
+        "The saved auto-join policy's enter candidates in entry order, with each one's "
+        "live decision. No points fetch and no budget (the budget and per cycle cap apply "
+        "at cycle time); nothing is persisted and nothing is sent to SteamGifts or Steam."
+    ),
 )
 async def get_eligible_giveaways(
-    giveaway_service: GiveawayServiceDep,
-    min_price: int = Query(default=0, ge=0, description="Minimum price"),
-    max_price: int | None = Query(default=None, ge=0, description="Maximum price"),
-    min_score: int | None = Query(default=None, ge=0, le=10, description="Minimum review score"),
-    min_reviews: int | None = Query(default=None, ge=0, description="Minimum reviews"),
-    limit: int = Query(default=20, ge=1, le=100, description="Maximum results"),
+    giveaway_service: GiveawayReadServiceDep,
+    settings_service: SettingsServiceDep,
+    limit: int = Query(default=20, ge=1, le=100, description="Maximum candidates returned"),
 ) -> dict[str, Any]:
     """
-    Get eligible giveaways based on criteria.
+    Preview the saved policy's candidates.
 
     Returns:
-        Success response with list of eligible giveaways
-    """
-    giveaways = await giveaway_service.get_eligible_giveaways(
-        min_price=min_price,
-        max_price=max_price,
-        min_score=min_score,
-        min_reviews=min_reviews,
-        limit=limit,
-    )
-    giveaway_list = [
-        GiveawayResponse.model_validate(g).model_dump()
-        for g in giveaways
-    ]
+        Success response with PolicyPreviewResponse data
 
-    return create_success_response(
-        data={
-            "giveaways": giveaway_list,
-            "count": len(giveaway_list),
-        }
-    )
+    Raises:
+        ConfigurationError: 500 envelope when the stored priority list is invalid
+    """
+    settings = await settings_service.get_settings()
+    policy = giveaway_service.saved_policy(settings)
+    preview = await giveaway_service.preview_policy(policy, limit=limit)
+    return _policy_preview_response(preview)
+
+
+@router.post(
+    "/preview",
+    response_model=dict[str, Any],
+    summary="Dry-run an unsaved auto-join policy",
+    description=(
+        "Evaluate the active pool against the seven policy fields in the body (validated "
+        "exactly like PUT /settings) and return the enter candidates in entry order, their "
+        "total, the pool size and the per-code counts. Persists nothing, changes no "
+        "setting, fetches no points and sends nothing to SteamGifts or Steam."
+    ),
+)
+async def preview_policy(
+    body: PolicyPreviewRequest,
+    giveaway_service: GiveawayReadServiceDep,
+    settings_service: SettingsServiceDep,
+    limit: int = Query(default=20, ge=1, le=100, description="Maximum candidates returned"),
+) -> dict[str, Any]:
+    """
+    Dry-run an unsaved policy.
+
+    Returns:
+        Success response with PolicyPreviewResponse data
+    """
+    settings = await settings_service.get_settings()
+    policy = giveaway_service.saved_policy(settings, override=PolicyFields(**body.model_dump()))
+    preview = await giveaway_service.preview_policy(policy, limit=limit)
+    return _policy_preview_response(preview)
+
+
+@router.get(
+    "/registry",
+    response_model=dict[str, Any],
+    summary="Get the auto-join registry",
+    description=(
+        "The auto-join engine's rules as data: gates, filters (with the setting each "
+        "reads), outcomes, priority types (exemption and parameter bounds) and the "
+        "settings limits. The frontend fetches it instead of mirroring the rules."
+    ),
+)
+async def get_autojoin_registry() -> dict[str, Any]:
+    """
+    Get the auto-join registry.
+
+    Returns:
+        Success response with AutojoinRegistryResponse data
+    """
+    data = AutojoinRegistryResponse.model_validate(registry_as_data())
+    return create_success_response(data=data.model_dump())
 
 
 @router.get(

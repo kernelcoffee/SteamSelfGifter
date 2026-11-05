@@ -20,6 +20,16 @@ export {
   schedulerKeys,
 } from './useScheduler';
 
+// Auto-join engine hooks (registry and dry-run preview)
+export {
+  useAutojoinRegistry,
+  useAutojoinPreview,
+  autojoinKeys,
+} from './useAutojoin';
+
+// Generic hooks
+export { useDebouncedValue } from './useDebouncedValue';
+
 // Giveaway hooks
 export {
   useGiveaways,

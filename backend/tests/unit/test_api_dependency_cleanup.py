@@ -82,3 +82,21 @@ async def test_partial_startup_still_closes_allocated_clients(monkeypatch):
 
     assert FakeSteamGiftsClient.instances[-1].closed
     assert FailingSteamClient.instances[-1].closed
+
+@pytest.mark.asyncio
+async def test_read_only_service_closes_client_when_start_fails(monkeypatch):
+    class FailingSteamClient(FakeSteamClient):
+        instances = []
+
+        async def start(self):
+            self.started = True
+            raise RuntimeError("read-only startup failed")
+
+    monkeypatch.setattr(deps, "SteamClient", FailingSteamClient)
+    monkeypatch.setattr(deps, "SteamGiftsClient", FakeSteamGiftsClient)
+
+    gen = deps.get_giveaway_read_service(object())
+    with pytest.raises(RuntimeError, match="read-only startup failed"):
+        await anext(gen)
+
+    assert FailingSteamClient.instances[-1].closed

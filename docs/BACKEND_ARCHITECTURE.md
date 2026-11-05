@@ -64,6 +64,7 @@ Six entities, two of them singletons (always `id=1`):
 
 - **Giveaway** — a scraped giveaway: `code`, `game_name`, `price`, `end_time`,
   `is_entered`, `is_hidden`, `is_wishlist`, `is_won`, `is_safe`/`safety_score`,
+  the last cycle's `eligibility_reason`/`eligibility_detail`/`eligibility_checked_at`,
   FK → Game.
 - **Game** — Steam store metadata: `review_score`, `total_reviews`,
   `release_date`, `header_image`, `type`, `genres`/`categories` (JSON lists of
@@ -72,8 +73,9 @@ Six entities, two of them singletons (always `id=1`):
 - **Entry** — a record that we entered a giveaway: `points_spent`, `entry_type`
   (`auto`/`manual`/`wishlist`), `status`.
 - **ActivityLog** — append-only event/audit feed surfaced in the UI.
-- **Settings** (singleton) — all user config incl. `phpsessid` and
-  `excluded_genres` (JSON list, default `[]`).
+- **Settings** (singleton) — all user config incl. `phpsessid`,
+  `excluded_genres` and `included_genres` (JSON lists, default `[]`) and
+  `autojoin_priorities` (ordered JSON list, 0 to 3 items).
 - **SchedulerState** (singleton) — runtime counters: `total_scans`,
   `total_entries`, `total_errors`, `last_scan_at`, `next_scan_at`.
 
@@ -148,29 +150,38 @@ steamgifts_client.get_giveaways(page)        # scrape HTML (BeautifulSoup)
 **`_process_entries` (the entry step):**
 
 ```
-get_eligible_giveaways(min_price, min_score, min_reviews, max_game_age,
-                       excluded_genres, limit)
-  # filters: price, then excluded genres, then score/reviews/age;
-  # wishlist (and DLC when dlc_priority_enabled) bypass all of them
-  # sorted: wishlist (if wishlist_priority_enabled), DLC (if dlc_priority_enabled),
-  # ending soon by end_time asc (if ending_soon_priority_enabled), rest by price desc
-  → for each eligible giveaway:
-      sleep(random 5–15s)                      # human-like pacing
+policy_from_settings(settings)               # InvalidPolicyError → log_error, nothing entered
+points = giveaway_service.fetch_points()
+decide_cycle(policy, points)                 # decide + persist reason/detail for the whole pool
+  → plan_cycle: points_accumulating / budget_floor / cycle_cap on the ordered enter list
+  → for each planned giveaway (sequential):
+      sleep(entry_delay_min..max)              # human-like pacing, none before the first
       giveaway_service.enter_giveaway(code)    # refresh xsrf → POST → record Entry
+      record_outcomes(...)                     # what actually happened; running balance re-checked
       broadcast entry_success / entry_failed
 ```
 
-**Eligibility (`services/eligibility.py`):** `evaluate_eligibility` is the pure
-decision function and returns the reason stored on
-`Giveaway.eligibility_reason`; `GiveawayRepository.get_eligible` is its SQL
-mirror, condition for condition, and a parity test asserts both select the same
-set. The genre rule rejects with `genre_excluded` when the cached game's
-`genres` contains an `excluded_genres` entry (case-insensitive; SQL side is a
-`NOT EXISTS` over `json_each(games.genres)`, added only when the list is
-non-empty). It is a negative filter: no game row, or genres NULL or `[]`,
-passes, and it never makes game data required (so it never yields
-`no_game_data`). Only store genres are available; Steam's user-voted tags are
-not in `appdetails`.
+**Eligibility (`services/eligibility.py`):** this module is the one definition
+of the auto-join decision; there is no SQL mirror. A giveaway passes four
+gates (`expired`, `hidden`, `entered`, `unsafe`), is matched against the
+ordered `autojoin_priorities`, and, unless an exempt priority (wishlist or DLC)
+lifts it, runs the filter chain (`price_below_min`, `genre_excluded`,
+`genre_not_included`, `no_game_data`, `score_below_min`, `reviews_below_min`,
+`game_too_old`). The gates run through one loop shared by `decide` and `gate_of`,
+the gate-only view the entry loop uses to record an attempt the safety check
+refused (`unsafe`, or `hidden` when `auto_hide_unsafe` is off) instead of `eligible`. `decide` returns a `Decision` with a code and a small detail
+dict; `explain` renders it in the user's terms; `order_key` sorts the enter
+list; `CycleBudget`/`plan_cycle` add `budget_floor`, `cycle_cap` and
+`points_accumulating`. The rules live in the `GATES`, `FILTERS` and `OUTCOMES`
+tuples and `PRIORITY_TYPES`; `REASON_LABELS` and the data served by
+`GET /giveaways/registry` (`registry_as_data`) are derived from them, so a new
+rule is one entry there. Cycle results are stored on
+`Giveaway.eligibility_reason`/`eligibility_detail`; `preview_policy` and the
+`lens=autojoin` tab views evaluate live and persist nothing; they fill the game
+fields from the same games query as the decisions. Genre matching
+folds ASCII letters only. Unknown genres pass `excluded_genres` but fail a
+non-empty `included_genres`. Only store genres are available; Steam's
+user-voted tags are not in `appdetails`.
 
 **Stale-game refresh (step 3.9):** each cycle `refresh_stale_games` refreshes at
 most `GAME_REFRESH_BATCH_SIZE` (10) cached games, oldest first.
@@ -187,16 +198,33 @@ is returned by `POST /scheduler/run` and broadcast with
 `automation_cycle_completed`.
 
 **Steam cool-down (`services/game_service.py::steam_cooldown`):** any Steam 429
-(from `appdetails`, from `appreviews` inside a save, or an `appdetails` body
+(from `appdetails`, from `GetAppReviews` inside a save, or an `appdetails` body
 that is not a JSON object) starts a process-wide 180 s cool-down. While it
 runs no Steam lookup is sent: cached rows are served, uncached apps get no row
 (filters needing game data report `no_game_data` until a later cycle), the
 batch refresh returns 0 and stops on the first 429, and `GET /games/{app_id}`
 answers 429 `STEAM_003` for uncached apps. Requests sent inside Steam's per-IP
 throttle extend it, hence the pause. `appdetails` is requested with
-`l=english` so genre names are one vocabulary. A failed or throttled
-`appreviews` call keeps the cached review fields (and, when throttled, the old
-`last_refreshed_at`) instead of zeroing them.
+`l=english` so genre names are one vocabulary. Review scores come from
+`GET api.steampowered.com/IUserReviewsService/GetAppReviews/v1/` (public, no
+key; `input_json` carries only `appid` and `num_per_page: 1`, so Steam's
+default languages and purchase type apply). Any non-200 answer, invalid
+JSON, or a `query_summary` field that is not a plain integer in range (score
+0–9, counts 0–2³¹−1; `REVIEW_SUMMARY_LIMITS` in `utils/steam_client.py`) is a
+failure, never "no reviews"; "no reviews" is a 200 without `query_summary`. A
+failed call keeps the cached review fields instead of zeroing them, and what
+happens to `last_refreshed_at` depends on the row:
+
+- throttled (429): unchanged, so the row is retried once the cool-down ends;
+- failed, row with cached reviews (`total_reviews > 0`): stamped now, and the
+  refresh counts as completed;
+- failed, row without cached reviews (placeholder zeros): stamped
+  `now − 7 d + REVIEW_RETRY_DELAY` (6 h), so the zeros are never served as
+  fresh, the row is due again after 6 h behind the rows already stale (rows
+  whose reviews keep failing rotate instead of holding every
+  `refresh_stale_games` slot), and `refresh_game` reports `failed`;
+- new row, reviews failed: saved with zeros and `last_refreshed_at` NULL, so
+  `refresh_stale_games` retries it first.
 
 **Safety check (separate background job, `safety_check_cycle`, every 45s):**
 
@@ -207,8 +235,7 @@ giveaway_repo.get_unchecked_eligible(limit=1) # is_safe IS NULL
 ```
 
 The safety job and the entry job are **decoupled**: safety relies on hiding
-unsafe giveaways so the entry step's `get_eligible` (which filters `is_hidden`)
-skips them. See §6 for why this doesn't actually protect entries in practice.
+unsafe giveaways so the entry step's `unsafe`/`hidden` gates skip them. See §6 for why this doesn't actually protect entries in practice.
 
 ---
 
@@ -275,10 +302,11 @@ The background `safety_check_cycle` job is **deleted**. When
 `enter_giveaway_with_safety_check` (check → hide if unsafe → enter) per giveaway,
 so unsafe giveaways are never entered. This removes the racing 1-per-45s job and
 its "assume safe on error" bug. Cost: one extra HTTP fetch per entry —
-negligible against the existing 5–15s inter-entry sleep. Eligibility filtering
-(`get_eligible`) already keyed on `is_hidden`/`is_entered`, not `is_safe`, so
-dropping the background job changed no eligibility behavior; inline hiding keeps
-unsafe giveaways out of future eligible lists.
+negligible against the existing 5–15s inter-entry sleep. Eligibility
+(`services/eligibility.py`) keys on `is_hidden`/`is_entered` and, through the `unsafe`
+gate, on `is_safe is False` (`is_safe` None passes on to the filters), so dropping the
+background job did not change which giveaways pass; inline hiding keeps unsafe
+giveaways out of future eligible lists.
 
 ### 6.4 `SchedulerService` is now cohesive
 

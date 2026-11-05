@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.time import utcnow
@@ -185,6 +185,11 @@ class Giveaway(Base, TimestampMixin):
         DateTime,
         nullable=True,
         comment="When eligibility_reason was last computed (UTC)",
+    )
+    eligibility_detail: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+        comment="Values behind eligibility_reason (actual vs threshold); NULL = none recorded",
     )
 
     # ==================== Transient enrichment (not persisted) ====================

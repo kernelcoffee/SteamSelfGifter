@@ -12,14 +12,12 @@ SteamSelfGifter is an automated bot for entering Steam game giveaways on SteamGi
 ## Features
 
 - **Web Dashboard**: Modern React-based UI for monitoring and control
-- **Wishlist Integration**: Automatically enters giveaways for games on your Steam wishlist
-- **DLC Support**: Optional support for DLC giveaways
-- **Ending-soon Priority**: Optionally enters giveaways that pass your auto-join filters and end within a configurable window (5 minutes to 1 week, default 60 minutes) after wishlist and DLC ones but before the rest, soonest first
+- **Priority List**: An ordered list (up to three items) of wishlist, DLC and ending-soon giveaways decides what is entered first. Wishlist and DLC items skip the filters; ending-soon (window 5 minutes to 1 week, default 60 minutes, soonest first) obeys them. An empty list means everything obeys the filters, in price order. The default is wishlist only
 - **Smart Auto-join**: Automatically enters giveaways based on customizable criteria:
   - Minimum price threshold
   - Minimum review score
   - Minimum number of reviews
-  - Excluded genres: skip games in Steam genres you don't want (wishlist and, when enabled, DLC giveaways are still entered). Genres come from the Steam store API; Steam's user-voted tags are not available through it, so filtering is by genre only
+  - Included and excluded genres: only enter games in genres you list, and skip games in genres you don't want (exclusion wins when a genre is in both lists; wishlist and DLC giveaways are still entered when they are in your priority list). Genres come from the Steam store API; Steam's user-voted tags are not available through it, so filtering is by genre only
 - **Safety Detection**: Detects and avoids trap/scam giveaways with background safety checks
 - **Win Tracking**: Track your wins and win rate statistics
 - **Real-time Updates**: WebSocket-based live notifications
@@ -138,10 +136,9 @@ npm run dev  # Development server at http://localhost:5173
 3. Enter your SteamGifts PHPSESSID (see below)
 4. Configure your preferences:
    - Enable/disable automation
-   - Enable/disable DLC giveaways
    - Set auto-join criteria (min price, score, reviews)
-   - Optionally exclude Steam genres (**Excluded genres**, up to 50, picked from the genres of cached games or typed in). Games cached before this feature get their genres over the next refresh cycles
-   - Optionally enter giveaways ending soon first (**Enter giveaways ending soon first**, threshold 5 to 10080 minutes, default 60)
+   - Optionally include or exclude Steam genres (**Included genres** / **Excluded genres**, up to 50 each, picked from the genres of cached games or typed in). Games cached before this feature get their genres over the next refresh cycles
+   - Set the **priority list**: reorder or remove wishlist, DLC and ending-soon (threshold 5 to 10080 minutes, default 60); the Filters card previews how many giveaways would be entered
    - Enable safety check for trap detection
 
 ### How to get your PHPSESSID
@@ -239,6 +236,8 @@ alembic upgrade head
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+
+The maintainer develops this project with [Conclave](https://github.com/kernelcoffee/Conclave), an agent team for Claude Code that plans, reviews and tests each change against the project's conventions. Contributions written by hand are welcome and go through the same review.
 
 ## License
 

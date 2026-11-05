@@ -29,7 +29,7 @@ from workers.processor import _process_entries
 logger = structlog.get_logger()
 
 # Cached games refreshed from Steam per cycle. Each costs up to two Steam
-# requests (appdetails, plus appreviews for games), so 10 stays far below
+# requests (appdetails, plus GetAppReviews for games), so 10 stays far below
 # Steam's per-IP store throttle (about 200 requests per 5 minutes) while the
 # backlog, such as the genres backfill after an upgrade, drains over cycles.
 GAME_REFRESH_BATCH_SIZE = 10
@@ -121,7 +121,7 @@ async def automation_cycle() -> dict[str, Any]:
 
             # === STEP 2.5: Scan DLC giveaways ===
             # Always scanned, like the wishlist: the is_dlc flags it maintains
-            # feed both the DLC badge and the optional autojoin priority.
+            # feed both the DLC badge and the dlc auto-join priority item.
             logger.info("automation_step", step="scan_dlc")
             results["dlc"] = {"new": 0, "updated": 0, "skipped": False}
 
@@ -187,7 +187,9 @@ async def automation_cycle() -> dict[str, Any]:
                 results["safety_sweep"]["reason"] = "safety_check_disabled"
             else:
                 try:
-                    sweep_counts = await giveaway_service.sweep_unchecked_safety(limit=10)
+                    sweep_counts = await giveaway_service.sweep_unchecked_safety(
+                        limit=10, hide_on_steamgifts=bool(settings.auto_hide_unsafe)
+                    )
                     results["safety_sweep"] = {**sweep_counts, "skipped": False}
                     logger.info("safety_sweep_completed", **sweep_counts)
                 except Exception as e:

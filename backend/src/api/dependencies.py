@@ -19,6 +19,10 @@ from services.settings_service import SettingsService
 from utils.steam_client import SteamClient
 from utils.steamgifts_client import SteamGiftsClient
 
+# The read-only service's SteamGifts client never sends a request; it still
+# needs a user agent to be constructed.
+READ_ONLY_USER_AGENT = "SteamSelfGifter (read-only)"
+
 
 # Database session dependency
 # This is re-exported from db.session for convenience
@@ -155,8 +159,37 @@ async def get_giveaway_service(db: DatabaseDep) -> AsyncGenerator[GiveawayServic
         game_service = GameService(db, steam_client)
         yield GiveawayService(db, sg_client, game_service)
     finally:
+        try:
+            await steam_client.close()
+        finally:
+            await sg_client.close()
+
+
+async def get_giveaway_read_service(db: DatabaseDep) -> AsyncGenerator[GiveawayService]:
+    """
+    Get a GiveawayService for read-only giveaway endpoints.
+
+    Its SteamGifts client is never started and carries no session, so a
+    request using it cannot reach SteamGifts (starting a client with a
+    session fetches the SteamGifts homepage for the XSRF token, and any
+    client call on an unstarted client raises). The Steam client is started
+    for the game enrichment the browse endpoints do, and closed when the
+    request ends.
+
+    Args:
+        db: Database session from dependency injection
+
+    Yields:
+        GiveawayService instance that never talks to SteamGifts
+    """
+    sg_client = SteamGiftsClient(phpsessid="", user_agent=READ_ONLY_USER_AGENT)
+
+    steam_client = SteamClient()
+    try:
+        await steam_client.start()
+        yield GiveawayService(db, sg_client, GameService(db, steam_client))
+    finally:
         await steam_client.close()
-        await sg_client.close()
 
 
 async def get_scheduler_service(
@@ -187,6 +220,7 @@ async def get_scheduler_service(
 # Type aliases for new service dependencies
 GameServiceDep = Annotated[GameService, Depends(get_game_service)]
 GiveawayServiceDep = Annotated[GiveawayService, Depends(get_giveaway_service)]
+GiveawayReadServiceDep = Annotated[GiveawayService, Depends(get_giveaway_read_service)]
 SchedulerServiceDep = Annotated[SchedulerService, Depends(get_scheduler_service)]
 
 
