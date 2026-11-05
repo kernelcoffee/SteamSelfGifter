@@ -8,7 +8,7 @@ SteamGifts client) instead of raising "Client session not started".
 
 from datetime import timedelta
 from functools import partial
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -16,7 +16,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from structlog.testing import capture_logs
 
-from core.time import utcnow
+from core.events import event_manager
+from core.time import to_naive_utc, utcnow
+from models.activity_log import ActivityLog
 from models.giveaway import Giveaway
 from services.scheduler_service import WIN_CHECK_JOB_ID, SchedulerService
 from services.settings_service import SettingsService
@@ -79,7 +81,7 @@ async def test_job_fired_after_request_ended_uses_fresh_clients(
     assert steam_transport.requests == []
     assert not any(entry["log_level"] == "error" for entry in logs)
     assert rescheduled is not None
-    assert rescheduled.next_run_time.replace(tzinfo=None) == end_time + timedelta(minutes=5)
+    assert to_naive_utc(rescheduled.next_run_time) == end_time + timedelta(minutes=5)
 
 
 async def test_job_survives_and_reschedules_when_client_start_fails(
@@ -88,9 +90,10 @@ async def test_job_survives_and_reschedules_when_client_start_fails(
     no_sleep: object,
 ) -> None:
     """When the SteamGifts homepage is down as the job fires, starting the
-    client inside automation_context fails: the error is logged, nothing
-    escapes to APScheduler, and the next win check is still scheduled from a
-    session of the job's own."""
+    client inside automation_context fails: the error is logged, written to
+    the activity log and broadcast without the PHPSESSID, nothing escapes to
+    APScheduler, and the next win check is still scheduled from a session of
+    the job's own."""
     session_maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
     end_time = utcnow() + timedelta(days=1)
 
@@ -121,7 +124,10 @@ async def test_job_survives_and_reschedules_when_client_start_fails(
             assert job is not None
             manager.remove_job(WIN_CHECK_JOB_ID)
 
-            with capture_logs() as logs:
+            with (
+                capture_logs() as logs,
+                patch.object(event_manager, "broadcast_event", new_callable=AsyncMock) as broadcast,
+            ):
                 await job.func(*job.args, **job.kwargs)  # must not raise
 
             rescheduled = manager.get_job(WIN_CHECK_JOB_ID)
@@ -131,11 +137,84 @@ async def test_job_survives_and_reschedules_when_client_start_fails(
     failures = [entry for entry in logs if entry["event"] == "win_check_failed"]
     assert len(failures) == 1
     assert "test_session" not in str(failures[0])
+
+    async with session_maker() as session:
+        rows = (await session.scalars(select(ActivityLog))).all()
+    assert [(row.level, row.event_type) for row in rows] == [("error", "error")]
+    assert rows[0].message == f"[win_check] {failures[0]['error']}"
+    assert "test_session" not in f"{rows[0].message} {rows[0].details}"
+    broadcast.assert_awaited_once_with("win_check_failed", {"error": failures[0]["error"]})
+    assert "test_session" not in str(broadcast.await_args_list)
     assert "win_check_reschedule_failed" not in [entry["event"] for entry in logs]
     assert {r.url.path for r in transport.requests} == {"/"}
     assert steam_transport.requests == []
     assert rescheduled is not None
-    assert rescheduled.next_run_time.replace(tzinfo=None) == end_time + timedelta(minutes=5)
+    assert to_naive_utc(rescheduled.next_run_time) == end_time + timedelta(minutes=5)
+
+
+async def test_won_page_failure_is_recorded_and_broadcast(
+    async_engine: AsyncEngine,
+    transport: RoutedTransport,
+    wishlist_html: str,
+    no_sleep: object,
+) -> None:
+    """When the homepage loads but /giveaways/won keeps answering 503, the
+    sync raises: the job writes one error activity-log row and broadcasts
+    win_check_failed without the PHPSESSID, raises nothing and still
+    schedules the next check."""
+    session_maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    end_time = utcnow() + timedelta(days=1)
+
+    async with session_maker() as session:
+        await SettingsService(session).update_settings(phpsessid="test_session")
+        session.add(Giveaway(code="PEND3", url="/giveaway/PEND3/", game_name="Pending", price=10,
+                             end_time=end_time, is_entered=True))
+        await session.commit()
+
+    transport.add("GET", "/", httpx.Response(200, text=wishlist_html))
+    transport.add("GET", "/giveaways/won", httpx.Response(503, text="Service Unavailable"))
+    steam_transport = RoutedTransport()
+
+    manager = SchedulerManager()
+    manager.start()
+    try:
+        with (
+            patch("services.scheduler_service.scheduler_manager", manager),
+            patch("workers.context.AsyncSessionLocal", session_maker),
+            patch("workers.context.SteamGiftsClient", partial(SteamGiftsClient, transport=transport)),
+            patch("workers.context.SteamClient", partial(SteamClient, transport=steam_transport)),
+        ):
+            async with session_maker() as request_session:
+                await SchedulerService(request_session).update_win_check_for_new_entry(end_time)
+
+            job = manager.get_job(WIN_CHECK_JOB_ID)
+            assert job is not None
+            manager.remove_job(WIN_CHECK_JOB_ID)
+
+            with (
+                capture_logs() as logs,
+                patch.object(event_manager, "broadcast_event", new_callable=AsyncMock) as broadcast,
+            ):
+                await job.func(*job.args, **job.kwargs)  # must not raise
+
+            rescheduled = manager.get_job(WIN_CHECK_JOB_ID)
+    finally:
+        manager.stop(wait=False)
+
+    async with session_maker() as session:
+        rows = (await session.scalars(select(ActivityLog))).all()
+    assert [(row.level, row.event_type, row.message) for row in rows] == [
+        ("error", "error", "[win_check] Failed to fetch won giveaways: 503")
+    ]
+    broadcast.assert_awaited_once_with("win_check_failed", {"error": "Failed to fetch won giveaways: 503"})
+    assert {"event": "win_check_failed", "error": "Failed to fetch won giveaways: 503", "log_level": "error"} in logs
+    assert "test_session" not in f"{rows[0].message} {rows[0].details} {broadcast.await_args_list} {logs}"
+    assert "win_check_reschedule_failed" not in [entry["event"] for entry in logs]
+    assert transport.requests[0].url.path == "/"
+    assert {r.url.path for r in transport.requests[1:]} == {"/giveaways/won"}
+    assert steam_transport.requests == []
+    assert rescheduled is not None
+    assert to_naive_utc(rescheduled.next_run_time) == end_time + timedelta(minutes=5)
 
 
 def _won_page(code: str, game_name: str) -> str:
@@ -212,7 +291,7 @@ async def test_job_records_win_and_moves_check_to_next_pending_giveaway(
     assert not any(entry["log_level"] == "error" for entry in logs), logs
     assert "test_session" not in str(logs)
     assert rescheduled is not None
-    assert rescheduled.next_run_time.replace(tzinfo=None) == next_end + timedelta(minutes=5)
+    assert to_naive_utc(rescheduled.next_run_time) == next_end + timedelta(minutes=5)
 
 
 async def test_job_without_phpsessid_sends_nothing_and_schedules_nothing(
