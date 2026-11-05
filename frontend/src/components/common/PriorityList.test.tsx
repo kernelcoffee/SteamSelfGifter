@@ -291,6 +291,21 @@ describe('PriorityList', () => {
     expect(within(rows[0]).queryByRole('spinbutton')).not.toBeInTheDocument();
   });
 
+  it('gives the ending-soon threshold field its own full-width line after the buttons', () => {
+    render(<Host initial={ALL} />);
+    const endingSoon = screen.getAllByRole('listitem')[2];
+    const input = within(endingSoon).getByLabelText('Ending soon threshold (minutes)');
+    const line = endingSoon.lastElementChild as HTMLElement;
+    // The wrapper is a direct child of the row that spans the whole line, so
+    // it never shares a line with the buttons (checked for real in e2e).
+    expect(line).toContainElement(input);
+    expect(line).toHaveClass('basis-full');
+    for (const button of within(endingSoon).getAllByRole('button')) {
+      expect(line).not.toContainElement(button);
+      expect(button.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
   it('reorders by drag and drop and ignores a drop on the source row', () => {
     const onChange = vi.fn();
     render(<Host initial={ALL} onChange={onChange} />);

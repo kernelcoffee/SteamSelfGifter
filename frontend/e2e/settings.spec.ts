@@ -187,6 +187,34 @@ test.describe('Settings', () => {
     expect(puts(calls)).toHaveLength(0);
   });
 
+  for (const width of [500, 900, 1280]) {
+    test(`at ${width}px the ending soon row keeps its buttons aligned with the other rows and its threshold field on its own full line`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.getByRole('combobox', { name: 'Add priority' }).selectOption('ending_soon');
+      await page.getByRole('button', { name: 'Add the selected priority' }).click();
+
+      const box = async (locator: ReturnType<typeof page.getByRole>) => {
+        const b = await locator.boundingBox();
+        expect(b).not.toBeNull();
+        return b!;
+      };
+      const removeWishlist = await box(page.getByRole('button', { name: 'Remove Wishlist' }));
+      const removeEndingSoon = await box(page.getByRole('button', { name: 'Remove Ending soon' }));
+      const moveUp = await box(page.getByRole('button', { name: 'Move Ending soon up' }));
+      const field = await box(page.getByLabel('Ending soon threshold (minutes)'));
+
+      // Same right edge as the other rows' buttons.
+      expect(Math.abs(removeWishlist.x + removeWishlist.width - (removeEndingSoon.x + removeEndingSoon.width))).toBeLessThan(2);
+      // The field is below the row's buttons, never beside them.
+      expect(field.y).toBeGreaterThanOrEqual(moveUp.y + moveUp.height);
+      expect(field.y).toBeGreaterThanOrEqual(removeEndingSoon.y + removeEndingSoon.height);
+      // And wide enough to show the registry maximum (10080).
+      expect(field.width).toBeGreaterThanOrEqual(150);
+    });
+  }
+
   test('No minimum sends null for min score', async ({ page }) => {
     await page.getByRole('checkbox', { name: 'No minimum review score' }).check();
     await expect(page.getByLabel('Minimum review score', { exact: true })).toBeDisabled();

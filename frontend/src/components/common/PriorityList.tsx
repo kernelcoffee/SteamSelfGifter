@@ -258,19 +258,25 @@ export function PriorityList({
                   </Button>
                 </div>
                 {item.type === 'ending_soon' && (
-                  <div className="w-full sm:w-56">
-                    <Input
-                      id={`${baseId}-threshold`}
-                      label={`${label} threshold (minutes)`}
-                      type="number"
-                      inputMode="numeric"
-                      min={threshold.min}
-                      max={threshold.max}
-                      value={thresholdText}
-                      onChange={(e) => onThresholdTextChange(e.target.value)}
-                      helperText={`${threshold.min} to ${threshold.max} minutes`}
-                      error={thresholdError}
-                    />
+                  // A full-basis wrapper gives the field its own line under
+                  // the row at every width, so the buttons stay on the first
+                  // line at the right edge like every other row; the inner
+                  // div caps the field's width.
+                  <div className="basis-full">
+                    <div className="sm:w-56">
+                      <Input
+                        id={`${baseId}-threshold`}
+                        label={`${label} threshold (minutes)`}
+                        type="number"
+                        inputMode="numeric"
+                        min={threshold.min}
+                        max={threshold.max}
+                        value={thresholdText}
+                        onChange={(e) => onThresholdTextChange(e.target.value)}
+                        helperText={`${threshold.min} to ${threshold.max} minutes`}
+                        error={thresholdError}
+                      />
+                    </div>
                   </div>
                 )}
               </li>
