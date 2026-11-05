@@ -57,16 +57,16 @@ def test_settings_creation_with_defaults(session):
     assert settings.phpsessid is None
     assert settings.user_agent.startswith("Mozilla/5.0")
     assert settings.xsrf_token is None
-    assert settings.dlc_priority_enabled is False
     assert settings.autojoin_enabled is False
     assert settings.autojoin_start_at == 350
     assert settings.autojoin_stop_at == 200
     assert settings.autojoin_min_price == 10
     assert settings.autojoin_min_score == 7
     assert settings.autojoin_min_reviews == 1000
-    assert settings.ending_soon_priority_enabled is False
-    assert settings.ending_soon_threshold_minutes == 60
+    assert settings.autojoin_priorities == [{"type": "wishlist"}]
+    assert settings.max_entries_per_cycle == 10
     assert settings.excluded_genres == []
+    assert settings.included_genres == []
     assert settings.scan_interval_minutes == 30
     assert settings.automation_enabled is False
     assert settings.max_scan_pages == 3
@@ -83,7 +83,8 @@ def test_settings_with_custom_values(session):
     settings = Settings(
         id=1,
         phpsessid="test_session_id",
-        dlc_priority_enabled=True,
+        autojoin_priorities=[{"type": "dlc"}],
+        autojoin_min_score=0,
         autojoin_enabled=True,
         autojoin_start_at=400,
     )
@@ -91,8 +92,16 @@ def test_settings_with_custom_values(session):
     session.commit()
 
     assert settings.phpsessid == "test_session_id"
-    assert settings.dlc_priority_enabled is True
+    assert settings.autojoin_priorities == [{"type": "dlc"}]
+    assert settings.autojoin_min_score == 0
     assert settings.autojoin_enabled is True
+
+    # The quality thresholds are nullable (null = filter off)
+    settings.autojoin_min_score = None
+    settings.autojoin_min_reviews = None
+    session.commit()
+    session.refresh(settings)
+    assert (settings.autojoin_min_score, settings.autojoin_min_reviews) == (None, None)
     assert settings.autojoin_start_at == 400
 
 
@@ -144,7 +153,7 @@ def test_settings_nullable_fields(session):
     assert settings.phpsessid is None
     assert settings.xsrf_token is None
     assert settings.last_synced_at is None
-    assert settings.max_entries_per_cycle is None
+    assert settings.autojoin_max_game_age is None
 
 
 def test_settings_repr(session):

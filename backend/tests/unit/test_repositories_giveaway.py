@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from core.time import utcnow
@@ -265,136 +266,6 @@ async def test_get_active_ordered_by_end_time(test_db):
         assert len(active) == 2
         assert active[0].code == "SOONER"  # Ends first
         assert active[1].code == "LATER"
-
-
-@pytest.mark.asyncio
-async def test_get_eligible_basic_filters(test_db):
-    """Test getting eligible giveaways with basic price filter."""
-    async with test_db() as session:
-        repo = GiveawayRepository(session)
-        now = utcnow()
-
-        # Eligible (price >= 50)
-        await repo.create(
-            code="ELIGIBLE",
-            game_name="Game 1",
-            price=100,
-            url="http://test.com/1",
-            end_time=now + timedelta(hours=24),
-        )
-
-        # Too cheap
-        await repo.create(
-            code="CHEAP",
-            game_name="Game 2",
-            price=10,
-            url="http://test.com/2",
-            end_time=now + timedelta(hours=24),
-        )
-
-        await session.commit()
-
-        eligible = await repo.get_eligible(min_price=50)
-
-        assert len(eligible) == 1
-        assert eligible[0].code == "ELIGIBLE"
-
-
-@pytest.mark.asyncio
-async def test_get_eligible_excludes_entered(test_db):
-    """Test eligible giveaways excludes already entered."""
-    async with test_db() as session:
-        repo = GiveawayRepository(session)
-        now = utcnow()
-
-        # Not entered
-        await repo.create(
-            code="AVAILABLE",
-            game_name="Game 1",
-            price=50,
-            url="http://test.com/1",
-            end_time=now + timedelta(hours=24),
-            is_entered=False,
-        )
-
-        # Already entered
-        await repo.create(
-            code="ENTERED",
-            game_name="Game 2",
-            price=50,
-            url="http://test.com/2",
-            end_time=now + timedelta(hours=24),
-            is_entered=True,
-        )
-
-        await session.commit()
-
-        eligible = await repo.get_eligible(min_price=10)
-
-        assert len(eligible) == 1
-        assert eligible[0].code == "AVAILABLE"
-
-
-@pytest.mark.asyncio
-async def test_get_eligible_with_max_price(test_db):
-    """Test eligible giveaways with max price filter."""
-    async with test_db() as session:
-        repo = GiveawayRepository(session)
-        now = utcnow()
-
-        await repo.create(
-            code="GA1",
-            game_name="Game 1",
-            price=50,
-            url="http://test.com/1",
-            end_time=now + timedelta(hours=24),
-        )
-        await repo.create(
-            code="GA2",
-            game_name="Game 2",
-            price=150,
-            url="http://test.com/2",
-            end_time=now + timedelta(hours=24),
-        )
-
-        await session.commit()
-
-        # Min 10, max 100
-        eligible = await repo.get_eligible(min_price=10, max_price=100)
-
-        assert len(eligible) == 1
-        assert eligible[0].code == "GA1"
-
-
-@pytest.mark.asyncio
-async def test_get_eligible_ordered_by_price_desc(test_db):
-    """Test eligible giveaways ordered by price descending."""
-    async with test_db() as session:
-        repo = GiveawayRepository(session)
-        now = utcnow()
-
-        await repo.create(
-            code="LOW",
-            game_name="Game 1",
-            price=30,
-            url="http://test.com/1",
-            end_time=now + timedelta(hours=24),
-        )
-        await repo.create(
-            code="HIGH",
-            game_name="Game 2",
-            price=100,
-            url="http://test.com/2",
-            end_time=now + timedelta(hours=24),
-        )
-
-        await session.commit()
-
-        eligible = await repo.get_eligible(min_price=10)
-
-        assert len(eligible) == 2
-        assert eligible[0].code == "HIGH"  # Highest price first
-        assert eligible[1].code == "LOW"
 
 
 @pytest.mark.asyncio
@@ -1000,101 +871,116 @@ async def test_get_daily_wins(test_db):
 
 
 # ---------------------------------------------------------------------------
-# get_eligible: genre exclusion
+# Auto-join pools
 # ---------------------------------------------------------------------------
 
-async def _seed_genre_pool(session):
-    from models.game import Game
-
-    future = utcnow() + timedelta(days=1)
-    session.add_all([
-        Game(id=1, name="Act", type="game", genres=["Action", "Indie"]),
-        Game(id=2, name="Upper", type="game", genres=["SPORTS"]),
-        Game(id=3, name="Empty", type="game", genres=[]),
-        Game(id=4, name="Null", type="game", genres=None),
-        Game(id=5, name="Puzzle", type="game", genres=["Puzzle"]),
-    ])
+async def _seed_pool(session, **flags):
+    """Rows covering every pool condition: price order, hidden, entered, expired."""
+    now = utcnow()
     repo = GiveawayRepository(session)
-    for code, game_id in [
-        ("act", 1), ("upper", 2), ("empty", 3), ("null", 4), ("puzzle", 5),
-        ("nogame", 999), ("nogameid", None),
-    ]:
+    rows = [
+        ("mid", 50, now + timedelta(hours=5), {}),
+        ("rich", 90, now + timedelta(hours=9), {}),
+        ("cheap", 10, now + timedelta(hours=1), {}),
+        ("hidden", 70, now + timedelta(hours=2), {"is_hidden": True}),
+        ("entered", 80, now + timedelta(hours=3), {"is_entered": True}),
+        ("expired", 99, now - timedelta(hours=1), {}),
+        ("noend", 95, None, {}),
+    ]
+    for code, price, end_time, extra in rows:
         await repo.create(
-            code=code, game_name=code, price=50, url=f"http://x/{code}",
-            end_time=future, game_id=game_id,
+            code=code, game_name=code, price=price, url=f"http://x/{code}", end_time=end_time,
+            **flags, **extra,
         )
     await session.commit()
     return repo
 
 
-def _capture_sql(session):
-    from sqlalchemy import event
+@pytest.mark.asyncio
+async def test_get_active_unentered_is_the_cycle_pool(test_db):
+    """Active (end_time set and in the future), not entered, hidden included, price descending."""
+    async with test_db() as session:
+        repo = await _seed_pool(session)
 
-    statements: list[str] = []
-    engine = session.bind.sync_engine
+        pool = await repo.get_active_unentered()
 
-    def listener(conn, cursor, statement, params, context, executemany):
-        statements.append(statement)
-
-    event.listen(engine, "before_cursor_execute", listener)
-    return statements, lambda: event.remove(engine, "before_cursor_execute", listener)
+        assert [g.code for g in pool] == ["rich", "hidden", "mid", "cheap"]
 
 
 @pytest.mark.asyncio
-async def test_get_eligible_excluded_genres_filters_matches(test_db):
-    """Matching rows are excluded case-insensitively; NULL/[]/missing-game rows pass."""
+async def test_get_active_unentered_breaks_price_ties_by_id(test_db):
+    """Equal prices come out in id order whatever the end times, so the entry
+    order is total (preview_policy sorts its pools by the same key).
+
+    SQLite's table scan happens to return ties in rowid order, so the query
+    itself must state the tie-break for the order to be guaranteed; the
+    emitted SQL is checked as well as the result.
+    """
     async with test_db() as session:
-        repo = await _seed_genre_pool(session)
+        repo = GiveawayRepository(session)
+        now = utcnow()
+        for code, hours in (("B_LATE", 48), ("A_SOON", 2), ("C_MID", 10)):
+            await repo.create(code=code, url=f"https://www.steamgifts.com/giveaway/{code}/", game_name=code,
+                              price=50, end_time=now + timedelta(hours=hours))
+        await session.commit()
 
-        eligible = await repo.get_eligible(min_price=10, excluded_genres=["action", "Sports"])
+        statements: list[str] = []
 
-        assert {g.code for g in eligible} == {"empty", "null", "puzzle", "nogame", "nogameid"}
+        def capture(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
 
-
-@pytest.mark.asyncio
-async def test_get_eligible_excluded_genres_mixed_case_list_lowered(test_db):
-    """The exclusion list is stripped and lowercased before comparing."""
-    async with test_db() as session:
-        repo = await _seed_genre_pool(session)
-
-        eligible = await repo.get_eligible(min_price=10, excluded_genres=["  INDIE ", ""])
-
-        assert "act" not in {g.code for g in eligible}
-        assert "upper" in {g.code for g in eligible}
-
-
-@pytest.mark.asyncio
-async def test_get_eligible_excluded_genres_join_only_for_genres(test_db):
-    """With no quality criteria the games join is added for the genre check
-    only, and rows without a game row are still returned."""
-    async with test_db() as session:
-        repo = await _seed_genre_pool(session)
-        statements, stop = _capture_sql(session)
+        sync_engine = session.bind.sync_engine
+        event.listen(sync_engine, "before_cursor_execute", capture)
         try:
-            eligible = await repo.get_eligible(min_price=10, excluded_genres=["Puzzle"])
+            pool = await repo.get_active_unentered()
         finally:
-            stop()
+            event.remove(sync_engine, "before_cursor_execute", capture)
 
-        [query] = [s for s in statements if "FROM giveaways" in s]
-        assert "LEFT OUTER JOIN games" in query
-        assert "json_each(games.genres)" in query
-        assert {"nogame", "nogameid"} <= {g.code for g in eligible}
-        assert "puzzle" not in {g.code for g in eligible}
+        assert [g.code for g in pool] == ["B_LATE", "A_SOON", "C_MID"]
+        assert any("ORDER BY giveaways.price DESC, giveaways.id ASC" in s for s in statements)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("excluded", [None, [], ["", "  "]])
-async def test_get_eligible_without_exclusions_unchanged(test_db, excluded):
-    """No (or only blank) exclusions: no join, no json_each, every row returned."""
+async def test_get_active_unentered_browse_variant(test_db):
     async with test_db() as session:
-        repo = await _seed_genre_pool(session)
-        statements, stop = _capture_sql(session)
-        try:
-            eligible = await repo.get_eligible(min_price=10, excluded_genres=excluded)
-        finally:
-            stop()
+        repo = await _seed_pool(session)
 
-        [query] = [s for s in statements if "FROM giveaways" in s]
-        assert "JOIN" not in query
-        assert "json_each" not in query
-        assert len(eligible) == 7
+        assert [g.code for g in await repo.get_active_unentered(exclude_hidden=True)] == ["rich", "mid", "cheap"]
+        assert [g.code for g in await repo.get_active_unentered(exclude_hidden=True, limit=1, offset=1)] == ["mid"]
+        assert [g.code for g in await repo.get_active_unentered(limit=2)] == ["rich", "hidden"]
+
+
+@pytest.mark.asyncio
+async def test_get_active_exclude_entered(test_db):
+    async with test_db() as session:
+        repo = await _seed_pool(session)
+
+        assert "entered" in {g.code for g in await repo.get_active()}
+        assert [g.code for g in await repo.get_active(exclude_entered=True)] == ["cheap", "mid", "rich"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", ["is_wishlist", "is_dlc"])
+async def test_get_flagged_exclude_entered(test_db, flag):
+    async with test_db() as session:
+        repo = await _seed_pool(session, **{flag: True})
+
+        assert "entered" in {g.code for g in await repo.get_flagged(flag)}
+        codes = [g.code for g in await repo.get_flagged(flag, exclude_entered=True)]
+        assert "entered" not in codes
+        assert set(codes) == {"noend", "cheap", "mid", "rich"}
+
+
+@pytest.mark.asyncio
+async def test_get_unchecked_active(test_db):
+    """Active, not hidden, not entered, never safety-checked; soonest first."""
+    async with test_db() as session:
+        repo = await _seed_pool(session)
+        checked = await repo.get_by_code("mid")
+        checked.is_safe = True
+        await session.commit()
+
+        unchecked = await repo.get_unchecked_active(limit=10)
+
+        assert [g.code for g in unchecked] == ["cheap", "rich"]
+        assert [g.code for g in await repo.get_unchecked_active()] == ["cheap"]

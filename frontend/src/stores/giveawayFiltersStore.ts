@@ -3,8 +3,9 @@ import { persist } from 'zustand/middleware';
 import type { GiveawayFilters } from '@/hooks/useGiveaways';
 
 // The status (active/wishlist/entered) comes from the route, not the store —
-// each status is its own page in the sidebar.
-type PersistedFilters = Omit<GiveawayFilters, 'page' | 'status'>;
+// each status is its own page in the sidebar. The auto-join lens is page
+// state that must be off after a reload, so it can never be stored either.
+type PersistedFilters = Omit<GiveawayFilters, 'page' | 'status' | 'lens'>;
 
 interface GiveawayFiltersState {
   filters: PersistedFilters;

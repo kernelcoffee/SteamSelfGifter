@@ -49,7 +49,6 @@ const mockSettings: Settings = {
   phpsessid: 'test-session-id',
   user_agent: 'test-user-agent',
   xsrf_token: 'test-token',
-  dlc_priority_enabled: true,
   safety_check_enabled: true,
   auto_hide_unsafe: true,
   autojoin_enabled: true,
@@ -59,10 +58,9 @@ const mockSettings: Settings = {
   autojoin_min_score: 70,
   autojoin_min_reviews: 100,
   autojoin_max_game_age: null,
-  wishlist_priority_enabled: true,
-  ending_soon_priority_enabled: false,
-  ending_soon_threshold_minutes: 60,
+  autojoin_priorities: [{ type: 'dlc' }, { type: 'ending_soon', threshold_minutes: 120 }, { type: 'wishlist' }],
   excluded_genres: [],
+  included_genres: ['RPG'],
   scan_interval_minutes: 30,
   max_entries_per_cycle: 10,
   automation_enabled: true,
@@ -120,7 +118,7 @@ describe('useSettings', () => {
 
   describe('useUpdateSettings hook', () => {
     it('should update settings successfully', async () => {
-      const updatedSettings = { ...mockSettings, dlc_priority_enabled: false };
+      const updatedSettings = { ...mockSettings, autojoin_priorities: [], autojoin_min_score: null };
 
       mockApi.put.mockResolvedValueOnce({
         success: true,
@@ -131,14 +129,17 @@ describe('useSettings', () => {
         wrapper: createWrapper(),
       });
 
-      result.current.mutate({ dlc_priority_enabled: false });
+      result.current.mutate({ autojoin_priorities: [], autojoin_min_score: null });
 
       await waitFor(() => {
         expect(result.current.isSuccess).toBe(true);
       });
 
       expect(result.current.data).toEqual(updatedSettings);
-      expect(mockApi.put).toHaveBeenCalledWith('/api/v1/settings', { dlc_priority_enabled: false });
+      expect(mockApi.put).toHaveBeenCalledWith('/api/v1/settings', {
+        autojoin_priorities: [],
+        autojoin_min_score: null,
+      });
     });
 
     it('should handle update error', async () => {
@@ -152,13 +153,43 @@ describe('useSettings', () => {
         wrapper: createWrapper(),
       });
 
-      result.current.mutate({ dlc_priority_enabled: false });
+      result.current.mutate({ autojoin_priorities: [] });
 
       await waitFor(() => {
         expect(result.current.isError).toBe(true);
       });
 
       expect(result.current.error?.message).toBe('Failed to update settings');
+    });
+  });
+
+  describe('useUpdateSettings invalidation', () => {
+    it('stores the saved settings and invalidates the giveaway lists (the lens reads the saved policy)', async () => {
+      // Keep unobserved queries so the test can read the cache afterwards.
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+      });
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      client.setQueryData(['giveaways', 'list', 'infinite', { status: 'active', lens: 'autojoin' }], {
+        pages: [],
+        pageParams: [],
+      });
+      client.setQueryData(['giveaways', 'detail', 1], { id: 1 });
+      mockApi.put.mockResolvedValueOnce({ success: true, data: mockSettings });
+
+      const { result } = renderHook(() => useUpdateSettings(), { wrapper });
+      result.current.mutate({ autojoin_min_score: 3 });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+      expect(client.getQueryData(['settings'])).toEqual(mockSettings);
+      const lensList = client
+        .getQueryCache()
+        .find({ queryKey: ['giveaways', 'list', 'infinite', { status: 'active', lens: 'autojoin' }] });
+      expect(lensList?.state.isInvalidated).toBe(true);
+      const detail = client.getQueryCache().find({ queryKey: ['giveaways', 'detail', 1] });
+      expect(detail?.state.isInvalidated).toBe(false);
     });
   });
 

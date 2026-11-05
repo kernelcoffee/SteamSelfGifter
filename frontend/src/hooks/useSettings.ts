@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/services/api';
 import type { Settings, ConfigValidation } from '@/types';
+import { giveawayKeys } from './useGiveaways';
 
 /**
  * Query key for settings
@@ -43,6 +44,8 @@ export function useUpdateSettings() {
     onSuccess: (newSettings) => {
       // Update the cached settings
       queryClient.setQueryData(settingsKeys.all, newSettings);
+      // Lens lists are evaluated live from the saved policy
+      queryClient.invalidateQueries({ queryKey: giveawayKeys.lists() });
     },
   });
 }

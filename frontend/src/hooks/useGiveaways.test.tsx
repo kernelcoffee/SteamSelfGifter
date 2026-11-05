@@ -3,11 +3,13 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactNode } from 'react';
 import {
+  useInfiniteGiveaways,
   useGiveaways,
   useGiveaway,
   useEnterGiveaway,
   useHideGiveaway,
   useUnhideGiveaway,
+  requestFilters,
 } from './useGiveaways';
 import { api } from '@/services/api';
 import type { Giveaway } from '@/types';
@@ -73,6 +75,11 @@ const mockGiveaway: Giveaway = {
   safety_score: 90,
   created_at: '2024-01-01T00:00:00Z',
   updated_at: '2024-01-01T00:00:00Z',
+  eligibility_reason: null,
+  eligibility_detail: null,
+  eligibility_checked_at: null,
+  eligibility_label: null,
+  eligibility_kind: null,
 };
 
 describe('useGiveaways', () => {
@@ -175,6 +182,52 @@ describe('useGiveaways', () => {
       expect(mockApi.get).toHaveBeenCalledWith('/api/v1/giveaways/wishlist?limit=20');
     });
 
+    it('should send lens=autojoin without the paused view filters when the lens is on', async () => {
+      mockApi.get.mockResolvedValueOnce({
+        success: true,
+        data: { giveaways: [], count: 0, lens: 'autojoin', budget_applied: false },
+      });
+
+      const { result } = renderHook(
+        () =>
+          useGiveaways({
+            status: 'wishlist',
+            minChance: 50,
+            minScore: 8,
+            safetyFilter: 'safe',
+            endingWithin: 30,
+            search: 'portal',
+            lens: 'autojoin',
+          }),
+        { wrapper: createWrapper() }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      // The lens answers 'what would my saved policy enter', so no view filter
+      // may narrow it behind the policy's back.
+      expect(mockApi.get).toHaveBeenCalledWith('/api/v1/giveaways/wishlist?lens=autojoin&limit=20');
+    });
+
+    it('should send no lens parameter when the lens is off', async () => {
+      mockApi.get.mockResolvedValueOnce({ success: true, data: { giveaways: [], count: 0 } });
+
+      const { result } = renderHook(
+        () => useGiveaways({ status: 'active', lens: undefined }),
+        { wrapper: createWrapper() }
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      const url = String(mockApi.get.mock.calls[0][0]);
+      expect(url).toBe('/api/v1/giveaways/active?limit=20');
+      expect(url).not.toContain('lens');
+    });
+
     it('should handle fetch error', async () => {
       mockApi.get.mockResolvedValueOnce({
         success: false,
@@ -191,6 +244,98 @@ describe('useGiveaways', () => {
       });
 
       expect(result.current.error?.message).toBe('Failed to fetch giveaways');
+    });
+  });
+
+  describe('requestFilters', () => {
+    it('keeps every filter when the lens is off', () => {
+      const filters = { status: 'active' as const, minScore: 8, endingWithin: 30, search: 'x', limit: 20 };
+      expect(requestFilters(filters)).toEqual(filters);
+    });
+
+    it('keeps only the tab, the page size and the lens when the lens is on', () => {
+      expect(
+        requestFilters({
+          status: 'dlc',
+          limit: 40,
+          minScore: 8,
+          safetyFilter: 'unsafe',
+          minChance: 5,
+          endingWithin: 60,
+          search: 'x',
+          sort: 'price',
+          order: 'asc',
+          type: 'game',
+          lens: 'autojoin',
+        })
+      ).toEqual({ status: 'dlc', limit: 40, lens: 'autojoin' });
+    });
+  });
+
+  describe('useInfiniteGiveaways hook', () => {
+    it('drops the view filters from the lens request and its query key', async () => {
+      mockApi.get.mockResolvedValue({
+        success: true,
+        data: { giveaways: [], count: 0, lens: 'autojoin', budget_applied: false },
+      });
+
+      const { result, rerender } = renderHook(
+        ({ minScore }: { minScore: number }) =>
+          useInfiniteGiveaways({ status: 'active', limit: 20, minScore, endingWithin: 30, lens: 'autojoin' }),
+        { wrapper: createWrapper(), initialProps: { minScore: 8 } }
+      );
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockApi.get).toHaveBeenLastCalledWith('/api/v1/giveaways/active?lens=autojoin&limit=20');
+
+      // A different stored view filter is the same lens query: no new request.
+      rerender({ minScore: 3 });
+      expect(result.current.isSuccess).toBe(true);
+      expect(mockApi.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('keys the lens into the query and pages the candidates by offset with their total', async () => {
+      const candidate = {
+        ...mockGiveaway,
+        decision: {
+          code: 'eligible',
+          label: 'Joinable',
+          detail: { priority: 'wishlist' as const, rank: 0, lifted_by: 'wishlist' as const },
+          priority: 'wishlist' as const,
+          rank: 0,
+          lifted_by: 'wishlist' as const,
+        },
+      };
+      mockApi.get
+        .mockResolvedValueOnce({
+          success: true,
+          data: { giveaways: [candidate, { ...candidate, id: 2 }], count: 3, lens: 'autojoin', budget_applied: false },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          data: { giveaways: [{ ...candidate, id: 3 }], count: 3, lens: 'autojoin', budget_applied: false },
+        })
+        .mockResolvedValueOnce({ success: true, data: { giveaways: [mockGiveaway], count: 1 } });
+
+      const { result, rerender } = renderHook(
+        ({ lens }: { lens?: 'autojoin' }) => useInfiniteGiveaways({ status: 'active', limit: 2, lens }),
+        { wrapper: createWrapper(), initialProps: { lens: 'autojoin' } }
+      );
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(mockApi.get).toHaveBeenLastCalledWith('/api/v1/giveaways/active?lens=autojoin&limit=2');
+      expect(result.current.data?.pages[0].count).toBe(3);
+      expect(result.current.data?.pages[0].giveaways[0].decision?.label).toBe('Joinable');
+      expect(result.current.hasNextPage).toBe(true);
+
+      await result.current.fetchNextPage();
+      await waitFor(() => expect(result.current.data?.pages).toHaveLength(2));
+      expect(mockApi.get).toHaveBeenLastCalledWith('/api/v1/giveaways/active?lens=autojoin&limit=2&offset=2');
+      expect(result.current.hasNextPage).toBe(false);
+
+      // Turning the lens off is a different query (key includes the lens).
+      rerender({ lens: undefined });
+      await waitFor(() => expect(mockApi.get).toHaveBeenCalledTimes(3));
+      expect(mockApi.get).toHaveBeenLastCalledWith('/api/v1/giveaways/active?limit=2');
     });
   });
 

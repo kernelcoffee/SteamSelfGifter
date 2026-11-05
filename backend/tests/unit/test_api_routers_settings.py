@@ -26,16 +26,19 @@ def create_mock_settings():
     settings.phpsessid = "test_session"
     settings.user_agent = "Mozilla/5.0"
     settings.xsrf_token = None
-    settings.dlc_priority_enabled = False
     settings.autojoin_enabled = True
     settings.autojoin_start_at = 350
     settings.autojoin_stop_at = 200
     settings.autojoin_min_price = 10
     settings.autojoin_min_score = 7
     settings.autojoin_min_reviews = 1000
-    settings.wishlist_priority_enabled = True
-    settings.ending_soon_priority_enabled = True
-    settings.ending_soon_threshold_minutes = 120
+    settings.autojoin_max_game_age = None
+    settings.excluded_genres = ["Sports"]
+    settings.included_genres = ["RPG"]
+    settings.autojoin_priorities = [{"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 120}]
+    settings.safety_check_enabled = True
+    settings.auto_hide_unsafe = False
+    settings.log_retention_days = 30
     settings.scan_interval_minutes = 30
     settings.max_entries_per_cycle = 10
     settings.automation_enabled = True
@@ -53,7 +56,7 @@ async def test_get_settings():
     """Test GET /settings endpoint."""
     mock_service = AsyncMock()
     mock_settings = create_mock_settings()
-    mock_service.get_settings.return_value = mock_settings
+    mock_service.get_valid_settings.return_value = mock_settings
 
     result = await get_settings(mock_service)
 
@@ -61,9 +64,12 @@ async def test_get_settings():
     assert "data" in result
     assert result["data"]["id"] == 1
     assert result["data"]["phpsessid"] == "test_session"
-    assert result["data"]["ending_soon_priority_enabled"] is True
-    assert result["data"]["ending_soon_threshold_minutes"] == 120
-    mock_service.get_settings.assert_called_once()
+    assert result["data"]["autojoin_priorities"] == [
+        {"type": "dlc"}, {"type": "ending_soon", "threshold_minutes": 120},
+    ]
+    assert result["data"]["included_genres"] == ["RPG"]
+    assert "ending_soon_threshold_minutes" not in result["data"]
+    mock_service.get_valid_settings.assert_called_once()
 
 
 @pytest.mark.asyncio

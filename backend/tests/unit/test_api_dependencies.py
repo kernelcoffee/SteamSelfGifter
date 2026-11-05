@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import (
     get_database,
+    get_giveaway_read_service,
     get_notification_service,
     get_settings_service,
 )
@@ -143,3 +144,43 @@ async def test_service_initialization():
         await gen.__anext__()
     except StopAsyncIteration:
         pass
+
+
+@pytest.mark.asyncio
+async def test_get_giveaway_read_service_closes_its_steam_client():
+    """The read-only service's Steam client is open during the request and
+    closed when the dependency is torn down (no httpx client leaked per
+    preview, eligible or lens request)."""
+    db_gen = get_database()
+    db = await db_gen.__anext__()
+
+    gen = get_giveaway_read_service(db)
+    service = await gen.__anext__()
+    steam_client = service.game_service.steam_client
+    assert steam_client._client is not None
+    assert steam_client._client.is_closed is False
+
+    http_client = steam_client._client
+    with pytest.raises(StopAsyncIteration):
+        await gen.__anext__()
+
+    assert http_client.is_closed is True
+    assert steam_client._client is None
+    await db_gen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_giveaway_read_service_closes_its_steam_client_on_error():
+    """An error raised in the endpoint still closes the client."""
+    db_gen = get_database()
+    db = await db_gen.__anext__()
+
+    gen = get_giveaway_read_service(db)
+    service = await gen.__anext__()
+    http_client = service.game_service.steam_client._client
+
+    with pytest.raises(RuntimeError, match="endpoint failed"):
+        await gen.athrow(RuntimeError("endpoint failed"))
+
+    assert http_client.is_closed is True
+    await db_gen.aclose()

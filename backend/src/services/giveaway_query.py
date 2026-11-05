@@ -1,26 +1,87 @@
-"""Read-side methods of GiveawayService: listings, search, stats, autojoin
-eligibility selection, and API-response enrichment."""
+"""Read-side methods of GiveawayService: listings, search, stats, the
+auto-join decision cycle and previews, and API-response enrichment."""
 
 from collections import Counter
-from collections.abc import Iterable
+from dataclasses import dataclass
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import ConfigurationError
 from core.time import utcnow
 from models.entry import Entry
+from models.game import Game
 from models.giveaway import Giveaway
+from models.settings import Settings
 from repositories.entry import EntryRepository
 from repositories.giveaway import GiveawayRepository
 from services.eligibility import (
-    ELIGIBLE,
-    EligibilityCriteria,
-    evaluate_eligibility,
-    priority_sort_key,
+    AutoJoinPolicy,
+    Decision,
+    Detail,
+    InvalidPolicyError,
+    PolicyFields,
+    count_codes,
+    decide,
+    order_candidates,
+    plan_cycle,
+    policy_from_settings,
 )
 from services.game_service import GameService
+from services.settings_service import INVALID_STORED_POLICY_CODE
 
 logger = structlog.get_logger()
+
+
+@dataclass(frozen=True)
+class CycleCandidate:
+    """An enter candidate of the cycle and the code the plan recorded for it."""
+
+    giveaway: Giveaway
+    decision: Decision
+    planned: str
+
+
+@dataclass
+class CycleResult:
+    """What one automation cycle's decision step produced.
+
+    ``candidates``: every enter candidate in entry order, before the budget
+    and the cap (the entry loop applies both with the balance actually
+    spent), each with the code the plan recorded. ``counts``: stored decision
+    codes over the pool. ``total``: pool size.
+    """
+
+    candidates: list[CycleCandidate]
+    counts: dict[str, int]
+    total: int
+
+    def counts_after(self, outcomes: list[tuple[Giveaway, str, Detail]]) -> dict[str, int]:
+        """The pool's counts once the entry loop's outcomes replace the plan's.
+
+        Args:
+            outcomes: one (giveaway, code, detail) per candidate, in candidate order.
+        """
+        counts = Counter(self.counts)
+        for candidate, (_, code, _) in zip(self.candidates, outcomes, strict=True):
+            counts[candidate.planned] -= 1
+            counts[code] += 1
+        return {code: n for code, n in counts.items() if n > 0}
+
+
+@dataclass
+class PolicyPreview:
+    """A dry run of a policy over a pool; nothing is persisted.
+
+    ``candidates``: enter candidates in entry order, sliced by offset/limit.
+    ``count``: every enter candidate before slicing. ``pool``: giveaways
+    evaluated. ``counts``: live decision codes over the pool (sum = pool).
+    """
+
+    candidates: list[tuple[Giveaway, Decision]]
+    count: int
+    pool: int
+    counts: dict[str, int]
 
 
 class GiveawayQueryMixin:
@@ -59,119 +120,169 @@ class GiveawayQueryMixin:
         """
         return await self.giveaway_repo.count_won()
 
-    async def get_eligible_giveaways(
-        self,
-        min_price: int = 0,
-        max_price: int | None = None,
-        min_score: int | None = None,
-        min_reviews: int | None = None,
-        max_game_age: int | None = None,
-        limit: int = 50,
-        wishlist_priority: bool = True,
-        dlc_priority: bool = False,
-        excluded_genres: Iterable[str] | None = None,
-    ) -> list[Giveaway]:
-        """
-        Get eligible giveaways based on criteria.
+    async def _decide_pool(
+        self, pool: list[Giveaway], policy: AutoJoinPolicy
+    ) -> tuple[list[tuple[Giveaway, Decision]], list[tuple[Giveaway, Decision]], dict[int, Game]]:
+        """Decide every giveaway of a price-descending pool (cache-only games).
 
-        Filters active giveaways that:
-        - Haven't been entered yet
-        - Aren't hidden
-        - Meet price criteria
-        - Meet game rating criteria (if specified)
-        - Meet game age criteria (if specified)
-        - Don't carry an excluded genre (if specified; unknown genres pass)
-
-        Args:
-            min_price: Minimum giveaway price
-            max_price: Maximum giveaway price
-            min_score: Minimum game review score (0-10)
-            min_reviews: Minimum number of reviews
-            max_game_age: Maximum game age in years (None = no limit)
-            limit: Maximum results to return
-            excluded_genres: Genre names to skip (case-insensitive)
-
-        Returns:
-            List of eligible giveaways
-
-        Example:
-            >>> eligible = await service.get_eligible_giveaways(
-            ...     min_price=50,
-            ...     max_price=200,
-            ...     min_score=8,
-            ...     max_game_age=5,
-            ...     limit=10
-            ... )
-        """
-        giveaways = await self.giveaway_repo.get_eligible(
-            min_price=min_price,
-            max_price=max_price,
-            min_score=min_score,
-            min_reviews=min_reviews,
-            max_game_age=max_game_age,
-            limit=limit,
-            wishlist_priority=wishlist_priority,
-            dlc_priority=dlc_priority,
-            excluded_genres=excluded_genres,
-        )
-
-        return giveaways
-
-    async def evaluate_and_get_eligible(
-        self, criteria: EligibilityCriteria, limit: int | None = None
-    ) -> list[Giveaway]:
-        """
-        Evaluate every active candidate, record why each one did or didn't qualify,
-        and return the eligible giveaways in priority order (optionally limited).
-
-        This is the decision step for the automation/process cycle. Every active,
-        not-entered giveaway gets ``eligibility_reason`` and ``eligibility_checked_at``
-        persisted, so the UI can show why a giveaway wasn't entered. The returned
-        set is identical to :meth:`get_eligible_giveaways` for the same criteria —
-        only the recorded reasons are new (see :mod:`services.eligibility`).
-
-        Args:
-            criteria: the active autojoin thresholds.
-            limit: maximum number of eligible giveaways to return (None = all).
-
-        Returns:
-            Eligible giveaways: wishlist first, then DLC, then ending soon
-            (soonest first) when enabled, then the rest by price descending.
+        Returns every (giveaway, decision) in pool order, the enter
+        candidates in entry order and the cached games the pool references
+        (one query, reused by the preview's enrichment). Writes nothing.
         """
         now = utcnow()
-        candidates = await self.giveaway_repo.get_active_unentered()
+        games = await self.game_service.repo.get_by_ids([g.game_id for g in pool if g.game_id])
+        decided = [
+            (giveaway, decide(giveaway, games.get(giveaway.game_id) if giveaway.game_id else None, policy, now))
+            for giveaway in pool
+        ]
+        return decided, order_candidates(decided, policy, now), games
 
-        games = await self.game_service.repo.get_by_ids(
-            [g.game_id for g in candidates if g.game_id]
-        )
+    async def decide_cycle(self, policy: AutoJoinPolicy, points: int | None) -> CycleResult:
+        """
+        Decide the whole candidate pool for one automation cycle and record it.
 
-        eligible: list[Giveaway] = []
-        for giveaway in candidates:
-            game = games.get(giveaway.game_id) if giveaway.game_id else None
-            reason = evaluate_eligibility(giveaway, game, criteria, now)
-            giveaway.eligibility_reason = reason
+        Every active, not-entered giveaway (hidden included) gets
+        ``eligibility_reason``, ``eligibility_detail`` and
+        ``eligibility_checked_at`` in one commit, including the budget
+        outcomes of :func:`services.eligibility.plan_cycle`, so stored
+        decisions never go stale on quiet cycles. Sends nothing to SteamGifts.
+
+        Args:
+            policy: the saved auto-join policy.
+            points: the current balance, or None when it could not be fetched
+                (the budget is then not applied and nothing is planned).
+
+        Returns:
+            The enter candidates in entry order with their planned codes, the
+            per-code counts and the pool size.
+        """
+        pool = await self.giveaway_repo.get_active_unentered()
+        decided, ordered, _games = await self._decide_pool(pool, policy)
+        plan = plan_cycle(ordered, points, policy)
+        planned = {giveaway.id: (code, detail) for giveaway, code, detail in plan}
+
+        now = utcnow()
+        for giveaway, decision in decided:
+            code, detail = planned.get(giveaway.id, (decision.code, decision.detail))
+            giveaway.eligibility_reason = code
+            giveaway.eligibility_detail = detail
             giveaway.eligibility_checked_at = now
-            if reason == ELIGIBLE:
-                eligible.append(giveaway)
-
         await self.session.commit()
 
         # Developer observability (not the user-facing ActivityLog): a one-line
-        # breakdown of why the candidate pool did/didn't qualify this cycle.
-        counts = Counter(g.eligibility_reason or "unknown" for g in candidates)
-        logger.info("eligibility_evaluated", total=len(candidates), **dict(counts))
+        # breakdown of the pool's decisions this cycle (codes only).
+        counts = count_codes(giveaway.eligibility_reason or "unknown" for giveaway, _ in decided)
+        logger.info("eligibility_evaluated", total=len(pool), **counts)
 
-        # candidates are ordered by price desc; the stable sort moves wishlist,
-        # then DLC, then (when enabled) ending-soon giveaways to the front.
-        # Ending-soon ones are ordered soonest first; every other group keeps
-        # the pool's price order. See services.eligibility.priority_sort_key.
-        eligible.sort(key=lambda g: priority_sort_key(g, criteria, now))
-        return eligible[:limit] if limit else eligible
+        candidates = [
+            CycleCandidate(giveaway=giveaway, decision=decision, planned=code)
+            for (giveaway, decision), (_, code, _) in zip(ordered, plan, strict=True)
+        ]
+        return CycleResult(candidates=candidates, counts=counts, total=len(pool))
+
+    async def record_outcomes(self, outcomes: list[tuple[Giveaway, str, Detail]]) -> None:
+        """
+        Record what the entry loop actually did, in one commit.
+
+        The plan assumes every attempt succeeds; the loop follows the balance
+        actually spent, so its outcomes (eligible for an attempt,
+        budget_floor, cycle_cap) replace the plan's.
+
+        Args:
+            outcomes: (giveaway, code, detail) triples.
+        """
+        if not outcomes:
+            return
+        now = utcnow()
+        for giveaway, code, detail in outcomes:
+            giveaway.eligibility_reason = code
+            giveaway.eligibility_detail = detail
+            giveaway.eligibility_checked_at = now
+        await self.session.commit()
+
+    def saved_policy(self, settings: Settings, override: PolicyFields | None = None) -> AutoJoinPolicy:
+        """
+        Build the auto-join policy for a preview or the lens.
+
+        Args:
+            settings: the saved settings row (budget fields, and the seven
+                policy fields unless ``override`` is given).
+            override: an unsaved policy (POST /giveaways/preview); the stored
+                priority list is then not parsed.
+
+        Raises:
+            ConfigurationError: when the priority list or a genre list in use
+                cannot be parsed (CONFIG_002, naming the column).
+        """
+        try:
+            return policy_from_settings(settings, override)
+        except InvalidPolicyError as e:
+            raise ConfigurationError(str(e), code=INVALID_STORED_POLICY_CODE) from e
+
+    async def preview_policy(
+        self,
+        policy: AutoJoinPolicy,
+        *,
+        limit: int,
+        offset: int = 0,
+        pool: list[Giveaway] | None = None,
+    ) -> PolicyPreview:
+        """
+        Dry-run a policy: the enter candidates in entry order, persisting nothing.
+
+        No points fetch and no budget (the budget and the per-cycle cap apply
+        at cycle time), no SteamGifts or Steam request, and no column
+        attribute written on any row (the request session commits when it
+        ends). The returned candidates carry the transient game fields from
+        the cache the decisions already read (null when the game is not
+        cached), so no second games query is needed.
+
+        Args:
+            policy: the policy to evaluate.
+            limit: maximum candidates returned.
+            offset: candidates skipped (lens pagination).
+            pool: the giveaways to evaluate; None = the cycle's pool (active,
+                not entered, hidden included). Re-sorted price descending then
+                id ascending, the cycle pool's order, so equal-price
+                candidates come out in the order the cycle enters them.
+
+        Returns:
+            The sliced candidates, their total, the pool size and the counts.
+        """
+        rows = await self.giveaway_repo.get_active_unentered() if pool is None else pool
+        rows = sorted(rows, key=lambda giveaway: (-giveaway.price, giveaway.id))
+        decided, ordered, games = await self._decide_pool(rows, policy)
+        candidates = ordered[offset:offset + limit]
+        for giveaway, _ in candidates:
+            game = games.get(giveaway.game_id) if giveaway.game_id else None
+            if game is not None:
+                self._apply_game(giveaway, game)
+        return PolicyPreview(
+            candidates=candidates,
+            count=len(ordered),
+            pool=len(rows),
+            counts=count_codes(decision.code for _, decision in decided),
+        )
+
+    async def get_unentered_giveaways(self, limit: int = 50, offset: int = 0) -> list[Giveaway]:
+        """
+        Browse active giveaways not entered and not hidden; no policy applied.
+
+        Args:
+            limit: Maximum number to return
+            offset: Number of records to skip
+
+        Returns:
+            Active, not entered, not hidden giveaways, most expensive first
+        """
+        return await self.giveaway_repo.get_active_unentered(
+            exclude_hidden=True, limit=limit, offset=offset
+        )
 
     async def get_active_giveaways(
         self, limit: int | None = None, offset: int = 0, min_score: int | None = None,
         is_safe: bool | None = None, min_chance: float | None = None,
-        ending_within_minutes: int | None = None,
+        ending_within_minutes: int | None = None, exclude_entered: bool = False,
     ) -> list[Giveaway]:
         """
         Get all active (non-expired) giveaways.
@@ -183,6 +294,7 @@ class GiveawayQueryMixin:
             is_safe: Filter by safety status (True=safe only, False=unsafe only, None=all)
             min_chance: Minimum win chance in percent (copies/entries*100)
             ending_within_minutes: Only giveaways ending within this many minutes
+            exclude_entered: Leave entered giveaways out (the auto-join lens pool)
 
         Returns:
             List of active giveaways
@@ -193,6 +305,7 @@ class GiveawayQueryMixin:
         return await self.giveaway_repo.get_active(
             limit=limit, offset=offset, min_score=min_score, is_safe=is_safe,
             min_chance=min_chance, ending_within_minutes=ending_within_minutes,
+            exclude_entered=exclude_entered,
         )
 
     async def get_all_giveaways(
@@ -285,24 +398,28 @@ class GiveawayQueryMixin:
                 # Game fetch failed, skip enrichment for this giveaway
                 continue
 
-            # Set thumbnail URL (from stored header_image or fallback to CDN URL)
-            giveaway.game_thumbnail = (
-                game.header_image or
-                f"https://cdn.cloudflare.steamstatic.com/steam/apps/{game.id}/header.jpg"
-            )
-            giveaway.game_genres = game.genres
-
-            # Set review data
-            giveaway.game_review_score = game.review_score
-            giveaway.game_total_reviews = game.total_reviews
-
-            # Generate review summary based on score and review count
-            if game.review_score is not None and game.total_reviews is not None:
-                giveaway.game_review_summary = self._generate_review_summary(
-                    game.review_score, game.total_reviews
-                )
+            self._apply_game(giveaway, game)
 
         return giveaways
+
+    def _apply_game(self, giveaway: Giveaway, game: Game) -> None:
+        """Set the transient (never persisted) game fields on a giveaway."""
+        # Thumbnail URL (stored header_image or the CDN fallback)
+        giveaway.game_thumbnail = (
+            game.header_image or
+            f"https://cdn.cloudflare.steamstatic.com/steam/apps/{game.id}/header.jpg"
+        )
+        giveaway.game_genres = game.genres
+
+        # Review data
+        giveaway.game_review_score = game.review_score
+        giveaway.game_total_reviews = game.total_reviews
+
+        # Review summary based on score and review count
+        if game.review_score is not None and game.total_reviews is not None:
+            giveaway.game_review_summary = self._generate_review_summary(
+                game.review_score, game.total_reviews
+            )
 
     def _generate_review_summary(
         self, review_score: int, total_reviews: int

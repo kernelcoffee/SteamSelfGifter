@@ -4,10 +4,15 @@ from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core.exceptions import ConfigurationError
 from core.time import utcnow
 from models.base import Base
+from models.game import Game
+from models.giveaway import Giveaway
+from services.eligibility import AutoJoinPolicy, PolicyFields, PriorityItem
 from services.game_service import GameService
 from services.giveaway_service import GiveawayService
 from utils.steamgifts_client import (
@@ -447,42 +452,6 @@ async def test_enter_giveaway_api_error(test_db, mock_sg_client, mock_game_servi
         entries = await service.entry_repo.get_by_status("failed")
         assert len(entries) == 1
         assert "Network error" in entries[0].error_message
-
-
-@pytest.mark.asyncio
-async def test_get_eligible_giveaways(test_db, mock_sg_client, mock_game_service):
-    """Test getting eligible giveaways."""
-    async with test_db() as session:
-        service = GiveawayService(session, mock_sg_client, mock_game_service)
-
-        # Create test giveaways
-        future_time = utcnow() + timedelta(hours=24)
-
-        # Eligible
-        await service.giveaway_repo.create(
-            code="GA1", url="https://www.steamgifts.com/giveaway/GA1/", game_name="Game 1", price=50, end_time=future_time
-        )
-        # Eligible
-        await service.giveaway_repo.create(
-            code="GA2", url="https://www.steamgifts.com/giveaway/GA2/", game_name="Game 2", price=100, end_time=future_time
-        )
-        # Too cheap
-        await service.giveaway_repo.create(
-            code="GA3", url="https://www.steamgifts.com/giveaway/GA3/", game_name="Game 3", price=10, end_time=future_time
-        )
-        # Already entered
-        ga4 = await service.giveaway_repo.create(
-            code="GA4", url="https://www.steamgifts.com/giveaway/GA4/", game_name="Game 4", price=75, end_time=future_time
-        )
-        ga4.is_entered = True
-
-        await session.commit()
-
-        eligible = await service.get_eligible_giveaways(min_price=50, limit=10)
-
-        assert len(eligible) == 2
-        assert all(ga.price >= 50 for ga in eligible)
-        assert all(ga.is_entered is False for ga in eligible)
 
 
 @pytest.mark.asyncio
@@ -1229,3 +1198,431 @@ async def test_enrich_sets_game_genres_from_cached_game(test_db, mock_sg_client,
         "G4": None,  # game not cached / not on Steam
         "G5": None,  # no game_id
     }
+
+
+# ==================== Auto-join decision cycle and previews ====================
+
+ELIGIBILITY_FIELDS = ("eligibility_reason", "eligibility_detail", "eligibility_checked_at")
+
+
+def _engine_service(session, sg_client=None):
+    """A service with a real GameService (cache reads only) and no network."""
+    steam_client = MagicMock()
+    game_service = GameService(session=session, steam_client=steam_client)
+    game_service.lookup_game = AsyncMock(side_effect=AssertionError("no Steam lookup allowed"))
+    game_service.get_or_fetch_game = AsyncMock(side_effect=AssertionError("no Steam fetch allowed"))
+    return GiveawayService(session, sg_client or MagicMock(spec=SteamGiftsClient), game_service)
+
+
+async def _seed_engine_pool(session):
+    """Prices descending: rich 90 (score 6), wish 80 (wishlist, score 6),
+    good 60, cheap 5, hidden 70, entered 75, expired 99 with an old reason,
+    uncached 40 (game not cached)."""
+    now = utcnow()
+    future = now + timedelta(days=1)
+    session.add_all([
+        Game(id=1, name="Good", type="game", review_score=9, total_reviews=5000,
+             release_date="2024-01-01", genres=["RPG"], last_refreshed_at=now),
+        Game(id=2, name="Meh", type="game", review_score=6, total_reviews=5000,
+             release_date="2024-01-01", genres=["Action"], last_refreshed_at=now),
+    ])
+
+    def gw(code, price, game_id, end=future, **kw):
+        return Giveaway(code=code, url=f"https://www.steamgifts.com/giveaway/{code}/", game_name=code,
+                        price=price, game_id=game_id, end_time=end, **kw)
+
+    session.add_all([
+        gw("rich", 90, 2),
+        gw("wish", 80, 2, is_wishlist=True),
+        gw("hidden", 70, 1, is_hidden=True),
+        gw("entered", 75, 1, is_entered=True),
+        gw("good", 60, 1),
+        gw("uncached", 40, 777),
+        gw("cheap", 5, 1),
+        gw("expired", 99, 1, end=now - timedelta(hours=1), eligibility_reason="score_below_min",
+           eligibility_detail={"score": 1, "min_score": 7}, eligibility_checked_at=now - timedelta(days=3)),
+    ])
+    await session.commit()
+
+
+def _engine_policy(**kw):
+    base = dict(min_price=10, min_score=7, min_reviews=None, priorities=(PriorityItem("wishlist"),))
+    base.update(kw)
+    return AutoJoinPolicy(**base)
+
+
+async def _stored(session, code):
+    row = (await session.execute(select(Giveaway).where(Giveaway.code == code))).scalar_one()
+    await session.refresh(row)
+    return tuple(getattr(row, f) for f in ELIGIBILITY_FIELDS)
+
+
+@pytest.mark.asyncio
+async def test_decide_cycle_records_every_pool_row_in_one_commit(test_db):
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+        commits = []
+        real_commit = session.commit
+
+        async def counting_commit():
+            commits.append(1)
+            await real_commit()
+
+        session.commit = counting_commit
+        result = await service.decide_cycle(_engine_policy(stop_at=0, max_entries_per_cycle=10), 1000)
+
+        assert len(commits) == 1
+        assert [(c.giveaway.code, c.planned) for c in result.candidates] == [
+            ("wish", "eligible"), ("good", "eligible")]
+        assert result.candidates[0].decision.lifted_by == "wishlist"
+        assert result.total == 6
+        assert result.counts == {"score_below_min": 1, "eligible": 2, "hidden": 1, "no_game_data": 1,
+                                 "price_below_min": 1}
+        rows = {g.code: g for g in (await session.execute(select(Giveaway))).scalars()}
+        assert (rows["rich"].eligibility_reason, rows["rich"].eligibility_detail) == (
+            "score_below_min", {"score": 6, "min_score": 7})
+        assert (rows["wish"].eligibility_reason, rows["wish"].eligibility_detail) == (
+            "eligible", {"priority": "wishlist", "rank": 0, "lifted_by": "wishlist"})
+        assert rows["hidden"].eligibility_reason == "hidden"
+        assert rows["uncached"].eligibility_reason == "no_game_data"
+        assert rows["cheap"].eligibility_detail == {"price": 5, "min_price": 10}
+        checked = {rows[c].eligibility_checked_at for c in ("rich", "wish", "hidden", "good", "uncached", "cheap")}
+        assert len(checked) == 1 and None not in checked
+        # Outside the pool: untouched
+        assert rows["entered"].eligibility_reason is None
+        assert rows["expired"].eligibility_reason == "score_below_min"
+        assert rows["expired"].eligibility_detail == {"score": 1, "min_score": 7}
+
+
+@pytest.mark.asyncio
+async def test_decide_cycle_records_budget_outcomes(test_db):
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+
+        result = await service.decide_cycle(_engine_policy(start_at=0, stop_at=0, max_entries_per_cycle=1), 1000)
+
+        # Every enter candidate is returned (the loop applies the budget with
+        # the balance actually spent); the plan's expectation is recorded.
+        assert [(c.giveaway.code, c.planned) for c in result.candidates] == [
+            ("wish", "eligible"), ("good", "cycle_cap")]
+        good = (await session.execute(select(Giveaway).where(Giveaway.code == "good"))).scalar_one()
+        assert (good.eligibility_reason, good.eligibility_detail) == ("cycle_cap", {"cap": 1})
+        assert result.counts["cycle_cap"] == 1
+
+
+@pytest.mark.asyncio
+async def test_decide_cycle_below_start_threshold_records_and_plans_nothing(test_db):
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+
+        result = await service.decide_cycle(_engine_policy(start_at=350, stop_at=200), 300)
+
+        assert [c.planned for c in result.candidates] == ["points_accumulating", "points_accumulating"]
+        wish = (await session.execute(select(Giveaway).where(Giveaway.code == "wish"))).scalar_one()
+        assert (wish.eligibility_reason, wish.eligibility_detail) == (
+            "points_accumulating", {"points": 300, "start_at": 350})
+        assert result.counts["points_accumulating"] == 2
+        assert result.counts["score_below_min"] == 1
+
+
+@pytest.mark.asyncio
+async def test_decide_cycle_with_unknown_points_keeps_eligible_and_plans_nothing(test_db):
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+
+        result = await service.decide_cycle(_engine_policy(), None)
+
+        assert [c.planned for c in result.candidates] == ["eligible", "eligible"]
+        assert result.counts["eligible"] == 2
+        good = (await session.execute(select(Giveaway).where(Giveaway.code == "good"))).scalar_one()
+        assert good.eligibility_reason == "eligible"
+
+
+@pytest.mark.asyncio
+async def test_record_outcomes_writes_in_one_commit(test_db):
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+        good = await service.giveaway_repo.get_by_code("good")
+
+        await service.record_outcomes([(good, "budget_floor", {"price": 60, "points": 250, "stop_at": 200})])
+        await service.record_outcomes([])
+
+        assert (await _stored(session, "good"))[:2] == (
+            "budget_floor", {"price": 60, "points": 250, "stop_at": 200})
+        assert (await _stored(session, "good"))[2] is not None
+
+
+@pytest.mark.asyncio
+async def test_preview_policy_persists_nothing(test_db):
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+        before = {code: await _stored(session, code) for code in ("rich", "wish", "good", "expired")}
+
+        preview = await service.preview_policy(_engine_policy(), limit=20)
+        codes = [g.code for g, _ in preview.candidates]
+        await session.commit()
+        session.expire_all()
+
+        assert codes == ["wish", "good"]
+        assert {code: await _stored(session, code) for code in before} == before
+        assert before["wish"] == (None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_preview_policy_counts_the_whole_pool(test_db):
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+
+        preview = await service.preview_policy(_engine_policy(min_score=3), limit=1)
+
+        assert [g.code for g, _ in preview.candidates] == ["wish"]
+        assert preview.count == 3  # wish, rich, good
+        assert preview.pool == 6
+        assert preview.counts == {"eligible": 3, "hidden": 1, "no_game_data": 1, "price_below_min": 1}
+        assert sum(preview.counts.values()) == preview.pool
+        offset = await service.preview_policy(_engine_policy(min_score=3), limit=1, offset=2)
+        assert [g.code for g, _ in offset.candidates] == ["good"]
+
+
+@pytest.mark.asyncio
+async def test_preview_policy_resorts_a_given_pool_by_price(test_db):
+    """The lens hands over an end_time-ordered pool; the rest group must still
+    come out price descending, as in the cycle."""
+    async with test_db() as session:
+        now = utcnow()
+        for code, price, minutes in (("soon_cheap", 10, 5), ("mid", 50, 30), ("late_rich", 90, 600)):
+            session.add(Giveaway(code=code, url=f"https://x/{code}", game_name=code, price=price,
+                                 end_time=now + timedelta(minutes=minutes)))
+        await session.commit()
+        service = _engine_service(session)
+        pool = await service.giveaway_repo.get_active()  # end_time ascending
+
+        preview = await service.preview_policy(AutoJoinPolicy(), limit=10, pool=pool)
+
+        assert [g.code for g in pool] == ["soon_cheap", "mid", "late_rich"]
+        assert [g.code for g, _ in preview.candidates] == ["late_rich", "mid", "soon_cheap"]
+        assert preview.pool == 3
+
+
+@pytest.mark.asyncio
+async def test_preview_policy_enriches_its_candidates_from_the_one_games_query(test_db):
+    """The returned candidates carry the cached game fields, read by the same
+    get_by_ids call the decisions used (one games query per preview); an
+    uncached game leaves null fields and Steam is never asked."""
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+        get_by_ids = service.game_service.repo.get_by_ids
+        calls: list[list[int]] = []
+
+        async def counting_get_by_ids(ids):
+            calls.append(list(ids))
+            return await get_by_ids(ids)
+
+        service.game_service.repo.get_by_ids = counting_get_by_ids
+
+        preview = await service.preview_policy(_engine_policy(min_score=None), limit=20)
+
+        by_code = {g.code: g for g, _ in preview.candidates}
+        assert list(by_code) == ["wish", "rich", "good", "uncached"]
+        assert len(calls) == 1
+        good, uncached = by_code["good"], by_code["uncached"]
+        assert (good.game_genres, good.game_review_score, good.game_total_reviews) == (["RPG"], 9, 5000)
+        assert good.game_review_summary == "Very Positive"
+        assert good.game_thumbnail.endswith("/1/header.jpg")
+        assert (uncached.game_genres, uncached.game_review_score, uncached.game_thumbnail) == (None, None, None)
+        service.game_service.lookup_game.assert_not_called()
+        service.game_service.get_or_fetch_game.assert_not_called()
+
+
+def _settings_row(**kw):
+    from types import SimpleNamespace
+    base = dict(
+        autojoin_min_price=10, autojoin_min_score=7, autojoin_min_reviews=1000, autojoin_max_game_age=None,
+        excluded_genres=[], included_genres=[], autojoin_priorities=[{"type": "wishlist"}],
+        autojoin_start_at=350, autojoin_stop_at=200, max_entries_per_cycle=10, auto_hide_unsafe=True,
+        phpsessid="secret-session", xsrf_token="secret-xsrf",
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+@pytest.mark.asyncio
+async def test_saved_policy_raises_configuration_error_on_a_corrupt_list(test_db):
+    async with test_db() as session:
+        service = _engine_service(session)
+
+        with pytest.raises(ConfigurationError) as error:
+            service.saved_policy(_settings_row(autojoin_priorities=[{"type": "bogus"}]))
+
+        assert error.value.code == "CONFIG_002"
+        assert error.value.message == "Auto-join priorities setting is invalid: unknown priority type 'bogus'"
+        assert "secret" not in error.value.message
+
+
+@pytest.mark.asyncio
+async def test_saved_policy_override_ignores_the_corrupt_stored_list(test_db):
+    async with test_db() as session:
+        service = _engine_service(session)
+        override = PolicyFields(
+            autojoin_min_price=0, autojoin_min_score=None, autojoin_min_reviews=None, autojoin_max_game_age=None,
+            excluded_genres=[], included_genres=["RPG"], autojoin_priorities=[{"type": "dlc"}],
+        )
+
+        policy = service.saved_policy(_settings_row(autojoin_priorities=[{"type": "bogus"}]), override=override)
+
+        assert policy.priorities == (PriorityItem("dlc"),)
+        assert policy.included_genres == frozenset({"rpg"})
+        assert (policy.start_at, policy.stop_at) == (350, 200)
+
+
+@pytest.mark.asyncio
+async def test_get_unentered_giveaways_is_a_plain_browse_filter(test_db):
+    async with test_db() as session:
+        await _seed_engine_pool(session)
+        service = _engine_service(session)
+
+        rows = await service.get_unentered_giveaways(limit=50, offset=0)
+
+        # rich fails a min_score 7 policy but no policy is applied here
+        assert [g.code for g in rows] == ["rich", "wish", "good", "uncached", "cheap"]
+        assert [g.code for g in await service.get_unentered_giveaways(limit=2, offset=1)] == ["wish", "good"]
+
+
+# ==================== auto_hide_unsafe and points ====================
+
+UNSAFE_VERDICT = {"verdict": "unsafe", "is_safe": False, "safety_score": 0, "details": ["trap"], "warning_comments": 0}
+
+
+async def _seed_trap(service, session):
+    await service.giveaway_repo.create(
+        code="Trap1", url="https://www.steamgifts.com/giveaway/Trap1/", game_name="Trap Game",
+        price=50, end_time=utcnow() + timedelta(days=1),
+    )
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_unsafe_entry_with_auto_hide_off_hides_locally_only(test_db, mock_sg_client, mock_game_service):
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+        await _seed_trap(service, session)
+        mock_sg_client.check_giveaway_safety = AsyncMock(return_value=UNSAFE_VERDICT)
+        mock_sg_client.get_giveaway_game_id = AsyncMock(return_value=12345)
+        mock_sg_client.hide_giveaway = AsyncMock(return_value=True)
+        mock_sg_client.enter_giveaway = AsyncMock(return_value=True)
+
+        entry = await service.enter_giveaway_with_safety_check("Trap1", "auto", hide_on_steamgifts=False)
+
+        assert entry is None
+        mock_sg_client.get_giveaway_game_id.assert_not_called()
+        mock_sg_client.hide_giveaway.assert_not_called()
+        mock_sg_client.enter_giveaway.assert_not_called()
+        session.expire_all()
+        trap = await service.giveaway_repo.get_by_code("Trap1")
+        assert (trap.is_hidden, trap.is_safe) == (True, False)
+        [failed] = await service.entry_repo.get_by_status("failed")
+        assert "Unsafe giveaway" in failed.error_message
+
+
+@pytest.mark.asyncio
+async def test_unsafe_entry_with_auto_hide_on_hides_on_steamgifts(test_db, mock_sg_client, mock_game_service):
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+        await _seed_trap(service, session)
+        mock_sg_client.check_giveaway_safety = AsyncMock(return_value=UNSAFE_VERDICT)
+        mock_sg_client.get_giveaway_game_id = AsyncMock(return_value=12345)
+        mock_sg_client.hide_giveaway = AsyncMock(return_value=True)
+
+        await service.enter_giveaway_with_safety_check("Trap1", "auto", hide_on_steamgifts=True)
+
+        mock_sg_client.hide_giveaway.assert_awaited_once_with(12345)
+        assert (await service.giveaway_repo.get_by_code("Trap1")).is_hidden is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hide_on_steamgifts", [True, False])
+async def test_sweep_honours_the_hide_flag(test_db, mock_sg_client, mock_game_service, hide_on_steamgifts):
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+        await _seed_trap(service, session)
+        mock_sg_client.check_giveaway_safety = AsyncMock(return_value=UNSAFE_VERDICT)
+        mock_sg_client.get_giveaway_game_id = AsyncMock(return_value=12345)
+        mock_sg_client.hide_giveaway = AsyncMock(return_value=True)
+
+        counts = await service.sweep_unchecked_safety(
+            limit=10, delay_min=0, delay_max=0, hide_on_steamgifts=hide_on_steamgifts
+        )
+
+        assert counts["unsafe"] == 1
+        assert (await service.giveaway_repo.get_by_code("Trap1")).is_hidden is True
+        assert mock_sg_client.hide_giveaway.await_count == (1 if hide_on_steamgifts else 0)
+        assert mock_sg_client.get_giveaway_game_id.await_count == (1 if hide_on_steamgifts else 0)
+
+
+@pytest.mark.asyncio
+async def test_fetch_points(test_db, mock_sg_client, mock_game_service):
+    async with test_db() as session:
+        service = GiveawayService(session, mock_sg_client, mock_game_service)
+        mock_sg_client.get_user_points = AsyncMock(return_value=321)
+        assert await service.fetch_points() == 321
+
+        mock_sg_client.get_user_points = AsyncMock(side_effect=SteamGiftsError("down", code="SG_002"))
+        assert await service.fetch_points() is None
+
+
+@pytest.mark.asyncio
+async def test_lens_pool_orders_equal_prices_like_the_cycle(test_db):
+    """Two unmatched candidates at the same price: the cycle's pool
+    (get_active_unentered, price desc) and the lens pool (get_active, end_time
+    asc, re-sorted by price) must come out in the same entry order, or the
+    lens/preview promises a giveaway the cycle (cap 1) does not enter."""
+    async with test_db() as session:
+        now = utcnow()
+        session.add_all([
+            Giveaway(code="LATE", url="https://x/LATE", game_name="LATE", price=50,
+                     end_time=now + timedelta(days=2)),
+            Giveaway(code="SOON", url="https://x/SOON", game_name="SOON", price=50,
+                     end_time=now + timedelta(hours=3)),
+        ])
+        await session.commit()
+        service = _engine_service(session)
+        policy = AutoJoinPolicy(max_entries_per_cycle=1)
+
+        lens = await service.preview_policy(policy, limit=10, pool=await service.giveaway_repo.get_active())
+        preview = await service.preview_policy(policy, limit=10)
+        cycle = await service.decide_cycle(policy, 1000)
+
+        # Equal prices break by id (insertion order): LATE first everywhere,
+        # and the cap-1 cycle plans LATE as its one attempt.
+        assert [g.code for g, _ in lens.candidates] == ["LATE", "SOON"]
+        assert [g.code for g, _ in preview.candidates] == ["LATE", "SOON"]
+        assert [(c.giveaway.code, c.planned) for c in cycle.candidates] == [
+            ("LATE", "eligible"), ("SOON", "cycle_cap")]
+
+
+def test_cycle_result_counts_after_replaces_the_planned_codes():
+    """The loop's outcomes move each candidate from its planned code to what
+    happened; the counts still sum to the pool."""
+    from services.eligibility import Decision
+    from services.giveaway_query import CycleCandidate, CycleResult
+
+    first, second = Giveaway(code="FIRST", price=60), Giveaway(code="SECOND", price=50)
+    eligible = Decision(code="eligible")
+    result = CycleResult(
+        candidates=[CycleCandidate(first, eligible, "eligible"), CycleCandidate(second, eligible, "budget_floor")],
+        counts={"eligible": 1, "budget_floor": 1, "hidden": 2},
+        total=4,
+    )
+
+    counts = result.counts_after([(first, "eligible", {}), (second, "eligible", {})])
+
+    assert counts == {"eligible": 2, "hidden": 2}
+    assert sum(counts.values()) == result.total

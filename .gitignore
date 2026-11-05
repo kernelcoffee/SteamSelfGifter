@@ -90,6 +90,7 @@ Thumbs.db
 # ===================
 CLAUDE.md
 .claude/
+docs/plans/
 
 # Playwright
 frontend/test-results/

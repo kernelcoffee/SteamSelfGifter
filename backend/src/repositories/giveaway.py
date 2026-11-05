@@ -1,18 +1,17 @@
 """Giveaway repository with SteamGifts giveaway data queries.
 
 This module provides a specialized repository for the Giveaway model with
-methods for filtering eligible giveaways, tracking entries, and managing
-giveaway visibility.
+methods for listing active giveaways, tracking entries, and managing
+giveaway visibility. The auto-join decision itself lives in
+services.eligibility, never in SQL.
 """
 
-from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, exists, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.text import ascii_lower
 from core.time import utcnow
 from models.game import Game
 from models.giveaway import Giveaway
@@ -24,8 +23,8 @@ class GiveawayRepository(BaseRepository[Giveaway]):
     Repository for Giveaway model with SteamGifts-specific queries.
 
     This repository extends BaseRepository to provide specialized methods
-    for working with SteamGifts giveaway data, including eligibility filtering,
-    entry tracking, and visibility management.
+    for working with SteamGifts giveaway data, including the auto-join
+    candidate pool, entry tracking, and visibility management.
 
     Design Notes:
         - Giveaway code is unique and indexed for fast lookups
@@ -126,7 +125,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
     async def get_active(
         self, limit: int | None = None, offset: int = 0, min_score: int | None = None,
         is_safe: bool | None = None, min_chance: float | None = None,
-        ending_within_minutes: int | None = None,
+        ending_within_minutes: int | None = None, exclude_entered: bool = False,
     ) -> list[Giveaway]:
         """
         Get all active (non-expired) giveaways.
@@ -142,6 +141,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             min_chance: Minimum win chance in percent (copies/entries*100);
                 giveaways with no recorded entries yet always pass
             ending_within_minutes: Only giveaways ending within this many minutes
+            exclude_entered: Leave entered giveaways out (the auto-join lens pool)
 
         Returns:
             List of active giveaways, ordered by end_time (soonest first)
@@ -163,6 +163,9 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         # Add safety filter
         if is_safe is not None:
             conditions.append(self.model.is_safe == is_safe)  # noqa: E712
+
+        if exclude_entered:
+            conditions.append(self.model.is_entered == False)  # noqa: E712
 
         conditions.extend(
             self._browse_filter_conditions(now, min_chance, ending_within_minutes)
@@ -198,179 +201,40 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def get_eligible(
-        self,
-        min_price: int,
-        min_score: int | None = None,
-        min_reviews: int | None = None,
-        max_price: int | None = None,
-        max_game_age: int | None = None,
-        limit: int | None = None,
-        wishlist_priority: bool = True,
-        dlc_priority: bool = False,
-        excluded_genres: Iterable[str] | None = None,
+    async def get_active_unentered(
+        self, *, exclude_hidden: bool = False, limit: int | None = None, offset: int = 0
     ) -> list[Giveaway]:
         """
-        Get eligible giveaways based on autojoin criteria.
+        Get active (non-expired), not-yet-entered giveaways, price descending.
 
-        Filters active giveaways by:
-        - Not hidden
-        - Not already entered
-        - Price within range
-        - Optionally: game genres not in ``excluded_genres`` (case-insensitive)
-        - Optionally: minimum review score and count (requires game data)
-        - Optionally: maximum game age in years
-
-        The genre exclusion is a negative filter: a giveaway without a cached
-        game, or whose game's genres are NULL (not fetched yet) or [], passes
-        it. It never requires game data on its own.
-
-        When ``wishlist_priority`` is on (default), wishlist giveaways bypass
-        the price and game-quality filters (the user explicitly wants those
-        games) and sort before everything else. When off, they pass the same
-        filters as everything else. ``dlc_priority`` grants DLC giveaways the
-        same bypass (DLC listings are for owned games), sorted after wishlist.
+        With the defaults this is the auto-join candidate pool: no criteria and
+        no game JOIN, hidden giveaways included, so every one can be decided
+        and have its decision recorded (services.eligibility). With
+        ``exclude_hidden`` it is the plain "not entered" browse list.
 
         Args:
-            min_price: Minimum giveaway price in points
-            min_score: Minimum game review score (0-10), optional
-            min_reviews: Minimum number of reviews, optional
-            max_price: Maximum giveaway price in points, optional
-            max_game_age: Maximum game age in years, optional
-            limit: Maximum number to return
-            wishlist_priority: Wishlist giveaways bypass the filters
-            dlc_priority: DLC giveaways bypass the filters
-            excluded_genres: Genre names to skip, matched case-insensitively
-                against Game.genres; None or empty disables the check
+            exclude_hidden: Leave hidden giveaways out.
+            limit: Maximum number to return (None = all).
+            offset: Number of records to skip.
 
         Returns:
-            List of eligible giveaways, wishlist first, then price (highest first)
-
-        Example:
-            >>> # Get high-value, well-reviewed giveaways not older than 5 years
-            >>> eligible = await repo.get_eligible(
-            ...     min_price=50,
-            ...     min_score=8,
-            ...     min_reviews=5000,
-            ...     max_game_age=5,
-            ...     limit=5
-            ... )
+            Active, not-entered giveaways, most expensive first, then by id.
         """
         now = utcnow()
-
-        # Base filters: active, not hidden, not entered, not flagged by the
-        # safety check (NULL = unchecked passes; mirrors evaluate_eligibility)
-        base_conditions = [
+        conditions = [
             self.model.end_time.isnot(None),
             self.model.end_time > now,
-            self.model.is_hidden == False,  # noqa: E712
             self.model.is_entered == False,  # noqa: E712
-            self.model.is_safe.isnot(False),
         ]
-
-        # Wishlist giveaways bypass the price and game-quality filters;
-        # everything else must pass the full criteria (mirrors
-        # services.eligibility.evaluate_eligibility).
-        filter_conditions = [self.model.price >= min_price]
-
-        if max_price is not None:
-            filter_conditions.append(self.model.price <= max_price)
-
-        # ascii_lower matches SQLite's lower() applied to the stored values.
-        lowered_genres = sorted({
-            ascii_lower(genre.strip())
-            for genre in (excluded_genres or ())
-            if isinstance(genre, str) and genre.strip()
-        })
-
-        needs_game_join = (
-            min_score is not None or
-            min_reviews is not None or
-            max_game_age is not None or
-            bool(lowered_genres)
-        )
-
-        query = select(self.model)
-
-        if needs_game_join:
-            # Outer join: wishlist rows without cached game data must survive.
-            # Non-wishlist rows without game data fail the NULL comparisons
-            # below, matching the previous inner-join semantics.
-            query = query.outerjoin(Game, self.model.game_id == Game.id)
-
-            # Genre exclusion (negative filter): json_each over a NULL or []
-            # genres array yields no rows, so missing games and unfetched or
-            # empty genres pass. The subquery correlates to the joined games
-            # row. Placed in filter_conditions so the wishlist/DLC bypass
-            # branches skip it, exactly like price and quality.
-            if lowered_genres:
-                genre = func.json_each(Game.genres).table_valued("value")
-                filter_conditions.append(
-                    ~exists(
-                        select(1)
-                        .select_from(genre)
-                        .where(func.lower(genre.c.value).in_(lowered_genres))
-                    )
-                )
-
-            # Game review filters (games default to score=0 when unknown)
-            if min_score is not None:
-                filter_conditions.append(Game.review_score >= min_score)
-
-            if min_reviews is not None:
-                filter_conditions.append(Game.total_reviews >= min_reviews)
-
-            # Game age filter (release_date is stored as ISO format YYYY-MM-DD)
-            if max_game_age is not None:
-                min_release_date = f"{now.year - max_game_age}-01-01"
-                filter_conditions.append(Game.release_date >= min_release_date)
-
-        # Bypass branches: a giveaway qualifies by passing the full filter
-        # set, or via an active priority flag (mirrors evaluate_eligibility).
-        qualifying: list[ColumnElement[bool]] = [and_(*filter_conditions)]
-        order_by: list[ColumnElement[Any]] = []
-        if wishlist_priority:
-            qualifying.append(self.model.is_wishlist == True)  # noqa: E712
-            order_by.append(self.model.is_wishlist.desc())
-        if dlc_priority:
-            qualifying.append(self.model.is_dlc == True)  # noqa: E712
-            order_by.append(self.model.is_dlc.desc())
-        order_by.append(self.model.price.desc())
-
-        query = query.where(
-            and_(*base_conditions), or_(*qualifying)
-        ).order_by(*order_by)
-
+        if exclude_hidden:
+            conditions.append(self.model.is_hidden == False)  # noqa: E712
+        # id breaks price ties so the entry order is total and reproducible
+        # (preview_policy sorts its pools by the same key).
+        query = select(self.model).where(*conditions).order_by(self.model.price.desc(), self.model.id.asc())
+        if offset > 0:
+            query = query.offset(offset)
         if limit:
             query = query.limit(limit)
-
-        result = await self.session.execute(query)
-        giveaways = list(result.scalars().all())
-
-        return giveaways
-
-    async def get_active_unentered(self) -> list[Giveaway]:
-        """
-        Get every active (non-expired), not-yet-entered giveaway.
-
-        Unlike :meth:`get_eligible`, this applies no criteria and no game JOIN —
-        it returns the full candidate pool so each one can be evaluated and have
-        its eligibility reason recorded (including hidden giveaways). Ordered by
-        price descending to match the entry preference.
-
-        Returns:
-            All active, not-entered giveaways.
-        """
-        now = utcnow()
-        query = (
-            select(self.model)
-            .where(
-                self.model.end_time.isnot(None),
-                self.model.end_time > now,
-                self.model.is_entered == False,  # noqa: E712
-            )
-            .order_by(self.model.price.desc())
-        )
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
@@ -445,6 +309,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
     async def get_flagged(
         self, flag: str, limit: int | None = None, offset: int | None = None,
         min_chance: float | None = None, ending_within_minutes: int | None = None,
+        exclude_entered: bool = False,
     ) -> list[Giveaway]:
         """
         Get active giveaways carrying a scan-derived flag.
@@ -455,6 +320,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             offset: Number of records to skip
             min_chance: Minimum win chance in percent (copies/entries*100)
             ending_within_minutes: Only giveaways ending within this many minutes
+            exclude_entered: Leave entered giveaways out (the auto-join lens pool)
 
         Returns:
             List of flagged giveaways that are still active (not expired)
@@ -467,16 +333,15 @@ class GiveawayRepository(BaseRepository[Giveaway]):
         column = getattr(self.model, flag)
 
         now = utcnow()
-        query = (
-            select(self.model)
-            .where(
-                column == True,  # noqa: E712
-                self.model.is_hidden == False,  # noqa: E712
-                (self.model.end_time == None) | (self.model.end_time > now),  # noqa: E711
-                *self._browse_filter_conditions(now, min_chance, ending_within_minutes),
-            )
-            .order_by(self.model.end_time.asc())
-        )
+        conditions = [
+            column == True,  # noqa: E712
+            self.model.is_hidden == False,  # noqa: E712
+            (self.model.end_time == None) | (self.model.end_time > now),  # noqa: E711
+            *self._browse_filter_conditions(now, min_chance, ending_within_minutes),
+        ]
+        if exclude_entered:
+            conditions.append(self.model.is_entered == False)  # noqa: E712
+        query = select(self.model).where(*conditions).order_by(self.model.end_time.asc())
 
         if offset:
             query = query.offset(offset)
@@ -1027,9 +892,9 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             "unsafe": row.unsafe or 0,
         }
 
-    async def get_unchecked_eligible(self, limit: int = 1) -> list[Giveaway]:
+    async def get_unchecked_active(self, limit: int = 1) -> list[Giveaway]:
         """
-        Get eligible giveaways that haven't been safety checked yet.
+        Get active giveaways that haven't been safety checked yet.
 
         These are active, non-entered, non-hidden giveaways where is_safe is NULL.
         Used by the background safety check job to process giveaways slowly.
@@ -1041,7 +906,7 @@ class GiveawayRepository(BaseRepository[Giveaway]):
             List of giveaways needing safety check
 
         Example:
-            >>> unchecked = await repo.get_unchecked_eligible(limit=1)
+            >>> unchecked = await repo.get_unchecked_active(limit=1)
             >>> if unchecked:
             ...     await safety_check(unchecked[0])
         """

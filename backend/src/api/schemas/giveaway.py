@@ -5,9 +5,11 @@ API requests and responses.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, computed_field, field_serializer
+
+from services.eligibility import DecisionKind, explain, kind_of
 
 
 class GiveawayBase(BaseModel):
@@ -201,6 +203,29 @@ class GiveawayResponse(GiveawayBase):
         description="When eligibility_reason was last computed (UTC)",
         examples=["2025-10-14T10:05:00"],
     )
+    eligibility_detail: dict[str, Any] | None = Field(
+        default=None,
+        description="Values behind eligibility_reason (actual vs threshold), recorded with it; "
+                    "null until a cycle evaluates the giveaway",
+        examples=[{"score": 6, "min_score": 7}],
+    )
+
+    # computed_field wraps the method in a property itself.
+    @computed_field(
+        description="eligibility_reason in the user's terms, rendered from the code and the detail; "
+                    "null when never evaluated"
+    )
+    def eligibility_label(self) -> str | None:
+        """The last decision explained (services.eligibility.explain)."""
+        return explain(self.eligibility_reason, self.eligibility_detail)
+
+    @computed_field(
+        description="Family of eligibility_reason: enter, gate, filter or budget; null when "
+                    "never evaluated or unknown"
+    )
+    def eligibility_kind(self) -> DecisionKind | None:
+        """The decision family, from registry membership."""
+        return kind_of(self.eligibility_reason)
 
     @field_serializer('end_time', 'discovered_at', 'entered_at', 'won_at', 'eligibility_checked_at')
     def serialize_datetime(self, dt: datetime | None, _info: Any) -> str | None:
@@ -236,6 +261,121 @@ class GiveawayResponse(GiveawayBase):
             ]
         },
     }
+
+
+class DecisionResponse(BaseModel):
+    """A live decision from the auto-join engine (preview, eligible, lens)."""
+
+    code: str = Field(..., description="Decision code; always 'eligible' for a candidate", examples=["eligible"])
+    label: str = Field(..., description="The decision in the user's terms", examples=["Joinable"])
+    detail: dict[str, Any] = Field(
+        ...,
+        description="The decision's values: priority, rank, lifted_by",
+        examples=[{"priority": "wishlist", "rank": 0, "lifted_by": "wishlist"}],
+    )
+    priority: str | None = Field(
+        default=None, description="First matching priority type (null = none)", examples=["wishlist"]
+    )
+    rank: int = Field(..., description="Index of that item in the priority list (list length = none)", examples=[0])
+    lifted_by: str | None = Field(
+        default=None,
+        description="Exempt priority type that skipped the filters (null = passed them)",
+        examples=["wishlist"],
+    )
+
+
+class CandidatePreviewResponse(GiveawayResponse):
+    """A giveaway with its live auto-join decision.
+
+    The eligibility_* fields are the last cycle's stored values; ``decision``
+    is computed now from the policy and is never stored.
+    """
+
+    decision: DecisionResponse = Field(..., description="Live decision from the evaluated policy")
+
+
+class PolicyPreviewResponse(BaseModel):
+    """Dry run of an auto-join policy over the active pool (nothing persisted)."""
+
+    candidates: list[CandidatePreviewResponse] = Field(
+        ..., description="Enter candidates in entry order, sliced to limit"
+    )
+    count: int = Field(..., description="Every enter candidate, before slicing", examples=[12])
+    pool: int = Field(..., description="Active, not-entered giveaways evaluated (hidden included)", examples=[40])
+    counts: dict[str, int] = Field(
+        ..., description="Live decision codes over the pool (sum = pool)",
+        examples=[{"eligible": 12, "score_below_min": 20, "hidden": 8}],
+    )
+    budget_applied: Literal[False] = Field(
+        default=False, description="Always false: the points budget and per cycle cap apply at cycle time"
+    )
+
+
+class LensGiveawaysResponse(BaseModel):
+    """A tab's giveaways through the auto-join lens: live enter candidates."""
+
+    giveaways: list[CandidatePreviewResponse] = Field(
+        ..., description="Enter candidates of the tab's pool in entry order, sliced by limit/offset"
+    )
+    count: int = Field(..., description="Every enter candidate in the tab's pool (ignores limit/offset)")
+    lens: Literal["autojoin"] = Field(..., description="The lens applied")
+    budget_applied: Literal[False] = Field(
+        default=False, description="Always false: the points budget and per cycle cap apply at cycle time"
+    )
+
+
+class RegistryRule(BaseModel):
+    """A gate or an outcome of the auto-join registry."""
+
+    code: str = Field(..., examples=["hidden"])
+    label: str = Field(..., examples=["Hidden"])
+
+
+class RegistryFilter(BaseModel):
+    """A filter of the auto-join registry and the setting it reads."""
+
+    code: str = Field(..., examples=["score_below_min"])
+    label: str = Field(..., examples=["Review score below minimum"])
+    setting: str | None = Field(
+        default=None, description="Settings field the filter reads (null = several)", examples=["autojoin_min_score"]
+    )
+
+
+class RegistryParam(BaseModel):
+    """A priority item parameter with its bounds."""
+
+    name: str = Field(..., examples=["threshold_minutes"])
+    min: int = Field(..., examples=[5])
+    max: int = Field(..., examples=[10080])
+    default: int = Field(..., examples=[60])
+
+
+class RegistryPriorityType(BaseModel):
+    """A priority type the list may hold."""
+
+    type: str = Field(..., examples=["wishlist"])
+    label: str = Field(..., examples=["Wishlist"])
+    description: str = Field(..., examples=["Games on your Steam wishlist"])
+    exempt_from_filters: bool = Field(..., examples=[True])
+    params: list[RegistryParam] = Field(default_factory=list)
+
+
+class RegistryLimits(BaseModel):
+    """Bounds the settings form must respect."""
+
+    genre_max_items: int = Field(..., examples=[50])
+    genre_max_length: int = Field(..., examples=[64])
+    max_priority_items: int = Field(..., examples=[3])
+
+
+class AutojoinRegistryResponse(BaseModel):
+    """The auto-join registry served as data (GET /giveaways/registry)."""
+
+    gates: list[RegistryRule] = Field(..., description="Gates in precedence order (never lifted)")
+    filters: list[RegistryFilter] = Field(..., description="Filters in precedence order")
+    outcomes: list[RegistryRule] = Field(..., description="The enter state and the budget outcomes")
+    priority_types: list[RegistryPriorityType] = Field(..., description="Priority types in registry order")
+    limits: RegistryLimits
 
 
 class GiveawayList(BaseModel):
