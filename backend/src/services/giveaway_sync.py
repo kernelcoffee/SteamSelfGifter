@@ -155,11 +155,20 @@ class GiveawaySyncMixin:
 
         Fetches the /giveaways/won page and marks matching giveaways as won.
 
+        A page that cannot be fetched (a transport error after the client's
+        retries, or a non-200 answer) is not a sync with no wins: the wins
+        found on the pages before it are committed, then the error is raised
+        so the caller can report it. A page that is fetched but holds no win
+        rows yields no wins.
+
         Args:
             pages: Number of pages to fetch (default: 1)
 
         Returns:
             Number of newly detected wins
+
+        Raises:
+            SteamGiftsError: A won page could not be fetched
 
         Example:
             >>> new_wins = await service.sync_wins(pages=2)
@@ -171,35 +180,35 @@ class GiveawaySyncMixin:
         for page in range(1, pages + 1):
             try:
                 won_data = await self.sg_client.get_won_giveaways(page=page)
-
-                for win in won_data:
-                    # Look up giveaway by code
-                    giveaway = await self.giveaway_repo.get_by_code(win["code"])
-
-                    if giveaway and not giveaway.is_won:
-                        # Mark as won
-                        giveaway.is_won = True
-                        giveaway.won_at = win.get("won_at") or utcnow()
-                        new_wins += 1
-
-                    elif not giveaway:
-                        # Giveaway not in our database - create it as won
-                        url = f"https://www.steamgifts.com/giveaway/{win['code']}/"
-                        await self.giveaway_repo.create(
-                            code=win["code"],
-                            url=url,
-                            game_name=win["game_name"],
-                            price=0,  # Unknown price for historical wins
-                            game_id=win.get("game_id"),
-                            is_entered=True,
-                            is_won=True,
-                            won_at=win.get("won_at") or utcnow(),
-                        )
-                        new_wins += 1
-
-            except Exception as e:
+            except SteamGiftsError as e:
                 logger.error("wins_page_fetch_failed", page=page, error=str(e))
-                break
+                await self.session.commit()
+                raise
+
+            for win in won_data:
+                # Look up giveaway by code
+                giveaway = await self.giveaway_repo.get_by_code(win["code"])
+
+                if giveaway and not giveaway.is_won:
+                    # Mark as won
+                    giveaway.is_won = True
+                    giveaway.won_at = win.get("won_at") or utcnow()
+                    new_wins += 1
+
+                elif not giveaway:
+                    # Giveaway not in our database - create it as won
+                    url = f"https://www.steamgifts.com/giveaway/{win['code']}/"
+                    await self.giveaway_repo.create(
+                        code=win["code"],
+                        url=url,
+                        game_name=win["game_name"],
+                        price=0,  # Unknown price for historical wins
+                        game_id=win.get("game_id"),
+                        is_entered=True,
+                        is_won=True,
+                        won_at=win.get("won_at") or utcnow(),
+                    )
+                    new_wins += 1
 
         await self.session.commit()
         return new_wins
