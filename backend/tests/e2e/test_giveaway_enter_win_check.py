@@ -5,7 +5,7 @@ finished and its dependencies closed their HTTP clients.
 """
 
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, timedelta
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -170,3 +170,41 @@ async def test_enter_endpoint_closes_request_clients_and_job_does_not_reuse_them
     assert all(client._client is None for client in job_clients)
     assert rescheduled is not None
     assert rescheduled.next_run_time.replace(tzinfo=None) == end_time + timedelta(minutes=5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("non_utc_host")
+async def test_enter_endpoint_schedules_win_check_at_utc_end_time_on_non_utc_host(
+    test_client: AsyncClient, async_engine: AsyncEngine
+) -> None:
+    """On a Europe/Paris host with a New York scheduler, entering a giveaway
+    registers the win check at the giveaway's end time + 5 min in UTC, not an
+    hour (or six) off."""
+    session_maker = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+    end_time = utcnow().replace(microsecond=0) + timedelta(days=1)
+    async with session_maker() as session:
+        await SettingsService(session).update_settings(phpsessid="test_session")
+        session.add(Giveaway(code="ENTR3", url="/giveaway/ENTR3/", game_name="Game", price=10, end_time=end_time))
+        await session.commit()
+
+    homepage = (FIXTURES / "wishlist_page.html").read_text(encoding="utf-8")
+    request_transport = RoutedTransport()
+    request_transport.add("GET", "/", httpx.Response(200, text=homepage))
+    request_transport.add("POST", "/ajax.php", httpx.Response(200, json={"type": "success"}))
+
+    manager = SchedulerManager()
+    manager.start()
+    try:
+        with (
+            patch("services.scheduler_service.scheduler_manager", manager),
+            patch("api.dependencies.SteamGiftsClient", partial(SteamGiftsClient, transport=request_transport)),
+            patch("api.dependencies.SteamClient", partial(SteamClient, transport=RoutedTransport())),
+        ):
+            response = await test_client.post("/api/v1/giveaways/ENTR3/enter", json={"entry_type": "manual"})
+        job = manager.get_job(WIN_CHECK_JOB_ID)
+    finally:
+        manager.stop(wait=False)
+
+    assert response.status_code == 200, response.text
+    assert job is not None
+    assert job.next_run_time == (end_time + timedelta(minutes=5)).replace(tzinfo=UTC)

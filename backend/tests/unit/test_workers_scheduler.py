@@ -5,6 +5,7 @@ Tests scheduler lifecycle, job management, and status reporting.
 """
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -385,3 +386,43 @@ async def test_scheduler_lifecycle(scheduler):
     # Stop
     scheduler.stop()
     assert not scheduler.is_running
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("non_utc_host")
+async def test_add_date_job_reads_naive_run_date_as_utc_on_non_utc_host() -> None:
+    """A naive run date is UTC: on a Europe/Paris host with the scheduler set
+    to America/New_York the job still fires at that instant in UTC."""
+    manager = SchedulerManager()
+    assert str(manager.scheduler.timezone) == "America/New_York"
+    run_date = datetime(2030, 1, 15, 12, 0, 0)
+    manager.start()
+    try:
+        job = manager.add_date_job(func=sample_async_job, job_id="date_test", run_date=run_date)
+    finally:
+        manager.stop(wait=False)
+
+    assert job.next_run_time == run_date.replace(tzinfo=UTC)
+    assert job.next_run_time.utcoffset() == timedelta(0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("non_utc_host")
+async def test_get_status_reports_next_run_in_utc_with_z() -> None:
+    """get_status serialises next_run as UTC ISO 8601 with a Z suffix, even
+    when the scheduler's own zone is not UTC."""
+    manager = SchedulerManager()
+    manager.start()
+    try:
+        manager.add_date_job(func=sample_async_job, job_id="date_test", run_date=datetime(2030, 7, 1, 8, 30))
+        # An interval job's next run is computed in the scheduler's zone (New York).
+        interval_job = manager.add_interval_job(func=sample_async_job, job_id="interval_test", hours=1)
+        status = manager.get_status()
+    finally:
+        manager.stop(wait=False)
+
+    next_runs = {job["id"]: job["next_run"] for job in status["jobs"]}
+    assert next_runs["date_test"] == "2030-07-01T08:30:00Z"
+    expected_interval = interval_job.next_run_time.astimezone(UTC).replace(tzinfo=None).isoformat() + "Z"
+    assert next_runs["interval_test"] == expected_interval
+    assert datetime.fromisoformat(next_runs["interval_test"]).utcoffset() == timedelta(0)

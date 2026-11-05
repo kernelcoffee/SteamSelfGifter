@@ -11,7 +11,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.time import utcnow
+from core.time import isoformat_z, to_naive_utc, utcnow
 from models.scheduler_state import SchedulerState
 from repositories.giveaway import GiveawayRepository
 from repositories.settings import SettingsRepository
@@ -331,8 +331,8 @@ class SchedulerService:
             # No job exists, schedule one
             self._schedule_win_check_job(new_check_time)
         elif job.next_run_time:
-            # Compare naive datetimes (APScheduler returns timezone-aware)
-            job_next_run_naive = job.next_run_time.replace(tzinfo=None)
+            # Compare naive UTC datetimes (APScheduler returns timezone-aware)
+            job_next_run_naive = to_naive_utc(job.next_run_time)
             if new_check_time < job_next_run_naive:
                 # New giveaway expires sooner, update the job
                 self._schedule_win_check_job(new_check_time)
@@ -344,7 +344,8 @@ class SchedulerService:
         Returns:
             Dictionary with win check job status:
                 - scheduled: Whether a win check is scheduled
-                - next_check_at: When the next check is scheduled
+                - next_check_at: When the next check is scheduled, UTC ISO
+                  8601 with a ``Z`` suffix
 
         Example:
             >>> status = service.get_win_check_status()
@@ -356,7 +357,7 @@ class SchedulerService:
         if job and job.next_run_time:
             return {
                 "scheduled": True,
-                "next_check_at": job.next_run_time.isoformat(),
+                "next_check_at": isoformat_z(job.next_run_time),
             }
 
         return {
