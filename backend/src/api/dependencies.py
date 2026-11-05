@@ -94,7 +94,7 @@ SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
 NotificationServiceDep = Annotated[NotificationService, Depends(get_notification_service)]
 
 
-async def get_game_service(db: DatabaseDep) -> GameService:
+async def get_game_service(db: DatabaseDep) -> AsyncGenerator[GameService]:
     """
     Get GameService dependency.
 
@@ -103,8 +103,8 @@ async def get_game_service(db: DatabaseDep) -> GameService:
     Args:
         db: Database session from dependency injection
 
-    Returns:
-        GameService instance
+    Yields:
+        GameService instance whose Steam client is closed when the request ends
 
     Example:
         @router.get("/games/{app_id}")
@@ -115,11 +115,14 @@ async def get_game_service(db: DatabaseDep) -> GameService:
             return await game_service.get_or_fetch_game(app_id)
     """
     steam_client = SteamClient()
-    await steam_client.start()
-    return GameService(db, steam_client)
+    try:
+        await steam_client.start()
+        yield GameService(db, steam_client)
+    finally:
+        await steam_client.close()
 
 
-async def get_giveaway_service(db: DatabaseDep) -> GiveawayService:
+async def get_giveaway_service(db: DatabaseDep) -> AsyncGenerator[GiveawayService]:
     """
     Get GiveawayService dependency.
 
@@ -129,8 +132,9 @@ async def get_giveaway_service(db: DatabaseDep) -> GiveawayService:
     Args:
         db: Database session from dependency injection
 
-    Returns:
-        GiveawayService instance
+    Yields:
+        GiveawayService instance whose SteamGifts and Steam clients are
+        closed when the request ends
 
     Example:
         @router.get("/giveaways")
@@ -148,16 +152,18 @@ async def get_giveaway_service(db: DatabaseDep) -> GiveawayService:
         phpsessid=settings.phpsessid or "",
         user_agent=settings.user_agent,
     )
-    await sg_client.start()
-
-    # Create Steam client for game data
+    # Both clients belong to this FastAPI request and must be closed.
     steam_client = SteamClient()
-    await steam_client.start()
-
-    # Create game service
-    game_service = GameService(db, steam_client)
-
-    return GiveawayService(db, sg_client, game_service)
+    try:
+        await sg_client.start()
+        await steam_client.start()
+        game_service = GameService(db, steam_client)
+        yield GiveawayService(db, sg_client, game_service)
+    finally:
+        try:
+            await steam_client.close()
+        finally:
+            await sg_client.close()
 
 
 async def get_giveaway_read_service(db: DatabaseDep) -> AsyncGenerator[GiveawayService]:
@@ -180,16 +186,19 @@ async def get_giveaway_read_service(db: DatabaseDep) -> AsyncGenerator[GiveawayS
     sg_client = SteamGiftsClient(phpsessid="", user_agent=READ_ONLY_USER_AGENT)
 
     steam_client = SteamClient()
-    await steam_client.start()
     try:
+        await steam_client.start()
         yield GiveawayService(db, sg_client, GameService(db, steam_client))
     finally:
         await steam_client.close()
 
 
-async def get_scheduler_service(db: DatabaseDep) -> SchedulerService:
+def get_scheduler_service(db: DatabaseDep) -> SchedulerService:
     """
     Get SchedulerService dependency.
+
+    Starts no HTTP client: the service only reads the database and drives
+    APScheduler, and the win-check job it schedules opens its own context.
 
     Args:
         db: Database session from dependency injection
@@ -204,9 +213,7 @@ async def get_scheduler_service(db: DatabaseDep) -> SchedulerService:
         ):
             return await scheduler_service.get_scheduler_stats()
     """
-    # SchedulerService needs GiveawayService, so get that first
-    giveaway_service = await get_giveaway_service(db)
-    return SchedulerService(db, giveaway_service)
+    return SchedulerService(db)
 
 
 # Type aliases for new service dependencies

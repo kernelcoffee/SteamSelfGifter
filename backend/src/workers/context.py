@@ -81,23 +81,23 @@ async def automation_context() -> AsyncIterator[AutomationContext]:
             phpsessid=settings.phpsessid,
             user_agent=settings.user_agent,
         )
-        await sg_client.start()
-
         steam_client = SteamClient()
-        await steam_client.start()
-
-        game_service = GameService(session=session, steam_client=steam_client)
-        giveaway_service = GiveawayService(
-            session=session,
-            steamgifts_client=sg_client,
-            game_service=game_service,
-        )
-        notification_service = NotificationService(session=session)
-        scheduler_service = SchedulerService(
-            session=session, giveaway_service=giveaway_service
-        )
-
+        # Either start() can fail after the SteamGifts client opened its httpx
+        # client (the homepage fetch for the XSRF token), so both are closed
+        # on every path, the SteamGifts one even if closing Steam raises.
         try:
+            await sg_client.start()
+            await steam_client.start()
+
+            game_service = GameService(session=session, steam_client=steam_client)
+            giveaway_service = GiveawayService(
+                session=session,
+                steamgifts_client=sg_client,
+                game_service=game_service,
+            )
+            notification_service = NotificationService(session=session)
+            scheduler_service = SchedulerService(session=session)
+
             yield AutomationContext(
                 session=session,
                 settings=settings,
@@ -108,5 +108,7 @@ async def automation_context() -> AsyncIterator[AutomationContext]:
                 scheduler_service=scheduler_service,
             )
         finally:
-            await sg_client.close()
-            await steam_client.close()
+            try:
+                await steam_client.close()
+            finally:
+                await sg_client.close()

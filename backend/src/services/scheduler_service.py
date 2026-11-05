@@ -7,6 +7,7 @@ between repositories and giveaway entry automation.
 from datetime import datetime, timedelta
 from typing import Any
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +15,9 @@ from core.time import utcnow
 from models.scheduler_state import SchedulerState
 from repositories.giveaway import GiveawayRepository
 from repositories.settings import SettingsRepository
-from services.giveaway_service import GiveawayService
 from workers.scheduler import scheduler_manager
+
+logger = structlog.get_logger()
 
 # Job ID for the win check job
 WIN_CHECK_JOB_ID = "win_check"
@@ -28,7 +30,7 @@ class SchedulerService:
     This service coordinates between:
     - SchedulerState model (database)
     - SettingsRepository (configuration)
-    - GiveawayService (giveaway entry logic)
+    - GiveawayRepository (entered giveaways awaiting a win check)
 
     Handles:
     - Scheduler control (start/stop/pause/resume)
@@ -40,31 +42,26 @@ class SchedulerService:
         - Coordinates multiple repositories and services
         - All methods are async
         - Runtime state (is_running, is_paused) managed by APScheduler
+        - The win-check job (workers.win_check.run_win_check) opens its own
+          context, so it never holds this service or its session
 
     Usage:
         >>> async with AsyncSessionLocal() as session:
-        ...     giveaway_service = GiveawayService(...)
-        ...     service = SchedulerService(session, giveaway_service)
+        ...     service = SchedulerService(session)
         ...     await service.schedule_next_win_check()
     """
 
-    def __init__(
-        self,
-        session: AsyncSession,
-        giveaway_service: GiveawayService,
-    ):
+    def __init__(self, session: AsyncSession) -> None:
         """
         Initialize SchedulerService.
 
         Args:
             session: Database session
-            giveaway_service: GiveawayService for entering giveaways
 
         Example:
-            >>> service = SchedulerService(session, giveaway_service)
+            >>> service = SchedulerService(session)
         """
         self.session = session
-        self.giveaway_service = giveaway_service
         self.settings_repo = SettingsRepository(session)
         self.giveaway_repo = GiveawayRepository(session)
 
@@ -287,12 +284,12 @@ class SchedulerService:
         Args:
             run_date: When to run the win check
         """
-        import structlog
-        logger = structlog.get_logger()
+        # Imported here, not at module level: workers.context imports this module.
+        from workers.win_check import run_win_check
 
         # Create the job (replace_existing=True handles updates)
         scheduler_manager.add_date_job(
-            func=self._win_check_callback,
+            func=run_win_check,
             job_id=WIN_CHECK_JOB_ID,
             run_date=run_date,
         )
@@ -305,30 +302,6 @@ class SchedulerService:
     def _remove_win_check_job(self) -> None:
         """Remove the win check job if it exists."""
         scheduler_manager.remove_job(WIN_CHECK_JOB_ID)
-
-    async def _win_check_callback(self) -> None:
-        """
-        Callback for win check job.
-
-        Syncs wins from SteamGifts and schedules the next check.
-        """
-        import structlog
-        logger = structlog.get_logger()
-
-        try:
-            # Sync wins
-            new_wins = await self.giveaway_service.sync_wins(pages=1)
-
-            if new_wins > 0:
-                logger.info("wins_detected", new_wins=new_wins)
-
-            # Schedule next win check
-            await self.schedule_next_win_check()
-
-        except Exception as e:
-            logger.error("win_check_failed", error=str(e))
-            # Still try to schedule next check
-            await self.schedule_next_win_check()
 
     async def update_win_check_for_new_entry(
         self, giveaway_end_time: datetime | None
