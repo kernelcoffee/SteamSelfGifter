@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+import structlog
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -30,6 +31,19 @@ def reset_steam_cooldown():
     steam_cooldown.reset()
     yield
     steam_cooldown.reset()
+
+
+@pytest.fixture
+def uncached_win_check_logger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give ``workers.win_check`` a logger that ``capture_logs()`` can see.
+
+    structlog caches a module logger on first use (``cache_logger_on_first_use``)
+    together with the processor list configured at that moment. A test that
+    configures logging again (the app lifespan does) swaps that list, so a
+    logger cached earlier in the suite bypasses ``capture_logs()`` and the
+    test sees no log entries.
+    """
+    monkeypatch.setattr("workers.win_check.logger", structlog.get_logger())
 
 
 @pytest.fixture(autouse=True)

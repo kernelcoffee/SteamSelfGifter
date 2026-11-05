@@ -103,8 +103,8 @@ async def get_game_service(db: DatabaseDep) -> AsyncGenerator[GameService]:
     Args:
         db: Database session from dependency injection
 
-    Returns:
-        GameService instance
+    Yields:
+        GameService instance whose Steam client is closed when the request ends
 
     Example:
         @router.get("/games/{app_id}")
@@ -132,8 +132,9 @@ async def get_giveaway_service(db: DatabaseDep) -> AsyncGenerator[GiveawayServic
     Args:
         db: Database session from dependency injection
 
-    Returns:
-        GiveawayService instance
+    Yields:
+        GiveawayService instance whose SteamGifts and Steam clients are
+        closed when the request ends
 
     Example:
         @router.get("/giveaways")
@@ -192,12 +193,12 @@ async def get_giveaway_read_service(db: DatabaseDep) -> AsyncGenerator[GiveawayS
         await steam_client.close()
 
 
-async def get_scheduler_service(
-    db: DatabaseDep,
-    giveaway_service: Annotated[GiveawayService, Depends(get_giveaway_service)],
-) -> SchedulerService:
+def get_scheduler_service(db: DatabaseDep) -> SchedulerService:
     """
     Get SchedulerService dependency.
+
+    Starts no HTTP client: the service only reads the database and drives
+    APScheduler, and the win-check job it schedules opens its own context.
 
     Args:
         db: Database session from dependency injection
@@ -212,9 +213,7 @@ async def get_scheduler_service(
         ):
             return await scheduler_service.get_scheduler_stats()
     """
-    # Use FastAPI's cached request-scoped dependency rather than constructing
-    # an unmanaged client and leaking its HTTP connections.
-    return SchedulerService(db, giveaway_service)
+    return SchedulerService(db)
 
 
 # Type aliases for new service dependencies
